@@ -216,7 +216,7 @@
   "settings_dataStorage": "Data & Storage",
   "settings_privacySharing": "Privacy & Sharing",
   "settings_integrations": "Integrations",
-  "picManager_description": "Push original generated images to an external Pic Manager service.",
+  "picManager_description": "Push original images to an external Pic Manager service.",
   "picManager_apiUrl": "API URL",
   "picManager_apiUrlHint": "https://host or http://host:3210",
   "picManager_tokenSavedHint": "Leave blank to keep the saved Token",

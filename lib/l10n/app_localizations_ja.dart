@@ -570,7 +570,7 @@ class AppLocalizationsJa extends AppLocalizations {
   String get settings_integrations => '連携';
 
   @override
-  String get picManager_description => '生成画像の元データを外部の Pic Manager に送信します。';
+  String get picManager_description => '画像の元データを外部の Pic Manager に送信します。';
 
   @override
   String get picManager_apiUrl => 'API URL';

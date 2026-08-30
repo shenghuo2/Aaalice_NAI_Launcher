@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../../core/utils/localization_extension.dart';
 import '../../../../../data/models/gallery/local_image_record.dart';
 import '../../../../providers/local_gallery_provider.dart';
+import '../../../../providers/pic_manager_push_provider.dart';
+import '../../../../utils/pic_manager_push_actions.dart';
 import '../../animated_favorite_button.dart';
 import '../image_detail_data.dart';
 
@@ -147,8 +149,34 @@ class _DetailTopBarActions extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final l10n = context.l10n;
     final compact = MediaQuery.sizeOf(context).width < 600;
-    final favorite = currentImage.showFavoriteButton && onFavoriteToggle != null
-        ? _buildFavorite(ref)
+    final picManagerConfig = ref.watch(picManagerSettingsProvider).valueOrNull;
+    final autoPushOnFavorite =
+        picManagerConfig?.isConfigured == true &&
+        picManagerConfig!.autoPushOnFavorite;
+    final canFavorite =
+        currentImage.showFavoriteButton && onFavoriteToggle != null;
+    final request = canFavorite && picManagerConfig?.isConfigured == true
+        ? imageDetailPicManagerRequest(currentImage)
+        : null;
+    final isPushingToPicManager =
+        request != null &&
+        ref.watch(picManagerUploadsProvider).contains(request.uploadKey);
+    final favorite = canFavorite
+        ? _buildFavorite(
+            ref,
+            isBusy: autoPushOnFavorite && isPushingToPicManager,
+          )
+        : null;
+    final pushToPicManager =
+        favorite != null &&
+            picManagerConfig?.isConfigured == true &&
+            !autoPushOnFavorite
+        ? _buildPicManagerPush(
+            context,
+            ref,
+            request!,
+            isPushing: isPushingToPicManager,
+          )
         : null;
 
     if (compact) {
@@ -201,6 +229,7 @@ class _DetailTopBarActions extends ConsumerWidget {
               onPressed: onShare,
               tooltip: l10n.common_share,
             ),
+          if (pushToPicManager != null) pushToPicManager,
           if (favorite != null) favorite,
           if (onShowMetadata != null)
             IconButton(
@@ -273,12 +302,45 @@ class _DetailTopBarActions extends ConsumerWidget {
             onPressed: onCopyImage,
             tooltip: l10n.shortcut_action_copy_image,
           ),
+        if (pushToPicManager != null) pushToPicManager,
         if (favorite != null) favorite,
       ],
     );
   }
 
-  Widget _buildFavorite(WidgetRef ref) {
+  Widget _buildPicManagerPush(
+    BuildContext context,
+    WidgetRef ref,
+    PicManagerUploadRequest request, {
+    required bool isPushing,
+  }) {
+    return SizedBox.square(
+      dimension: 48,
+      child: IconButton(
+        onPressed: isPushing
+            ? null
+            : () => pushToPicManagerWithToast(
+                context: context,
+                ref: ref,
+                request: request,
+              ),
+        tooltip: isPushing
+            ? context.l10n.picManager_pushing
+            : context.l10n.picManager_push,
+        icon: isPushing
+            ? const SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+            : const Icon(Icons.cloud_upload_outlined, color: Colors.white),
+      ),
+    );
+  }
+
+  Widget _buildFavorite(WidgetRef ref, {required bool isBusy}) {
     var isFavorite = currentImage.isFavorite;
     if (currentImage.identifier.isNotEmpty &&
         currentImage is LocalImageDetailData) {
@@ -301,6 +363,7 @@ class _DetailTopBarActions extends ConsumerWidget {
           inactiveColor: Colors.white,
           showBackground: true,
           backgroundColor: Colors.black.withValues(alpha: 0.4),
+          isBusy: isBusy,
           onToggle: onFavoriteToggle,
         ),
       ),

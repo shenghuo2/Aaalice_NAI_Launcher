@@ -11,16 +11,18 @@ import '../../../core/utils/app_logger.dart';
 import '../../../core/utils/image_share_sanitizer.dart';
 import '../../../core/utils/localization_extension.dart';
 import '../../../data/models/gallery/local_image_record.dart';
+import '../../providers/pic_manager_push_provider.dart';
 import '../../providers/share_image_settings_provider.dart';
 import '../../themes/theme_extension.dart';
 import '../../utils/clipboard_image.dart';
+import '../../utils/pic_manager_push_actions.dart';
 import '../common/app_toast.dart';
 import '../common/card_action_buttons.dart';
 import '../common/image_card_hover_motion.dart';
 import 'local_image_context_menu.dart';
 import 'local_image_hover_preview.dart';
 
-enum _LocalCardAction { favorite, copyImage }
+enum _LocalCardAction { pushToPicManager, favorite, copyImage }
 
 /// 本地图片卡片，提供稳定的选择、快捷操作和键盘交互。
 class LocalImageCard3D extends ConsumerStatefulWidget {
@@ -214,6 +216,8 @@ class _LocalImageCard3DState extends ConsumerState<LocalImageCard3D> {
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(picManagerSettingsProvider);
+    ref.watch(picManagerUploadsProvider);
     final theme = Theme.of(context);
     final cardHeight = widget.height ?? widget.width;
     final colorScheme = theme.colorScheme;
@@ -445,12 +449,19 @@ class _LocalImageCard3DState extends ConsumerState<LocalImageCard3D> {
       required IconData icon,
       required String label,
       Color? color,
+      bool isLoading = false,
     }) {
       return PopupMenuItem<Object>(
         value: value,
+        enabled: !isLoading,
         child: ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: Icon(icon, color: color),
+          leading: isLoading
+              ? const SizedBox.square(
+                  dimension: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(icon, color: color),
           title: Text(label),
         ),
       );
@@ -473,7 +484,9 @@ class _LocalImageCard3DState extends ConsumerState<LocalImageCard3D> {
           constraints: const BoxConstraints(minWidth: 280, maxWidth: 340),
           icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
           onSelected: (action) async {
-            if (action == _LocalCardAction.favorite) {
+            if (action == _LocalCardAction.pushToPicManager) {
+              await _pushToPicManager();
+            } else if (action == _LocalCardAction.favorite) {
               widget.onFavoriteToggle?.call();
             } else if (action == _LocalCardAction.copyImage) {
               await _copyImageToClipboard();
@@ -482,6 +495,15 @@ class _LocalImageCard3DState extends ConsumerState<LocalImageCard3D> {
             }
           },
           itemBuilder: (context) => <PopupMenuEntry<Object>>[
+            if (_showManualPicManagerPush)
+              item(
+                value: _LocalCardAction.pushToPicManager,
+                icon: Icons.cloud_upload_outlined,
+                label: _isPushingToPicManager
+                    ? context.l10n.picManager_pushing
+                    : context.l10n.picManager_push,
+                isLoading: _isPushingToPicManager,
+              ),
             if (widget.onFavoriteToggle != null)
               item(
                 value: _LocalCardAction.favorite,
@@ -492,6 +514,7 @@ class _LocalImageCard3DState extends ConsumerState<LocalImageCard3D> {
                     ? context.l10n.common_unfavorite
                     : context.l10n.common_favorite,
                 color: widget.record.isFavorite ? Colors.redAccent : null,
+                isLoading: _autoPushOnFavorite && _isPushingToPicManager,
               ),
             item(
               value: _LocalCardAction.copyImage,
@@ -535,6 +558,15 @@ class _LocalImageCard3DState extends ConsumerState<LocalImageCard3D> {
         visible: _isHovered || _isFocused,
         direction: direction,
         buttons: [
+          if (_showManualPicManagerPush)
+            CardActionButtonConfig(
+              icon: Icons.cloud_upload_outlined,
+              tooltip: _isPushingToPicManager
+                  ? context.l10n.picManager_pushing
+                  : context.l10n.picManager_push,
+              isLoading: _isPushingToPicManager,
+              onPressed: () => unawaited(_pushToPicManager()),
+            ),
           if (widget.onFavoriteToggle != null)
             CardActionButtonConfig(
               icon: widget.record.isFavorite
@@ -544,6 +576,7 @@ class _LocalImageCard3DState extends ConsumerState<LocalImageCard3D> {
                   ? context.l10n.common_unfavorite
                   : context.l10n.common_favorite,
               iconColor: widget.record.isFavorite ? Colors.red : Colors.white,
+              isLoading: _autoPushOnFavorite && _isPushingToPicManager,
               onPressed: widget.onFavoriteToggle!,
             ),
           CardActionButtonConfig(
@@ -575,6 +608,31 @@ class _LocalImageCard3DState extends ConsumerState<LocalImageCard3D> {
           ],
         ],
       ),
+    );
+  }
+
+  bool get _autoPushOnFavorite {
+    final config = ref.read(picManagerSettingsProvider).valueOrNull;
+    return config?.isConfigured == true && config!.autoPushOnFavorite;
+  }
+
+  bool get _showManualPicManagerPush {
+    final config = ref.read(picManagerSettingsProvider).valueOrNull;
+    return widget.onFavoriteToggle != null &&
+        config?.isConfigured == true &&
+        !config!.autoPushOnFavorite;
+  }
+
+  bool get _isPushingToPicManager {
+    final request = localImagePicManagerRequest(widget.record);
+    return ref.read(picManagerUploadsProvider).contains(request.uploadKey);
+  }
+
+  Future<void> _pushToPicManager() async {
+    await pushToPicManagerWithToast(
+      context: context,
+      ref: ref,
+      request: localImagePicManagerRequest(widget.record),
     );
   }
 

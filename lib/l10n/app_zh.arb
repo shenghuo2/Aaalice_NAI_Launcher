@@ -216,7 +216,7 @@
   "settings_dataStorage": "数据与存储",
   "settings_privacySharing": "安全与分享",
   "settings_integrations": "集成",
-  "picManager_description": "将生成图片的原始文件推送到外部 Pic Manager 服务。",
+  "picManager_description": "将图片原始文件推送到外部 Pic Manager 服务。",
   "picManager_apiUrl": "API 地址",
   "picManager_apiUrlHint": "https://host 或 http://host:3210",
   "picManager_tokenSavedHint": "留空可继续使用已保存的 Token",

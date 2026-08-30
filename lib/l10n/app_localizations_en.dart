@@ -580,7 +580,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get picManager_description =>
-      'Push original generated images to an external Pic Manager service.';
+      'Push original images to an external Pic Manager service.';
 
   @override
   String get picManager_apiUrl => 'API URL';

@@ -14,6 +14,7 @@ import '../../providers/online_gallery_prompt_tag_settings_provider.dart';
 import '../../providers/online_gallery_provider.dart';
 import '../../providers/selection_mode_provider.dart';
 import '../../services/gallery_prompt_projection_service.dart';
+import '../../utils/pic_manager_push_actions.dart';
 import '../../widgets/danbooru_post_card.dart';
 import '../../widgets/gelbooru_credentials_dialog.dart';
 import 'gallery_grid_item.dart';
@@ -72,6 +73,20 @@ class _OnlineGalleryContentPresenter {
       ref.read(onlineGalleryNotifierProvider.notifier);
   OnlineGallerySelectionNotifier get _selectionNotifier =>
       ref.read(onlineGallerySelectionNotifierProvider.notifier);
+
+  Future<void> _toggleFavoriteAndMaybePush(
+    BuildContext actionContext,
+    GalleryItem item, {
+    required bool wasFavorited,
+  }) async {
+    await toggleFavoriteWithPicManagerPush(
+      context: actionContext,
+      ref: ref,
+      wasFavorited: wasFavorited,
+      request: onlineGalleryPicManagerRequest(item),
+      toggleFavorite: () => _commands.toggleFavorite(actionContext, item),
+    );
+  }
 
   GallerySourceId _activeSource(OnlineGalleryState state) =>
       switch (state.viewMode) {
@@ -540,7 +555,13 @@ class _OnlineGalleryContentPresenter {
             _galleryNotifier.search(tag);
           },
           onFavoriteToggle: canWriteFavorite
-              ? () => _commands.toggleFavorite(context, post)
+              ? () => unawaited(
+                  _toggleFavoriteAndMaybePush(
+                    context,
+                    post,
+                    wasFavorited: isFavorited,
+                  ),
+                )
               : null,
         );
       },

@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/cache/online_gallery_prefetch_coordinator.dart';
 import '../../../data/models/online_gallery/gallery_item.dart';
 import '../../providers/online_gallery_output_filter_provider.dart';
+import '../../providers/pic_manager_push_provider.dart';
+import '../../utils/pic_manager_push_actions.dart';
 import 'gallery_detail_controller.dart';
 import 'gallery_detail_dialog_view.dart';
 import 'gallery_detail_models.dart';
@@ -156,12 +158,43 @@ class _GalleryDetailDialogState extends ConsumerState<GalleryDetailDialog> {
       canToggleFavorite: widget.canToggleFavorite,
       isOutputFiltered: outputFilter,
     );
+    final picManagerConfig = ref.watch(picManagerSettingsProvider).valueOrNull;
+    final picManagerRequest = viewModel.currentMedia == null
+        ? null
+        : onlineGalleryPicManagerRequest(
+            widget.item,
+            media: viewModel.currentMedia,
+          );
+    final isPushingToPicManager =
+        picManagerRequest != null &&
+        ref
+            .watch(picManagerUploadsProvider)
+            .contains(picManagerRequest.uploadKey);
+    final autoPushOnFavorite =
+        picManagerConfig?.isConfigured == true &&
+        picManagerConfig!.autoPushOnFavorite;
+    final effectiveViewModel = viewModel.copyWith(
+      favoriteActionPending:
+          viewModel.favoriteActionPending ||
+          (autoPushOnFavorite && isPushingToPicManager),
+    );
     final actions = GalleryDetailActions(
       close: () => Navigator.of(context).maybePop(),
       moveToMedia: (index) => _controller.moveTo(context, index),
       mediaPageChanged: (index) => _controller.onPageChanged(context, index),
       retryMedia: _controller.retryMedia,
-      toggleFavorite: () => _controller.toggleFavorite(widget.onToggleFavorite),
+      toggleFavorite: () => _toggleFavorite(picManagerRequest),
+      pushToPicManager:
+          picManagerRequest != null &&
+              picManagerConfig?.isConfigured == true &&
+              !autoPushOnFavorite
+          ? () => pushToPicManagerWithToast(
+              context: context,
+              ref: ref,
+              request: picManagerRequest,
+            )
+          : null,
+      isPushingToPicManager: isPushingToPicManager,
       openSource: widget.onOpenSource,
       copyPrompt: widget.onCopyPrompt,
       copyNegativePrompt: widget.onCopyNegativePrompt,
@@ -185,8 +218,21 @@ class _GalleryDetailDialogState extends ConsumerState<GalleryDetailDialog> {
     );
     return GalleryDetailDialogView(
       controller: _controller,
-      viewModel: viewModel,
+      viewModel: effectiveViewModel,
       actions: actions,
+    );
+  }
+
+  Future<void> _toggleFavorite(PicManagerUploadRequest? request) async {
+    final wasFavorited = _controller.isFavorited;
+    await _controller.toggleFavorite(
+      () => toggleFavoriteWithPicManagerPush(
+        context: context,
+        ref: ref,
+        wasFavorited: wasFavorited,
+        request: request,
+        toggleFavorite: widget.onToggleFavorite,
+      ),
     );
   }
 

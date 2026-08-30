@@ -1166,7 +1166,7 @@ abstract class AppLocalizations {
   /// No description provided for @picManager_description.
   ///
   /// In en, this message translates to:
-  /// **'Push original generated images to an external Pic Manager service.'**
+  /// **'Push original images to an external Pic Manager service.'**
   String get picManager_description;
 
   /// No description provided for @picManager_apiUrl.

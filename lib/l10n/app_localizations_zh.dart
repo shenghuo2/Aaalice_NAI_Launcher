@@ -556,7 +556,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settings_integrations => '集成';
 
   @override
-  String get picManager_description => '将生成图片的原始文件推送到外部 Pic Manager 服务。';
+  String get picManager_description => '将图片原始文件推送到外部 Pic Manager 服务。';
 
   @override
   String get picManager_apiUrl => 'API 地址';
@@ -13833,7 +13833,7 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get settings_integrations => '整合';
 
   @override
-  String get picManager_description => '將生成圖片的原始檔案推送到外部 Pic Manager 服務。';
+  String get picManager_description => '將圖片原始檔案推送到外部 Pic Manager 服務。';
 
   @override
   String get picManager_apiUrl => 'API 位址';

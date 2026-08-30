@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -18,6 +19,7 @@ import '../../providers/selection_mode_provider.dart';
 import '../common/app_toast.dart';
 import '../../widgets/grouped_grid_view.dart';
 import '../../utils/image_detail_opener.dart';
+import '../../utils/pic_manager_push_actions.dart';
 import 'local_image_card_3d.dart';
 import '../common/image_detail/image_detail_viewer.dart';
 import '../common/image_detail/image_detail_data.dart';
@@ -548,6 +550,18 @@ class LocalGalleryContentView extends ConsumerWidget {
           ),
         );
 
+    Future<void> toggleFavoriteAndMaybePush(LocalImageRecord record) async {
+      await toggleFavoriteWithPicManagerPush(
+        context: context,
+        ref: ref,
+        wasFavorited: record.isFavorite,
+        request: localImagePicManagerRequest(record),
+        toggleFavorite: () => ref
+            .read(localGalleryNotifierProvider.notifier)
+            .toggleFavorite(record.path),
+      );
+    }
+
     void showImageDetailViewer(
       List<LocalImageRecord> images,
       int initialIndex,
@@ -576,9 +590,13 @@ class LocalGalleryContentView extends ConsumerWidget {
               ? (data, _) =>
                     onReuseMetadata?.call((data as LocalImageDetailData).record)
               : null,
-          onFavoriteToggle: (data) => ref
-              .read(localGalleryNotifierProvider.notifier)
-              .toggleFavorite((data as LocalImageDetailData).record.path),
+          onFavoriteToggle: (data) => unawaited(
+            toggleFavoriteAndMaybePush(
+              (data as LocalImageDetailData).record.copyWith(
+                isFavorite: data.isFavorite,
+              ),
+            ),
+          ),
           onSendToImg2Img: (data) async {
             try {
               final bytes = await data.getImageBytes();
@@ -634,9 +652,7 @@ class LocalGalleryContentView extends ConsumerWidget {
         priority: config.isVisible ? 1 : 5,
         onTap: config.selectionMode ? config.onSelectionToggle : config.onTap,
         onLongPress: config.onLongPress,
-        onFavoriteToggle: () => ref
-            .read(localGalleryNotifierProvider.notifier)
-            .toggleFavorite(record.path),
+        onFavoriteToggle: () => unawaited(toggleFavoriteAndMaybePush(record)),
         onSendAction: onSendAction != null
             ? (action) => onSendAction!(record, action)
             : null,
@@ -648,9 +664,8 @@ class LocalGalleryContentView extends ConsumerWidget {
       onEnterSelection: (record) => ref
           .read(localGallerySelectionNotifierProvider.notifier)
           .enterAndSelect(record.path),
-      onFavoriteToggle: (record) => ref
-          .read(localGalleryNotifierProvider.notifier)
-          .toggleFavorite(record.path),
+      onFavoriteToggle: (record) =>
+          unawaited(toggleFavoriteAndMaybePush(record)),
       onContextMenu: onContextMenu,
       onDeleted: onDeleted,
       onClearFilters: () =>

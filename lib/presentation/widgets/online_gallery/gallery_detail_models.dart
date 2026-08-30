@@ -173,6 +173,24 @@ class GalleryDetailViewModel {
   bool get hasSourceUrl =>
       detail.sourceUrl?.trim().isNotEmpty == true ||
       item.postUrl.trim().isNotEmpty;
+
+  GalleryDetailViewModel copyWith({bool? favoriteActionPending}) {
+    return GalleryDetailViewModel(
+      item: item,
+      detail: detail,
+      labels: labels,
+      mediaIndex: mediaIndex,
+      imageRevision: imageRevision,
+      isFavorited: isFavorited,
+      favoriteLoading: favoriteLoading,
+      favoriteActionPending:
+          favoriteActionPending ?? this.favoriteActionPending,
+      queueActionPending: queueActionPending,
+      downloadActionPending: downloadActionPending,
+      canToggleFavorite: canToggleFavorite,
+      isOutputFiltered: isOutputFiltered,
+    );
+  }
 }
 
 @immutable
@@ -183,6 +201,8 @@ class GalleryDetailActions {
     required this.mediaPageChanged,
     required this.retryMedia,
     required this.toggleFavorite,
+    this.pushToPicManager,
+    this.isPushingToPicManager = false,
     required this.openSource,
     required this.copyPrompt,
     required this.copyNegativePrompt,
@@ -207,6 +227,8 @@ class GalleryDetailActions {
   final ValueChanged<int> mediaPageChanged;
   final Future<void> Function(GalleryMedia media) retryMedia;
   final Future<void> Function() toggleFavorite;
+  final VoidCallback? pushToPicManager;
+  final bool isPushingToPicManager;
   final VoidCallback openSource;
   final VoidCallback copyPrompt;
   final VoidCallback copyNegativePrompt;

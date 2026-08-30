@@ -6,13 +6,88 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_launcher/data/models/online_gallery/gallery_item.dart';
 import 'package:nai_launcher/data/models/online_gallery/gallery_source.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
+import 'package:nai_launcher/presentation/providers/pic_manager_push_provider.dart';
 import 'package:nai_launcher/presentation/widgets/online_gallery/gallery_detail_dialog.dart';
 import 'package:nai_launcher/presentation/widgets/online_gallery/gallery_detail_overview_card.dart';
 import 'package:nai_launcher/presentation/widgets/online_gallery/video_player_widget.dart';
 import 'package:nai_launcher/presentation/widgets/tag_chip.dart';
 
+import '../../../helpers/pic_manager_test_support.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('places manual Pic Manager push beside image favorite', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final service = RecordingPicManagerPushService();
+    final settings = await createPicManagerTestSettings(
+      service: service,
+      autoPushOnFavorite: false,
+    );
+    const item = GalleryItem(
+      id: 77,
+      workId: '77',
+      sourceId: GallerySourceId.danbooru,
+    );
+    const detail = GalleryDetail(
+      item: item,
+      media: [
+        GalleryMedia(
+          id: 'original-77',
+          downloadUrl: 'https://cdn.example/original-77.png',
+          width: 832,
+          height: 1216,
+          mediaType: 'image',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          picManagerSettingsProvider.overrideWith((_) => settings),
+          picManagerPushServiceProvider.overrideWithValue(service),
+        ],
+        child: MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: GalleryDetailDialog(
+              item: item,
+              detail: detail,
+              isFavorited: false,
+              favoriteLoading: false,
+              labels: _labels(),
+              onCopyPrompt: () {},
+              onCopyNegativePrompt: () {},
+              onCopyCharacter: (_) {},
+              onCopyAll: () {},
+              onToggleFavorite: () async => true,
+              onOpenSource: () {},
+              onSendToGenerate: () {},
+              onAddToQueue: () async {},
+              onDownloadCurrentOriginal: (_) async {},
+              onTagSearch: (_) {},
+              onBlacklistChanged: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final push = find.byTooltip('Push to Pic Manager');
+    final favorite = find.byTooltip('Add favorite');
+    expect(push, findsOneWidget);
+    expect(favorite, findsOneWidget);
+    expect(tester.getCenter(push).dx, lessThan(tester.getCenter(favorite).dx));
+  });
 
   testWidgets(
     'renders text-only entries and only commits successful favorites',

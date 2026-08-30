@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -19,10 +20,12 @@ import '../../data/models/online_gallery/danbooru_post.dart';
 import '../../data/models/queue/replication_task.dart';
 import '../../core/autocomplete/tag_translation_lookup.dart';
 import '../providers/character_prompt_provider.dart';
+import '../providers/pic_manager_push_provider.dart';
 import '../providers/replication_queue_provider.dart';
 import '../providers/reverse_prompt_provider.dart';
 import '../services/generation_prompt_transfer_service.dart';
 import '../themes/theme_extension.dart';
+import '../utils/pic_manager_push_actions.dart';
 import 'common/card_action_buttons.dart';
 import 'common/image_card_hover_motion.dart';
 import 'online_gallery/online_gallery_hover_controller.dart';
@@ -709,6 +712,26 @@ class _DanbooruPostCardState extends State<DanbooruPostCard> {
                           : null,
                       child: Consumer(
                         builder: (context, ref, _) {
+                          final picManagerConfig = ref
+                              .watch(picManagerSettingsProvider)
+                              .valueOrNull;
+                          final picManagerRequest =
+                              onlineGalleryPicManagerRequest(widget.post);
+                          final isPushingToPicManager =
+                              picManagerRequest != null &&
+                              ref
+                                  .watch(picManagerUploadsProvider)
+                                  .contains(picManagerRequest.uploadKey);
+                          final autoPushOnFavorite =
+                              picManagerConfig?.isConfigured == true &&
+                              picManagerConfig!.autoPushOnFavorite;
+                          final showManualPicManagerPush =
+                              widget.showFavoriteAction &&
+                              !widget.favoriteReadOnly &&
+                              widget.onFavoriteToggle != null &&
+                              picManagerRequest != null &&
+                              picManagerConfig?.isConfigured == true &&
+                              !autoPushOnFavorite;
                           return CardActionButtons(
                             key: const ValueKey(
                               'online-gallery-card-action-buttons',
@@ -716,6 +739,21 @@ class _DanbooruPostCardState extends State<DanbooruPostCard> {
                             visible: _isHovering || _isFocused,
                             direction: buttonDirection,
                             buttons: [
+                              if (showManualPicManagerPush)
+                                CardActionButtonConfig(
+                                  icon: Icons.cloud_upload_outlined,
+                                  tooltip: isPushingToPicManager
+                                      ? context.l10n.picManager_pushing
+                                      : context.l10n.picManager_push,
+                                  isLoading: isPushingToPicManager,
+                                  onPressed: () => unawaited(
+                                    pushToPicManagerWithToast(
+                                      context: context,
+                                      ref: ref,
+                                      request: picManagerRequest,
+                                    ),
+                                  ),
+                                ),
                               if (widget.showFavoriteAction &&
                                   !widget.favoriteReadOnly &&
                                   widget.onFavoriteToggle != null)
@@ -733,7 +771,10 @@ class _DanbooruPostCardState extends State<DanbooruPostCard> {
                                   iconColor: widget.isFavorited
                                       ? Colors.red
                                       : Colors.white,
-                                  isLoading: widget.isFavoriteLoading,
+                                  isLoading:
+                                      widget.isFavoriteLoading ||
+                                      (autoPushOnFavorite &&
+                                          isPushingToPicManager),
                                   onPressed: widget.onFavoriteToggle!,
                                 ),
                               if (widget.post.bestQualityUrl.isNotEmpty)

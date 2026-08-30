@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/utils/localization_extension.dart';
 import '../../../data/models/online_gallery/gallery_source.dart';
 import 'gallery_detail_action_panel.dart';
 import 'gallery_detail_controller.dart';
@@ -182,6 +183,7 @@ class _GalleryDetailHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
+          if (actions.pushToPicManager != null) _picManagerPushButton(context),
           _favoriteButton(context),
           IconButton(
             onPressed: viewModel.hasSourceUrl ? actions.openSource : null,
@@ -229,6 +231,22 @@ class _GalleryDetailHeader extends StatelessWidget {
                 color: viewModel.isFavorited ? theme.colorScheme.primary : null,
               ),
       ),
+    );
+  }
+
+  Widget _picManagerPushButton(BuildContext context) {
+    final loading = actions.isPushingToPicManager;
+    return IconButton(
+      onPressed: loading ? null : actions.pushToPicManager,
+      tooltip: loading
+          ? context.l10n.picManager_pushing
+          : context.l10n.picManager_push,
+      icon: loading
+          ? const SizedBox.square(
+              dimension: 19,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.cloud_upload_outlined),
     );
   }
 

@@ -207,7 +207,7 @@
   "settings_dataStorage": "データとストレージ",
   "settings_privacySharing": "保護と共有",
   "settings_integrations": "連携",
-  "picManager_description": "生成画像の元データを外部の Pic Manager に送信します。",
+  "picManager_description": "画像の元データを外部の Pic Manager に送信します。",
   "picManager_apiUrl": "API URL",
   "picManager_apiUrlHint": "https://host または http://host:3210",
   "picManager_tokenSavedHint": "保存済みの Token を維持する場合は空欄のままにします",
