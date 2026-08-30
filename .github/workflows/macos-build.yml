@@ -52,27 +52,17 @@ jobs:
         shell: pwsh
         run: ./scripts/prepare_bundled_database.ps1
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - name: Prepare incremental Flutter build
+        uses: ./.github/actions/prepare-flutter-build
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
+          cache-namespace: nai-hosted
 
       - name: Prepare CocoaPods
         run: pod --version
 
-      - name: Resolve dependencies
-        run: flutter pub get --enforce-lockfile
-
       - name: Validate bundled autocomplete databases
         run: dart run tool/tag_catalog/verify_bundled_databases.dart
-
-      - name: Generate localizations
-        run: flutter gen-l10n
-
-      - name: Generate code
-        run: dart run build_runner build --delete-conflicting-outputs
 
       - name: Verify generated files
         run: git diff --exit-code -- lib

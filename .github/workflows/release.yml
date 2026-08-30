@@ -344,27 +344,17 @@ jobs:
         shell: pwsh
         run: ./scripts/prepare_bundled_database.ps1
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - name: Prepare incremental Flutter build
+        uses: ./.github/actions/prepare-flutter-build
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
+          cache-namespace: nai-hosted
 
       - name: Prepare CocoaPods
         run: pod --version
 
-      - name: Resolve dependencies
-        run: flutter pub get --enforce-lockfile
-
       - name: Validate bundled autocomplete databases
         run: dart run tool/tag_catalog/verify_bundled_databases.dart
-
-      - name: Generate localizations
-        run: flutter gen-l10n
-
-      - name: Generate code
-        run: dart run build_runner build --delete-conflicting-outputs
 
       - name: Verify generated files
         run: git diff --exit-code -- lib
@@ -423,24 +413,19 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - name: Setup Gradle build cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Prepare incremental Flutter build
+        uses: ./.github/actions/prepare-flutter-build
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-
-      - name: Resolve dependencies
-        run: flutter pub get --enforce-lockfile
+          cache-namespace: nai-hosted
 
       - name: Validate bundled autocomplete databases
         run: dart run tool/tag_catalog/verify_bundled_databases.dart
-
-      - name: Generate localizations
-        run: flutter gen-l10n
-
-      - name: Generate code
-        run: dart run build_runner build --delete-conflicting-outputs
 
       - name: Verify generated files
         run: git diff --exit-code
@@ -498,19 +483,20 @@ jobs:
             exit 1
           fi
           expected_version_name="${BASH_REMATCH[1]}"
-          expected_version_code="${BASH_REMATCH[2]}"
+          base_version_code=$((10#${BASH_REMATCH[2]}))
           aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           test -x "$aapt"
           mkdir -p dist
 
+          # Flutter adds ABI index * 1000 to split APK version codes.
           packages=(
-            "build/app/outputs/compatibility-apk/app-release.apk|armeabi-v7a,arm64-v8a,x86_64|NAI_Launcher_Android_${expected_version}.apk"
-            "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk|arm64-v8a|NAI_Launcher_Android_arm64-v8a_${expected_version}.apk"
-            "build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk|armeabi-v7a|NAI_Launcher_Android_armeabi-v7a_${expected_version}.apk"
-            "build/app/outputs/flutter-apk/app-x86_64-release.apk|x86_64|NAI_Launcher_Android_x86_64_${expected_version}.apk"
+            "build/app/outputs/compatibility-apk/app-release.apk|armeabi-v7a,arm64-v8a,x86_64|0|NAI_Launcher_Android_${expected_version}.apk"
+            "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk|arm64-v8a|2|NAI_Launcher_Android_arm64-v8a_${expected_version}.apk"
+            "build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk|armeabi-v7a|1|NAI_Launcher_Android_armeabi-v7a_${expected_version}.apk"
+            "build/app/outputs/flutter-apk/app-x86_64-release.apk|x86_64|4|NAI_Launcher_Android_x86_64_${expected_version}.apk"
           )
           for package in "${packages[@]}"; do
-            IFS='|' read -r apk expected_abis file_name <<< "$package"
+            IFS='|' read -r apk expected_abis abi_index file_name <<< "$package"
             test -s "$apk"
 
             verification="$("$apksigner" verify --verbose --print-certs "$apk" 2>&1)"
@@ -539,6 +525,7 @@ jobs:
 
             badging="$("$aapt" dump badging "$apk")"
             package_line="$(sed -n '1p' <<< "$badging")"
+            expected_version_code=$((base_version_code + abi_index * 1000))
             if [[ "$package_line" != *"name='com.aaalice.nai_launcher'"* || \
                   "$package_line" != *"versionCode='$expected_version_code'"* || \
                   "$package_line" != *"versionName='$expected_version_name'"* ]]; then
