@@ -61,6 +61,8 @@ class SelectableImageCard extends ConsumerStatefulWidget {
     this.onSaveToLibrary,
     this.isFavorite = false,
     this.onFavoriteToggle,
+    this.onPushToPicManager,
+    this.isPushingToPicManager = false,
     this.underlay,
     this.isGenerating = false,
     this.progress,
@@ -118,6 +120,8 @@ class SelectableImageCard extends ConsumerStatefulWidget {
   final void Function(Uint8List imageBytes, String prompt)? onSaveToLibrary;
   final bool isFavorite;
   final VoidCallback? onFavoriteToggle;
+  final VoidCallback? onPushToPicManager;
+  final bool isPushingToPicManager;
   final Widget? underlay;
   final bool isGenerating;
   final double? progress;
@@ -149,6 +153,7 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
     dragPreparationReady: widget.dragPreparationReady,
     completionPlaceholderBytes: widget.completionPlaceholderBytes,
     isFavorite: widget.isFavorite,
+    isPushingToPicManager: widget.isPushingToPicManager,
     underlay: widget.underlay,
     isGenerating: widget.isGenerating,
     progress: widget.progress,
@@ -192,6 +197,7 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
     onOpenInExplorer: widget.onOpenInExplorer,
     onSaveToLibrary: widget.onSaveToLibrary,
     onFavoriteToggle: widget.onFavoriteToggle,
+    onPushToPicManager: widget.onPushToPicManager,
     onCompletionPlaceholderSettled: widget.onCompletionPlaceholderSettled,
   );
 

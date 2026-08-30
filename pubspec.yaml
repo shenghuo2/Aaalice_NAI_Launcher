@@ -23,6 +23,7 @@ dependencies:
   # 网络请求
   dio: ^5.4.0
   dio_http2_adapter: ^2.3.0
+  http: ^1.2.2
   html: ^0.15.6
   xml: ^6.6.1
 

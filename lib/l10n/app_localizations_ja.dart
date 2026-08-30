@@ -558,6 +558,92 @@ class AppLocalizationsJa extends AppLocalizations {
   String get settings_integrations => '連携';
 
   @override
+  String get picManager_description => '生成画像の元データを外部の Pic Manager に送信します。';
+
+  @override
+  String get picManager_apiUrl => 'API URL';
+
+  @override
+  String get picManager_apiUrlHint => 'https://host または http://host:3210';
+
+  @override
+  String get picManager_tokenSavedHint => '保存済みの Token を維持する場合は空欄のままにします';
+
+  @override
+  String get picManager_allowInsecureHttp => '安全でない HTTP を許可';
+
+  @override
+  String get picManager_allowInsecureHttpHint =>
+      '信頼できるローカルネットワークでのみ使用してください。リモート接続には HTTPS が必要です。';
+
+  @override
+  String get picManager_autoPushFavorite => 'お気に入り登録時に送信';
+
+  @override
+  String get picManager_autoPushFavoriteHint =>
+      '有効にすると、お気に入り登録と同時に元画像を送信し、個別の送信ボタンを非表示にします。';
+
+  @override
+  String get picManager_source => '送信元: aaaalice Nai Launcher';
+
+  @override
+  String get picManager_clearToken => 'Token を消去';
+
+  @override
+  String get picManager_saveSuccess => 'Pic Manager の設定を保存しました';
+
+  @override
+  String get picManager_tokenCleared => 'Pic Manager Token を消去しました';
+
+  @override
+  String get picManager_connectionSuccess => 'Pic Manager に接続しました';
+
+  @override
+  String get picManager_push => 'Pic Manager に送信';
+
+  @override
+  String get picManager_pushing => 'Pic Manager に送信中';
+
+  @override
+  String get picManager_pushSuccess => '画像を Pic Manager に送信しました';
+
+  @override
+  String get picManager_pushDeduplicated => '画像は既に存在します。送信元記録を追加しました';
+
+  @override
+  String get picManager_errorNotConfigured =>
+      '先に Pic Manager の API URL と Token を設定してください';
+
+  @override
+  String get picManager_errorInvalidUrl =>
+      '認証情報、クエリ、フラグメントを含まない有効な HTTP または HTTPS URL を入力してください';
+
+  @override
+  String get picManager_errorInsecureHttp =>
+      '安全でない HTTP を明示的に許可するか、HTTPS を使用してください';
+
+  @override
+  String get picManager_errorUnauthorized => 'Pic Manager Token が無効か取り消されています';
+
+  @override
+  String get picManager_errorInvalidRequest => 'Pic Manager が画像または送信元情報を拒否しました';
+
+  @override
+  String get picManager_errorServer => 'Pic Manager でサーバーエラーが発生しました';
+
+  @override
+  String get picManager_errorTimeout => 'タイムアウトしましたが、サーバーが画像を受信済みの可能性があります';
+
+  @override
+  String get picManager_errorNetwork => 'Pic Manager に接続できません';
+
+  @override
+  String get picManager_errorInvalidResponse => 'Pic Manager から予期しない応答が返されました';
+
+  @override
+  String get picManager_errorAlreadyUploading => 'この画像は送信中です';
+
+  @override
   String get settings_accountDetailsSection => 'アカウント情報';
 
   @override

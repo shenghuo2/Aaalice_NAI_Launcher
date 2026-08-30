@@ -7,6 +7,7 @@ class StorageKeys {
   static const String tokenExpiry = 'nai_token_expiry';
   static const String userEmail = 'nai_user_email';
   static const String discordShareSession = 'discord_share_session_v1';
+  static const String picManagerPushToken = 'pic_manager_push_token_v1';
   static const String cloudSyncMasterKey = 'cloud_sync_master_key_v1';
   static const String cloudSyncCredentials = 'cloud_sync_credentials_v1';
   static const String cloudSyncKeyEnvelope = 'cloud_sync_key_envelope_v1';
@@ -18,6 +19,8 @@ class StorageKeys {
       'cloud_sync_last_maintenance_at_v1';
   static const String cloudSyncContentSelection =
       'cloud_sync_content_selection_v1';
+  static const String picManagerPushConfiguration =
+      'pic_manager_push_configuration_v1';
 
   // Token 存储（按账号ID）
   static const String accountTokenPrefix = 'nai_account_token_';

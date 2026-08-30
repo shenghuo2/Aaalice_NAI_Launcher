@@ -17,6 +17,7 @@ class ImageCardViewData {
     required this.dragPreparationReady,
     required this.completionPlaceholderBytes,
     required this.isFavorite,
+    required this.isPushingToPicManager,
     required this.underlay,
     required this.isGenerating,
     required this.progress,
@@ -40,6 +41,7 @@ class ImageCardViewData {
   final bool dragPreparationReady;
   final Uint8List? completionPlaceholderBytes;
   final bool isFavorite;
+  final bool isPushingToPicManager;
   final Widget? underlay;
   final bool isGenerating;
   final double? progress;
@@ -85,6 +87,7 @@ class ImageCardCapabilities {
     required this.onOpenInExplorer,
     required this.onSaveToLibrary,
     required this.onFavoriteToggle,
+    required this.onPushToPicManager,
     required this.onCompletionPlaceholderSettled,
   });
 
@@ -118,5 +121,6 @@ class ImageCardCapabilities {
   final VoidCallback? onOpenInExplorer;
   final void Function(Uint8List imageBytes, String prompt)? onSaveToLibrary;
   final VoidCallback? onFavoriteToggle;
+  final VoidCallback? onPushToPicManager;
   final VoidCallback? onCompletionPlaceholderSettled;
 }

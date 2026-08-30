@@ -20,6 +20,7 @@ import '../../../../core/utils/keyboard_modifier_utils.dart';
 import '../../../../core/utils/vibe_file_parser.dart';
 import '../../../../core/utils/zip_utils.dart';
 import '../../../../data/services/alias_resolver_service.dart';
+import '../../../../data/models/pic_manager/pic_manager_push_config.dart';
 import '../../../providers/layout_state_provider.dart';
 import '../../../providers/tag_library_page_provider.dart';
 
@@ -30,6 +31,7 @@ import '../../../providers/generation/preview_selection_provider.dart';
 import '../../../providers/history_click_behavior_provider.dart';
 import '../../../providers/image_generation_provider.dart';
 import '../../../providers/local_gallery_provider.dart';
+import '../../../providers/pic_manager_push_provider.dart';
 import '../../../providers/reverse_prompt_provider.dart';
 import '../../../providers/share_image_settings_provider.dart';
 import '../../../services/image_workflow_launcher.dart';
@@ -43,6 +45,7 @@ import '../../../widgets/image_editor/image_editor_screen.dart';
 import '../../../utils/image_detail_opener.dart';
 import '../../../utils/krita_send_helper.dart';
 import '../../../utils/precise_ref_library_import_helper.dart';
+import '../../../utils/pic_manager_localization.dart';
 import '../../../widgets/common/themed_confirm_dialog.dart';
 import '../services/generation_save_service.dart';
 import '../../../widgets/common/themed_divider.dart';
@@ -646,6 +649,8 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
     required HistoryClickBehavior clickBehavior,
     required String? selectedPreviewId,
   }) {
+    final picManagerConfig = ref.watch(picManagerSettingsProvider).valueOrNull;
+    final picManagerUploads = ref.watch(picManagerUploadsProvider);
     final previewDimensions = ref.watch(
       generationParamsNotifierProvider.select(selectPreviewDimensionsViewData),
     );
@@ -748,6 +753,8 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
                       stripMetadata: stripMetadata,
                       clickBehavior: clickBehavior,
                       selectedPreviewId: selectedPreviewId,
+                      picManagerConfig: picManagerConfig,
+                      picManagerUploads: picManagerUploads,
                     ),
                   ),
                 );
@@ -810,6 +817,14 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
                                     historyImage,
                                   )
                                 : null,
+                            onPushToPicManager: _manualPicManagerPushAction(
+                              context,
+                              historyImage,
+                              picManagerConfig,
+                            ),
+                            isPushingToPicManager: picManagerUploads.contains(
+                              historyImage.id,
+                            ),
                             onSelectionChanged: (selected) {
                               if (!historyImage.canBulkSelect) {
                                 return;
@@ -1012,6 +1027,8 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
     required bool stripMetadata,
     required HistoryClickBehavior clickBehavior,
     required String? selectedPreviewId,
+    required PicManagerPushConfig? picManagerConfig,
+    required Set<String> picManagerUploads,
   }) {
     final completedImages = state.currentImages;
 
@@ -1052,6 +1069,12 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
           onFavoriteToggle: image.canFavorite
               ? () => _toggleHistoryFavorite(context, image)
               : null,
+          onPushToPicManager: _manualPicManagerPushAction(
+            context,
+            image,
+            picManagerConfig,
+          ),
+          isPushingToPicManager: picManagerUploads.contains(image.id),
           onSelectionChanged: (selected) {
             if (!image.canBulkSelect) {
               return;
@@ -1337,19 +1360,23 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
           .read(localGalleryNotifierProvider.notifier)
           .toggleFavorite(filePath);
 
-      if (!mounted) return;
+      if (!mounted || !context.mounted) return;
       setState(() {
         _favoriteStatePaths[image.id] = filePath;
         _favoriteStates[image.id] = isFavorite;
       });
 
-      if (context.mounted) {
-        AppToast.success(
-          context,
-          isFavorite
-              ? context.l10n.toast_favorited
-              : context.l10n.toast_unfavorited,
-        );
+      AppToast.success(
+        context,
+        isFavorite
+            ? context.l10n.toast_favorited
+            : context.l10n.toast_unfavorited,
+      );
+      final picManagerConfig = ref.read(picManagerSettingsProvider).valueOrNull;
+      if (isFavorite &&
+          picManagerConfig?.isConfigured == true &&
+          picManagerConfig!.autoPushOnFavorite) {
+        await _pushToPicManager(context, image);
       }
     } catch (e) {
       if (context.mounted) {
@@ -1360,6 +1387,40 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
       }
     } finally {
       _favoriteToggleLoadingIds.remove(image.id);
+    }
+  }
+
+  VoidCallback? _manualPicManagerPushAction(
+    BuildContext context,
+    GeneratedImage image,
+    PicManagerPushConfig? config,
+  ) {
+    if (!image.canSave ||
+        config?.isConfigured != true ||
+        config!.autoPushOnFavorite) {
+      return null;
+    }
+    return () => unawaited(_pushToPicManager(context, image));
+  }
+
+  Future<void> _pushToPicManager(
+    BuildContext context,
+    GeneratedImage image,
+  ) async {
+    try {
+      final receipt = await ref
+          .read(picManagerUploadsProvider.notifier)
+          .upload(image);
+      if (!context.mounted) return;
+      AppToast.success(
+        context,
+        receipt.deduplicated
+            ? context.l10n.picManager_pushDeduplicated
+            : context.l10n.picManager_pushSuccess,
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      AppToast.error(context, localizePicManagerError(context.l10n, error));
     }
   }
 

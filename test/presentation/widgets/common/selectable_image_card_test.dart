@@ -521,6 +521,46 @@ void main() {
     expect(toggled, isTrue);
   });
 
+  testWidgets('Pic Manager push button appears next to favorite', (
+    tester,
+  ) async {
+    var pushed = false;
+    await tester.pumpWidget(
+      _buildCardApp(
+        onFavoriteToggle: _noop,
+        onPushToPicManager: () => pushed = true,
+      ),
+    );
+
+    final push = find.byTooltip('推送到 Pic Manager');
+    final favorite = find.byTooltip('收藏');
+    expect(push, findsOneWidget);
+    expect(favorite, findsOneWidget);
+    expect(tester.getCenter(push).dx, lessThan(tester.getCenter(favorite).dx));
+
+    await tester.tap(push);
+    expect(pushed, isTrue);
+  });
+
+  testWidgets(
+    'merged favorite action shows push progress without push button',
+    (tester) async {
+      await tester.pumpWidget(
+        _buildCardApp(onFavoriteToggle: _noop, isPushingToPicManager: true),
+      );
+
+      expect(find.byTooltip('推送到 Pic Manager'), findsNothing);
+      expect(find.byTooltip('正在推送到 Pic Manager'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is CircularProgressIndicator && widget.value == null,
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('read-only card hides save and copy actions but keeps badge', (
     tester,
   ) async {
@@ -631,6 +671,8 @@ Widget _buildCardApp({
   bool enableCopyAction = true,
   String? statusBadgeLabel,
   VoidCallback? onFavoriteToggle,
+  VoidCallback? onPushToPicManager,
+  bool isPushingToPicManager = false,
   VoidCallback? onInpaint = _noop,
   VoidCallback? onUpscale = _noop,
   VoidCallback? onReversePrompt,
@@ -663,6 +705,8 @@ Widget _buildCardApp({
               statusBadgeLabel: statusBadgeLabel,
               isFavorite: isFavorite,
               onFavoriteToggle: onFavoriteToggle,
+              onPushToPicManager: onPushToPicManager,
+              isPushingToPicManager: isPushingToPicManager,
               onInpaint: onInpaint,
               onUpscale: onUpscale,
               onReversePrompt: onReversePrompt,

@@ -567,6 +567,99 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_integrations => 'Integrations';
 
   @override
+  String get picManager_description =>
+      'Push original generated images to an external Pic Manager service.';
+
+  @override
+  String get picManager_apiUrl => 'API URL';
+
+  @override
+  String get picManager_apiUrlHint => 'https://host or http://host:3210';
+
+  @override
+  String get picManager_tokenSavedHint => 'Leave blank to keep the saved Token';
+
+  @override
+  String get picManager_allowInsecureHttp => 'Allow insecure HTTP';
+
+  @override
+  String get picManager_allowInsecureHttpHint =>
+      'Use only on a trusted local network. Remote access should use HTTPS.';
+
+  @override
+  String get picManager_autoPushFavorite => 'Push when favoriting';
+
+  @override
+  String get picManager_autoPushFavoriteHint =>
+      'When enabled, favoriting also pushes the original image and the separate push button is hidden.';
+
+  @override
+  String get picManager_source => 'Source: aaaalice Nai Launcher';
+
+  @override
+  String get picManager_clearToken => 'Clear Token';
+
+  @override
+  String get picManager_saveSuccess => 'Pic Manager settings saved';
+
+  @override
+  String get picManager_tokenCleared => 'Pic Manager Token cleared';
+
+  @override
+  String get picManager_connectionSuccess => 'Pic Manager connection succeeded';
+
+  @override
+  String get picManager_push => 'Push to Pic Manager';
+
+  @override
+  String get picManager_pushing => 'Pushing to Pic Manager';
+
+  @override
+  String get picManager_pushSuccess => 'Image pushed to Pic Manager';
+
+  @override
+  String get picManager_pushDeduplicated =>
+      'Image already exists; source record added';
+
+  @override
+  String get picManager_errorNotConfigured =>
+      'Configure the Pic Manager API URL and Token first';
+
+  @override
+  String get picManager_errorInvalidUrl =>
+      'Enter a valid HTTP or HTTPS API URL without credentials, query, or fragment';
+
+  @override
+  String get picManager_errorInsecureHttp =>
+      'Enable insecure HTTP explicitly or use HTTPS';
+
+  @override
+  String get picManager_errorUnauthorized =>
+      'The Pic Manager Token is invalid or revoked';
+
+  @override
+  String get picManager_errorInvalidRequest =>
+      'Pic Manager rejected the image or source information';
+
+  @override
+  String get picManager_errorServer => 'Pic Manager encountered a server error';
+
+  @override
+  String get picManager_errorTimeout =>
+      'The request timed out, but the server may already have received the image';
+
+  @override
+  String get picManager_errorNetwork => 'Unable to connect to Pic Manager';
+
+  @override
+  String get picManager_errorInvalidResponse =>
+      'Pic Manager returned an unexpected response';
+
+  @override
+  String get picManager_errorAlreadyUploading =>
+      'This image is already being pushed';
+
+  @override
   String get settings_accountDetailsSection => 'Account details';
 
   @override

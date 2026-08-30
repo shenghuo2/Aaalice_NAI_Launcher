@@ -43,6 +43,7 @@ enum ImageCardActionId {
   enhance,
   upscale,
   sendToKrita,
+  pushToPicManager,
 }
 
 @immutable
@@ -143,6 +144,14 @@ class ImageCardActionCatalog {
       Icons.send_rounded,
       l10n.discordShare_action,
       capabilities.onShareToDiscord,
+      group: 1,
+      hover: false,
+    );
+    add(
+      ImageCardActionId.pushToPicManager,
+      Icons.cloud_upload_outlined,
+      l10n.picManager_push,
+      capabilities.onPushToPicManager,
       group: 1,
       hover: false,
     );

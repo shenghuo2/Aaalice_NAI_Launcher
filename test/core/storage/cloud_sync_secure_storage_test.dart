@@ -65,6 +65,39 @@ void main() {
 
     expect(await service.getCloudSyncCredentials(), 'credentials');
   });
+
+  test(
+    'Pic Manager Token is normalized and remains in secure storage',
+    () async {
+      final values = <String, String>{};
+      final backend = _Storage();
+      when(() => backend.delete(key: any(named: 'key'))).thenAnswer((
+        invocation,
+      ) async {
+        values.remove(invocation.namedArguments[#key] as String);
+      });
+      when(
+        () => backend.write(
+          key: any(named: 'key'),
+          value: any(named: 'value'),
+        ),
+      ).thenAnswer((invocation) async {
+        values[invocation.namedArguments[#key] as String] =
+            invocation.namedArguments[#value] as String;
+      });
+      when(() => backend.read(key: any(named: 'key'))).thenAnswer(
+        (invocation) async => values[invocation.namedArguments[#key] as String],
+      );
+      final service = SecureStorageService(storage: backend);
+      await service.clearPicManagerPushToken();
+
+      await service.savePicManagerPushToken('  Bearer secret-token  ');
+      expect(await service.getPicManagerPushToken(), 'secret-token');
+
+      await service.clearPicManagerPushToken();
+      expect(await service.getPicManagerPushToken(), isNull);
+    },
+  );
 }
 
 class _Storage extends Mock implements FlutterSecureStorage {}

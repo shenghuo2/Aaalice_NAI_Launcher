@@ -202,6 +202,36 @@ class SecureStorageService {
     await _storage.delete(key: key);
   }
 
+  // ==================== Pic Manager Token ====================
+
+  Future<void> savePicManagerPushToken(String token) async {
+    final normalized = _normalizePicManagerToken(token);
+    if (normalized.isEmpty) {
+      throw const FormatException('Pic Manager token is empty');
+    }
+    await _storage.write(
+      key: StorageKeys.picManagerPushToken,
+      value: normalized,
+    );
+    _memoryCache[StorageKeys.picManagerPushToken] = normalized;
+  }
+
+  Future<String?> getPicManagerPushToken() async {
+    final cached = _memoryCache[StorageKeys.picManagerPushToken];
+    if (cached != null && cached.isNotEmpty) return cached;
+    final token = await _storage.read(key: StorageKeys.picManagerPushToken);
+    if (token == null || token.trim().isEmpty) return null;
+    final normalized = _normalizePicManagerToken(token);
+    if (normalized.isEmpty) return null;
+    _memoryCache[StorageKeys.picManagerPushToken] = normalized;
+    return normalized;
+  }
+
+  Future<void> clearPicManagerPushToken() async {
+    _memoryCache.remove(StorageKeys.picManagerPushToken);
+    await _storage.delete(key: StorageKeys.picManagerPushToken);
+  }
+
   Future<void> saveCloudSyncMasterKey(String encodedKey) =>
       _saveCloudSecret(StorageKeys.cloudSyncMasterKey, encodedKey);
 
@@ -470,6 +500,15 @@ class SecureStorageService {
     }
 
     return normalizedToken;
+  }
+
+  String _normalizePicManagerToken(String token) {
+    var normalized = _stripWrappingQuotes(token.trim());
+    normalized = normalized.replaceFirst(_bearerPrefixRegex, '').trim();
+    if (normalized.runes.any((rune) => rune <= 0x20 || rune == 0x7f)) {
+      throw const FormatException('Pic Manager token contains whitespace');
+    }
+    return normalized;
   }
 
   String _stripWrappingQuotes(String value) {

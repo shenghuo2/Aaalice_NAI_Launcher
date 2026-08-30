@@ -1139,6 +1139,168 @@ abstract class AppLocalizations {
   /// **'Integrations'**
   String get settings_integrations;
 
+  /// No description provided for @picManager_description.
+  ///
+  /// In en, this message translates to:
+  /// **'Push original generated images to an external Pic Manager service.'**
+  String get picManager_description;
+
+  /// No description provided for @picManager_apiUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'API URL'**
+  String get picManager_apiUrl;
+
+  /// No description provided for @picManager_apiUrlHint.
+  ///
+  /// In en, this message translates to:
+  /// **'https://host or http://host:3210'**
+  String get picManager_apiUrlHint;
+
+  /// No description provided for @picManager_tokenSavedHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave blank to keep the saved Token'**
+  String get picManager_tokenSavedHint;
+
+  /// No description provided for @picManager_allowInsecureHttp.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow insecure HTTP'**
+  String get picManager_allowInsecureHttp;
+
+  /// No description provided for @picManager_allowInsecureHttpHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Use only on a trusted local network. Remote access should use HTTPS.'**
+  String get picManager_allowInsecureHttpHint;
+
+  /// No description provided for @picManager_autoPushFavorite.
+  ///
+  /// In en, this message translates to:
+  /// **'Push when favoriting'**
+  String get picManager_autoPushFavorite;
+
+  /// No description provided for @picManager_autoPushFavoriteHint.
+  ///
+  /// In en, this message translates to:
+  /// **'When enabled, favoriting also pushes the original image and the separate push button is hidden.'**
+  String get picManager_autoPushFavoriteHint;
+
+  /// No description provided for @picManager_source.
+  ///
+  /// In en, this message translates to:
+  /// **'Source: aaaalice Nai Launcher'**
+  String get picManager_source;
+
+  /// No description provided for @picManager_clearToken.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear Token'**
+  String get picManager_clearToken;
+
+  /// No description provided for @picManager_saveSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Pic Manager settings saved'**
+  String get picManager_saveSuccess;
+
+  /// No description provided for @picManager_tokenCleared.
+  ///
+  /// In en, this message translates to:
+  /// **'Pic Manager Token cleared'**
+  String get picManager_tokenCleared;
+
+  /// No description provided for @picManager_connectionSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Pic Manager connection succeeded'**
+  String get picManager_connectionSuccess;
+
+  /// No description provided for @picManager_push.
+  ///
+  /// In en, this message translates to:
+  /// **'Push to Pic Manager'**
+  String get picManager_push;
+
+  /// No description provided for @picManager_pushing.
+  ///
+  /// In en, this message translates to:
+  /// **'Pushing to Pic Manager'**
+  String get picManager_pushing;
+
+  /// No description provided for @picManager_pushSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Image pushed to Pic Manager'**
+  String get picManager_pushSuccess;
+
+  /// No description provided for @picManager_pushDeduplicated.
+  ///
+  /// In en, this message translates to:
+  /// **'Image already exists; source record added'**
+  String get picManager_pushDeduplicated;
+
+  /// No description provided for @picManager_errorNotConfigured.
+  ///
+  /// In en, this message translates to:
+  /// **'Configure the Pic Manager API URL and Token first'**
+  String get picManager_errorNotConfigured;
+
+  /// No description provided for @picManager_errorInvalidUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a valid HTTP or HTTPS API URL without credentials, query, or fragment'**
+  String get picManager_errorInvalidUrl;
+
+  /// No description provided for @picManager_errorInsecureHttp.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable insecure HTTP explicitly or use HTTPS'**
+  String get picManager_errorInsecureHttp;
+
+  /// No description provided for @picManager_errorUnauthorized.
+  ///
+  /// In en, this message translates to:
+  /// **'The Pic Manager Token is invalid or revoked'**
+  String get picManager_errorUnauthorized;
+
+  /// No description provided for @picManager_errorInvalidRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'Pic Manager rejected the image or source information'**
+  String get picManager_errorInvalidRequest;
+
+  /// No description provided for @picManager_errorServer.
+  ///
+  /// In en, this message translates to:
+  /// **'Pic Manager encountered a server error'**
+  String get picManager_errorServer;
+
+  /// No description provided for @picManager_errorTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'The request timed out, but the server may already have received the image'**
+  String get picManager_errorTimeout;
+
+  /// No description provided for @picManager_errorNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'Unable to connect to Pic Manager'**
+  String get picManager_errorNetwork;
+
+  /// No description provided for @picManager_errorInvalidResponse.
+  ///
+  /// In en, this message translates to:
+  /// **'Pic Manager returned an unexpected response'**
+  String get picManager_errorInvalidResponse;
+
+  /// No description provided for @picManager_errorAlreadyUploading.
+  ///
+  /// In en, this message translates to:
+  /// **'This image is already being pushed'**
+  String get picManager_errorAlreadyUploading;
+
   /// No description provided for @settings_accountDetailsSection.
   ///
   /// In en, this message translates to:

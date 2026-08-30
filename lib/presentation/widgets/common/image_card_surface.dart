@@ -169,15 +169,38 @@ class ImageCardSurface extends StatelessWidget {
                         onChanged: capabilities.onSelectionChanged,
                       ),
                     ),
-                  if (capabilities.onFavoriteToggle != null)
+                  if (capabilities.onFavoriteToggle != null ||
+                      capabilities.onPushToPicManager != null)
                     Positioned(
                       top: 8,
                       right: 8,
-                      child: CardFavoriteButton(
-                        isFavorite: data.isFavorite,
-                        onToggle: capabilities.onFavoriteToggle,
-                        size: 17,
-                        borderRadius: 999,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (capabilities.onPushToPicManager != null)
+                            _CardPicManagerPushButton(
+                              isPushing: data.isPushingToPicManager,
+                              onPush: capabilities.onPushToPicManager!,
+                            ),
+                          if (capabilities.onPushToPicManager != null &&
+                              capabilities.onFavoriteToggle != null)
+                            const SizedBox(width: 4),
+                          if (capabilities.onFavoriteToggle != null)
+                            CardFavoriteButton(
+                              isFavorite: data.isFavorite,
+                              isBusy:
+                                  data.isPushingToPicManager &&
+                                  capabilities.onPushToPicManager == null,
+                              onToggle: capabilities.onFavoriteToggle,
+                              size: 17,
+                              borderRadius: 999,
+                              tooltip:
+                                  data.isPushingToPicManager &&
+                                      capabilities.onPushToPicManager == null
+                                  ? context.l10n.picManager_pushing
+                                  : null,
+                            ),
+                        ],
                       ),
                     ),
                   if (controller.isHovering && hoverActions.isNotEmpty)
@@ -251,6 +274,59 @@ class ImageCardSurface extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _CardPicManagerPushButton extends StatelessWidget {
+  const _CardPicManagerPushButton({
+    required this.isPushing,
+    required this.onPush,
+  });
+
+  final bool isPushing;
+  final VoidCallback onPush;
+
+  @override
+  Widget build(BuildContext context) {
+    final tooltip = isPushing
+        ? context.l10n.picManager_pushing
+        : context.l10n.picManager_push;
+    return IconButton(
+      onPressed: isPushing ? null : onPush,
+      tooltip: tooltip,
+      style: ButtonStyle(
+        foregroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.disabled)
+              ? Colors.white70
+              : Colors.white,
+        ),
+        backgroundColor: WidgetStateProperty.resolveWith(
+          (states) => Colors.black.withValues(
+            alpha:
+                states.contains(WidgetState.hovered) ||
+                    states.contains(WidgetState.focused) ||
+                    states.contains(WidgetState.pressed)
+                ? 0.68
+                : 0.5,
+          ),
+        ),
+        overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+        minimumSize: const WidgetStatePropertyAll(Size.square(40)),
+        padding: const WidgetStatePropertyAll(EdgeInsets.all(6)),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+        ),
+      ),
+      icon: isPushing
+          ? const SizedBox.square(
+              dimension: 17,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : const Icon(Icons.cloud_upload_outlined, size: 17),
     );
   }
 }

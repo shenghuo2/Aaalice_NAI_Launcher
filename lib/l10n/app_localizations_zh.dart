@@ -544,6 +544,88 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settings_integrations => '集成';
 
   @override
+  String get picManager_description => '将生成图片的原始文件推送到外部 Pic Manager 服务。';
+
+  @override
+  String get picManager_apiUrl => 'API 地址';
+
+  @override
+  String get picManager_apiUrlHint => 'https://host 或 http://host:3210';
+
+  @override
+  String get picManager_tokenSavedHint => '留空可继续使用已保存的 Token';
+
+  @override
+  String get picManager_allowInsecureHttp => '允许不安全的 HTTP';
+
+  @override
+  String get picManager_allowInsecureHttpHint => '仅限可信局域网使用，远程访问应使用 HTTPS。';
+
+  @override
+  String get picManager_autoPushFavorite => '收藏时自动推送';
+
+  @override
+  String get picManager_autoPushFavoriteHint => '开启后，收藏会同时推送原图，并隐藏单独的推送按钮。';
+
+  @override
+  String get picManager_source => '来源：aaalice Nai Launcher';
+
+  @override
+  String get picManager_clearToken => '清除 Token';
+
+  @override
+  String get picManager_saveSuccess => 'Pic Manager 配置已保存';
+
+  @override
+  String get picManager_tokenCleared => 'Pic Manager Token 已清除';
+
+  @override
+  String get picManager_connectionSuccess => 'Pic Manager 连接成功';
+
+  @override
+  String get picManager_push => '推送到 Pic Manager';
+
+  @override
+  String get picManager_pushing => '正在推送到 Pic Manager';
+
+  @override
+  String get picManager_pushSuccess => '图片已推送到 Pic Manager';
+
+  @override
+  String get picManager_pushDeduplicated => '图片已存在，已新增来源记录';
+
+  @override
+  String get picManager_errorNotConfigured => '请先配置 Pic Manager API 地址和 Token';
+
+  @override
+  String get picManager_errorInvalidUrl =>
+      '请输入不含凭据、查询参数或片段的有效 HTTP 或 HTTPS API 地址';
+
+  @override
+  String get picManager_errorInsecureHttp => '请明确允许不安全的 HTTP，或改用 HTTPS';
+
+  @override
+  String get picManager_errorUnauthorized => 'Pic Manager Token 无效或已撤销';
+
+  @override
+  String get picManager_errorInvalidRequest => 'Pic Manager 拒绝了图片或来源信息';
+
+  @override
+  String get picManager_errorServer => 'Pic Manager 服务端发生错误';
+
+  @override
+  String get picManager_errorTimeout => '请求超时，但服务器可能已经收到图片';
+
+  @override
+  String get picManager_errorNetwork => '无法连接到 Pic Manager';
+
+  @override
+  String get picManager_errorInvalidResponse => 'Pic Manager 返回了异常响应';
+
+  @override
+  String get picManager_errorAlreadyUploading => '这张图片正在推送';
+
+  @override
   String get settings_accountDetailsSection => '账户信息';
 
   @override
@@ -13695,6 +13777,88 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get settings_integrations => '整合';
+
+  @override
+  String get picManager_description => '將生成圖片的原始檔案推送到外部 Pic Manager 服務。';
+
+  @override
+  String get picManager_apiUrl => 'API 位址';
+
+  @override
+  String get picManager_apiUrlHint => 'https://host 或 http://host:3210';
+
+  @override
+  String get picManager_tokenSavedHint => '留空可繼續使用已儲存的 Token';
+
+  @override
+  String get picManager_allowInsecureHttp => '允許不安全的 HTTP';
+
+  @override
+  String get picManager_allowInsecureHttpHint => '僅限可信區域網路使用，遠端存取應使用 HTTPS。';
+
+  @override
+  String get picManager_autoPushFavorite => '收藏時自動推送';
+
+  @override
+  String get picManager_autoPushFavoriteHint => '開啟後，收藏會同時推送原圖，並隱藏單獨的推送按鈕。';
+
+  @override
+  String get picManager_source => '來源：aaalice Nai Launcher';
+
+  @override
+  String get picManager_clearToken => '清除 Token';
+
+  @override
+  String get picManager_saveSuccess => 'Pic Manager 設定已儲存';
+
+  @override
+  String get picManager_tokenCleared => 'Pic Manager Token 已清除';
+
+  @override
+  String get picManager_connectionSuccess => 'Pic Manager 連線成功';
+
+  @override
+  String get picManager_push => '推送到 Pic Manager';
+
+  @override
+  String get picManager_pushing => '正在推送到 Pic Manager';
+
+  @override
+  String get picManager_pushSuccess => '圖片已推送到 Pic Manager';
+
+  @override
+  String get picManager_pushDeduplicated => '圖片已存在，已新增來源記錄';
+
+  @override
+  String get picManager_errorNotConfigured => '請先設定 Pic Manager API 位址和 Token';
+
+  @override
+  String get picManager_errorInvalidUrl =>
+      '請輸入不含憑證、查詢參數或片段的有效 HTTP 或 HTTPS API 位址';
+
+  @override
+  String get picManager_errorInsecureHttp => '請明確允許不安全的 HTTP，或改用 HTTPS';
+
+  @override
+  String get picManager_errorUnauthorized => 'Pic Manager Token 無效或已撤銷';
+
+  @override
+  String get picManager_errorInvalidRequest => 'Pic Manager 拒絕了圖片或來源資訊';
+
+  @override
+  String get picManager_errorServer => 'Pic Manager 伺服器發生錯誤';
+
+  @override
+  String get picManager_errorTimeout => '請求逾時，但伺服器可能已經收到圖片';
+
+  @override
+  String get picManager_errorNetwork => '無法連線到 Pic Manager';
+
+  @override
+  String get picManager_errorInvalidResponse => 'Pic Manager 傳回了異常回應';
+
+  @override
+  String get picManager_errorAlreadyUploading => '這張圖片正在推送';
 
   @override
   String get settings_accountDetailsSection => '賬戶資訊';

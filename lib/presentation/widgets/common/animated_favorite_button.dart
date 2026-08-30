@@ -18,6 +18,7 @@ class AnimatedFavoriteButton extends StatelessWidget {
     this.showBackground = false,
     this.backgroundColor,
     this.tooltip,
+    this.isBusy = false,
     this.enableHapticFeedback = true,
   });
 
@@ -29,6 +30,7 @@ class AnimatedFavoriteButton extends StatelessWidget {
   final bool showBackground;
   final Color? backgroundColor;
   final String? tooltip;
+  final bool isBusy;
   final bool enableHapticFeedback;
 
   @override
@@ -42,6 +44,7 @@ class AnimatedFavoriteButton extends StatelessWidget {
       showBackground: showBackground,
       backgroundColor: backgroundColor,
       tooltip: tooltip,
+      isBusy: isBusy,
       enableHapticFeedback: enableHapticFeedback,
     );
   }
@@ -56,6 +59,8 @@ class CardFavoriteButton extends StatelessWidget {
     this.size = 16,
     this.enableHapticFeedback = true,
     this.borderRadius = 16,
+    this.isBusy = false,
+    this.tooltip,
   });
 
   final bool isFavorite;
@@ -63,6 +68,8 @@ class CardFavoriteButton extends StatelessWidget {
   final double size;
   final bool enableHapticFeedback;
   final double borderRadius;
+  final bool isBusy;
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
@@ -73,6 +80,8 @@ class CardFavoriteButton extends StatelessWidget {
       enableHapticFeedback: enableHapticFeedback,
       borderRadius: borderRadius,
       cardOverlay: true,
+      isBusy: isBusy,
+      tooltip: tooltip,
     );
   }
 }
@@ -90,6 +99,7 @@ class _FavoriteIconButton extends StatefulWidget {
     this.tooltip,
     this.borderRadius,
     this.cardOverlay = false,
+    this.isBusy = false,
   });
 
   final bool isFavorite;
@@ -103,6 +113,7 @@ class _FavoriteIconButton extends StatefulWidget {
   final bool enableHapticFeedback;
   final double? borderRadius;
   final bool cardOverlay;
+  final bool isBusy;
 
   @override
   State<_FavoriteIconButton> createState() => _FavoriteIconButtonState();
@@ -203,7 +214,9 @@ class _FavoriteIconButtonState extends State<_FavoriteIconButton>
 
     final radius = widget.borderRadius ?? widget.size * 0.5;
     return IconButton(
-      onPressed: widget.onToggle == null ? null : _handlePressed,
+      onPressed: widget.onToggle == null || widget.isBusy
+          ? null
+          : _handlePressed,
       tooltip: tooltip,
       style: ButtonStyle(
         foregroundColor: WidgetStateProperty.resolveWith(foreground),
@@ -216,17 +229,25 @@ class _FavoriteIconButtonState extends State<_FavoriteIconButton>
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius)),
         ),
       ),
-      icon: AnimatedBuilder(
-        animation: _scale,
-        builder: (context, child) => Transform.scale(
-          scale: widget.isFavorite ? _scale.value : 1,
-          child: child,
-        ),
-        child: Icon(
-          widget.isFavorite ? Icons.favorite : Icons.favorite_border,
-          size: widget.size,
-        ),
-      ),
+      icon: widget.isBusy
+          ? SizedBox.square(
+              dimension: widget.size,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: foreground(const {WidgetState.disabled}),
+              ),
+            )
+          : AnimatedBuilder(
+              animation: _scale,
+              builder: (context, child) => Transform.scale(
+                scale: widget.isFavorite ? _scale.value : 1,
+                child: child,
+              ),
+              child: Icon(
+                widget.isFavorite ? Icons.favorite : Icons.favorite_border,
+                size: widget.size,
+              ),
+            ),
     );
   }
 }
