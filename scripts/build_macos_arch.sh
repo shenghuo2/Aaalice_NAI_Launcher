@@ -41,6 +41,7 @@ if [[ ! -d "$app_path" ]]; then
 fi
 
 macho_count=0
+thinned_count=0
 while IFS= read -r -d '' candidate; do
   if ! file -b "$candidate" | grep -q '^Mach-O'; then
     continue
@@ -51,12 +52,14 @@ while IFS= read -r -d '' candidate; do
     echo "Missing $expected_arch slice in $candidate: $actual_archs" >&2
     exit 1
   fi
-  for actual_arch in $actual_archs; do
-    if [[ "$actual_arch" != "$expected_arch" ]]; then
-      echo "Unexpected $actual_arch slice in $candidate: $actual_archs" >&2
-      exit 1
-    fi
-  done
+
+  if [[ "$actual_archs" != "$expected_arch" ]]; then
+    temporary_binary="$(mktemp "${candidate}.thin.XXXXXX")"
+    lipo "$candidate" -thin "$expected_arch" -output "$temporary_binary"
+    chmod "$(stat -f '%Lp' "$candidate")" "$temporary_binary"
+    mv -f "$temporary_binary" "$candidate"
+    thinned_count=$((thinned_count + 1))
+  fi
 done < <(find "$app_path" -type f -print0)
 
 if ((macho_count == 0)); then
@@ -64,4 +67,27 @@ if ((macho_count == 0)); then
   exit 1
 fi
 
-echo "Verified $macho_count Mach-O files as $expected_arch only."
+codesign --force --deep --sign - \
+  --preserve-metadata=identifier,entitlements,requirements,flags,runtime \
+  "$app_path"
+codesign --verify --deep --strict --verbose=2 "$app_path"
+
+verified_count=0
+while IFS= read -r -d '' candidate; do
+  if ! file -b "$candidate" | grep -q '^Mach-O'; then
+    continue
+  fi
+  verified_count=$((verified_count + 1))
+  actual_archs="$(lipo -archs "$candidate")"
+  if [[ "$actual_archs" != "$expected_arch" ]]; then
+    echo "Expected only $expected_arch in $candidate after thinning: $actual_archs" >&2
+    exit 1
+  fi
+done < <(find "$app_path" -type f -print0)
+
+if ((verified_count != macho_count)); then
+  echo "Mach-O file count changed during thinning: $macho_count -> $verified_count" >&2
+  exit 1
+fi
+
+echo "Verified $verified_count Mach-O files as $expected_arch only ($thinned_count thinned)."
