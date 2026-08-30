@@ -36,12 +36,20 @@ function Get-AssetInfo {
       description = '解压即用，支持应用内一键更新，适合放在自定义目录。'
     }
   }
-  if ($name -match '_macOS_.*_Portable\.zip$') {
+  if ($name -match '_macOS_arm64_.*_Portable\.zip$') {
     return [ordered]@{
       platform = 'macos'
-      type = 'macos-portable'
-      label = 'macOS 便携版'
-      description = '解压后打开应用，更新时需要手动替换。'
+      type = 'macos-arm64-portable'
+      label = 'macOS Apple Silicon 便携版'
+      description = '适用于 Apple Silicon（M 系列）Mac，解压后打开应用。'
+    }
+  }
+  if ($name -match '_macOS_x64_.*_Portable\.zip$') {
+    return [ordered]@{
+      platform = 'macos'
+      type = 'macos-x64-portable'
+      label = 'macOS Intel 便携版'
+      description = '适用于 Intel Mac，解压后打开应用。'
     }
   }
   if ($name -match '_Android_.*\.apk$') {
@@ -163,8 +171,11 @@ function Get-DownloadBadge {
     'windows-portable' {
       return "[![Windows Portable x64](https://img.shields.io/badge/Portable-x64-56B4D3?style=flat-square&logo=windows11&logoColor=white)]($url)"
     }
-    'macos-portable' {
-      return "[![macOS Portable ZIP](https://img.shields.io/badge/Portable-ZIP-555555?style=flat-square&logo=apple&logoColor=white)]($url)"
+    'macos-arm64-portable' {
+      return "[![macOS Apple Silicon](https://img.shields.io/badge/Apple_Silicon-arm64-555555?style=flat-square&logo=apple&logoColor=white)]($url)"
+    }
+    'macos-x64-portable' {
+      return "[![macOS Intel](https://img.shields.io/badge/Intel-x64-777777?style=flat-square&logo=apple&logoColor=white)]($url)"
     }
     'android-apk' {
       return "[![Android APK](https://img.shields.io/badge/Android-APK-3DDC84?style=flat-square&logo=android&logoColor=white)]($url)"
@@ -215,7 +226,7 @@ $releaseLines += @(
   "",
   "> **应用内更新：** Windows 安装版用户无需手动下载。应用会自动选择 Setup x64，完成下载与 SHA256 校验后退出旧版本、静默安装并重新启动。Portable 版也支持应用内自动更新和失败回滚。",
   "",
-  "> **安装提示：** Android 下载 APK 后由系统确认更新；macOS 当前需下载 ZIP 后手动替换应用。Windows Setup 为普通用户的推荐版本，Portable 适合放在自定义目录。",
+  "> **安装提示：** Android 下载 APK 后由系统确认更新；macOS 请按 Mac 芯片选择 Apple Silicon 或 Intel ZIP，更新时需手动替换应用。Windows Setup 为普通用户的推荐版本，Portable 适合放在自定义目录。",
   "",
   "## 📝 更新内容",
   "",

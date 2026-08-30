@@ -181,7 +181,8 @@ Download the package for your platform from [GitHub Releases](https://github.com
 | --- | --- | --- |
 | Windows | `NAI_Launcher_Windows_<version>_Setup.exe` | Installer package, recommended for most users. |
 | Windows | `NAI_Launcher_Windows_<version>_Portable.zip` | Portable package; extract and run without installing. |
-| macOS | `NAI_Launcher_macOS_<version>_Portable.zip` | Extract and open `Aaalice NAI Launcher.app`. |
+| macOS Apple Silicon | `NAI_Launcher_macOS_arm64_<version>_Portable.zip` | For M-series Macs; extract and open `Aaalice NAI Launcher.app`. |
+| macOS Intel | `NAI_Launcher_macOS_x64_<version>_Portable.zip` | For Intel Macs; extract and open `Aaalice NAI Launcher.app`. |
 | Android | `NAI_Launcher_Android_<version>.apk` | Sideload the APK; the first installation may require permission to install unknown apps. |
 
 ### 2. Sign in to NovelAI

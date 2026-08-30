@@ -181,7 +181,8 @@ NAI Launcher 面向长期使用 NovelAI 的创作者：生成图片、反复调�
 | --- | --- | --- |
 | Windows | `NAI_Launcher_Windows_<version>_Setup.exe` | 安装版，适合大多数用户。 |
 | Windows | `NAI_Launcher_Windows_<version>_Portable.zip` | 便携版，解压后直接运行，不改变安装目录。 |
-| macOS | `NAI_Launcher_macOS_<version>_Portable.zip` | 解压后打开 `Aaalice NAI Launcher.app`。 |
+| macOS Apple Silicon | `NAI_Launcher_macOS_arm64_<version>_Portable.zip` | 适用于 M 系列 Mac，解压后打开 `Aaalice NAI Launcher.app`。 |
+| macOS Intel | `NAI_Launcher_macOS_x64_<version>_Portable.zip` | 适用于 Intel Mac，解压后打开 `Aaalice NAI Launcher.app`。 |
 | Android | `NAI_Launcher_Android_<version>.apk` | APK 侧载安装；首次安装可能需要允许文件管理器或浏览器安装未知应用。 |
 
 ### 2. 登录 NovelAI

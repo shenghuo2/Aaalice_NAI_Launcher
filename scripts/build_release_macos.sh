@@ -12,10 +12,16 @@ cd "$(dirname "$0")/.."
 # CocoaPods 需要 UTF-8 终端编码
 export LANG="${LANG:-en_US.UTF-8}"
 
+ARCHITECTURE="${1:-}"
+if [ "$ARCHITECTURE" != "arm64" ] && [ "$ARCHITECTURE" != "x64" ]; then
+  echo "Usage: $0 <arm64|x64>"
+  exit 64
+fi
+
 APP_PATH="build/macos/Build/Products/Release/Aaalice NAI Launcher.app"
 
 echo "========================================"
-echo "  NAI Launcher macOS Release Build"
+echo "  NAI Launcher macOS $ARCHITECTURE Release Build"
 echo "========================================"
 echo
 
@@ -48,8 +54,8 @@ flutter gen-l10n
 # dart run build_runner build --delete-conflicting-outputs
 echo
 
-echo "[2/3] 构建 Release 版本（首次会自动执行 pod install）..."
-flutter build macos --release
+echo "[2/3] 构建 $ARCHITECTURE Release 版本（首次会自动执行 pod install）..."
+./scripts/build_macos_arch.sh "$ARCHITECTURE"
 echo
 
 echo "[3/3] 代码签名（可选）..."

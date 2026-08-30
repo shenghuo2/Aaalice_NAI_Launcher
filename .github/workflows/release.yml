@@ -307,9 +307,18 @@ jobs:
           if-no-files-found: error
 
   build-macos:
-    name: Build macOS
+    name: Build macOS ${{ matrix.display_name }}
     runs-on: macos-latest
     needs: prepare
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            display_name: Apple Silicon
+          - architecture: x64
+            display_name: Intel
 
     steps:
       - name: Checkout immutable release commit without LFS payloads
@@ -354,21 +363,24 @@ jobs:
       - name: Generate code
         run: dart run build_runner build --delete-conflicting-outputs
 
-      - name: Build macOS release
-        run: flutter build macos --release
+      - name: Verify generated files
+        run: git diff --exit-code
+
+      - name: Build and verify macOS ${{ matrix.display_name }} release
+        run: ./scripts/build_macos_arch.sh "${{ matrix.architecture }}"
 
       - name: Package macOS artifact
         run: |
           version="${{ needs.prepare.outputs.version }}"
           mkdir -p dist
           cd "build/macos/Build/Products/Release"
-          ditto -c -k --sequesterRsrc --keepParent "Aaalice NAI Launcher.app" "$GITHUB_WORKSPACE/dist/NAI_Launcher_macOS_${version}_Portable.zip"
+          ditto -c -k --sequesterRsrc --keepParent "Aaalice NAI Launcher.app" "$GITHUB_WORKSPACE/dist/NAI_Launcher_macOS_${{ matrix.architecture }}_${version}_Portable.zip"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-release
-          path: dist/NAI_Launcher_macOS_*_Portable.zip
+          name: macos-release-${{ matrix.architecture }}
+          path: dist/NAI_Launcher_macOS_${{ matrix.architecture }}_*_Portable.zip
           if-no-files-found: error
 
   build-android:
