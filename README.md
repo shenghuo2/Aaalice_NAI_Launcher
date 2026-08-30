@@ -1,5 +1,14 @@
 # NAI Launcher
 
+## Fork Changelog（相对上游主分支）
+
+本 Fork 基于 [Aaalice233/Aaalice_NAI_Launcher](https://github.com/Aaalice233/Aaalice_NAI_Launcher) 的 `main` 分支继续开发，当前主要差异如下：
+
+- **Pic Manager 图片推送**：在“设置 → 集成”中配置服务地址与 Token，支持连通性测试及 HTTP 明文连接确认；生成历史、本地图库和在线画廊的卡片与详情页均在收藏按钮旁提供手动推送按钮，也可启用“收藏后自动推送”，将收藏与推送合并为一次操作。推送使用原始图片数据，来源固定为 `aaalice Nai Launcher`，取消收藏或收藏失败时不会推送。
+- **按架构拆分发行包**：macOS 分为 Apple Silicon (`arm64`) 与 Intel (`x64`) ZIP；Android 分为 `arm64-v8a`、`armeabi-v7a`、`x86_64` APK，并保留通用兼容 APK；Windows 安装包和便携包明确标记为 `x64`。更新检查与 Release 元数据可识别对应架构。
+- **构建与发布优化**：GitHub Actions 增加 Flutter、Pub、生成代码及原生构建缓存，并校验产物架构、校验和与拆分产物清单；macOS 拆分包已通过覆盖上游 Universal `3.0.0+36` 的升级兼容测试。
+- **问题修复**：离开生成页时清理画布与遮罩状态，修复打开设置页却停留或弹回画布的问题；同时清理 Agent 上下文用量相关的静态分析警告。
+
 <p align="center">
   简体中文 · <a href="README.en-US.md">English</a>
 </p>
