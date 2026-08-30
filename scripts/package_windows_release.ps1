@@ -3,6 +3,8 @@ param(
   [switch]$SkipFlutterBuild,
   [ValidateSet("Debug", "Release")]
   [string]$BuildMode = "Release",
+  [ValidateSet("x64", "arm64")]
+  [string]$Architecture = "x64",
   [switch]$PortableOnly,
   [string]$DistDir = "dist"
 )
@@ -74,10 +76,10 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 }
 
 $distPath = Join-Path $root $DistDir
-$buildPath = Join-Path $root "build/windows/x64/runner/$BuildMode"
+$buildPath = Join-Path $root "build/windows/$Architecture/runner/$BuildMode"
 $nsisScript = Join-Path $root "installer/windows/nai_launcher.nsi"
-$portablePath = Join-Path $distPath "NAI_Launcher_Windows_${Version}_Portable.zip"
-$installerPath = Join-Path $distPath "NAI_Launcher_Windows_${Version}_Setup.exe"
+$portablePath = Join-Path $distPath "NAI_Launcher_Windows_${Architecture}_${Version}_Portable.zip"
+$installerPath = Join-Path $distPath "NAI_Launcher_Windows_${Architecture}_${Version}_Setup.exe"
 
 if (-not $SkipFlutterBuild) {
   & (Join-Path $PSScriptRoot "verify_nuget.ps1")
@@ -89,6 +91,9 @@ if (-not $SkipFlutterBuild) {
 }
 
 Assert-WindowsFlutterRuntime -BundlePath $buildPath
+& (Join-Path $PSScriptRoot 'verify_windows_binary_architecture.ps1') `
+  -BundlePath $buildPath `
+  -ExpectedArchitecture $Architecture
 
 # 便携版更新使用该清单区分应用文件与用户放在程序目录中的个人文件。
 $filesManifestPath = Join-Path $buildPath "app_files_manifest.json"
@@ -103,6 +108,7 @@ $managedFiles = Get-ChildItem -LiteralPath $buildPath -File -Recurse |
 [ordered]@{
   schemaVersion = 1
   version = $Version
+  architecture = $Architecture
   files = @($managedFiles)
 } |
   ConvertTo-Json -Depth 4 |
@@ -136,6 +142,7 @@ $makensis = Get-ToolPath `
   "/INPUTCHARSET" `
   "UTF8" `
   "/DVERSION=$Version" `
+  "/DARCHITECTURE=$Architecture" `
   "/DSOURCE_DIR=$buildPath" `
   "/DOUT_FILE=$installerPath" `
   $nsisScript

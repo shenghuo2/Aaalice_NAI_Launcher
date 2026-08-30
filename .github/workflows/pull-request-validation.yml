@@ -75,6 +75,8 @@ jobs:
               - 'pubspec.lock'
               - 'pubspec.yaml'
               - 'scripts/package_windows_release.ps1'
+              - 'scripts/generate_release_metadata.ps1'
+              - 'scripts/verify_windows_binary_architecture.ps1'
               - 'scripts/verify_windows_portable_package.ps1'
               - 'scripts/validate_windows_installer_process_handling.ps1'
               - 'windows/**'
@@ -232,6 +234,7 @@ jobs:
           $version = $match.Matches[0].Groups[1].Value.Trim() -replace '\+.*$', ''
           ./scripts/package_windows_release.ps1 `
             -Version $version `
+            -Architecture x64 `
             -SkipFlutterBuild
 
       - name: Verify packaged artifacts
@@ -241,8 +244,8 @@ jobs:
           $match = Select-String -Path pubspec.yaml -Pattern '^version:\s*(.+)$'
           $version = $match.Matches[0].Groups[1].Value.Trim() -replace '\+.*$', ''
           $required = @(
-            "dist/NAI_Launcher_Windows_${version}_Setup.exe",
-            "dist/NAI_Launcher_Windows_${version}_Portable.zip"
+            "dist/NAI_Launcher_Windows_x64_${version}_Setup.exe",
+            "dist/NAI_Launcher_Windows_x64_${version}_Portable.zip"
           )
           foreach ($path in $required) {
             if (!(Test-Path -LiteralPath $path)) {

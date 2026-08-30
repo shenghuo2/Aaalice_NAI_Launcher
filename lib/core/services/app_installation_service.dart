@@ -42,12 +42,20 @@ class AppInstallationService {
 
   String getReleaseAssetPreference() {
     return switch (getInstallationType()) {
-      AppInstallationType.windowsInstaller => 'windows-installer',
-      AppInstallationType.windowsPortable => 'windows-portable',
+      AppInstallationType.windowsInstaller => windowsReleaseAssetPreference(
+        installed: true,
+        abi: _currentAbi,
+      ),
+      AppInstallationType.windowsPortable => windowsReleaseAssetPreference(
+        installed: false,
+        abi: _currentAbi,
+      ),
       AppInstallationType.macosPortable => macosReleaseAssetPreference(
         _currentAbi,
       ),
-      AppInstallationType.androidApk => 'android-apk',
+      AppInstallationType.androidApk => androidReleaseAssetPreference(
+        _currentAbi,
+      ),
       AppInstallationType.unsupported => 'unknown',
     };
   }
@@ -57,6 +65,26 @@ class AppInstallationService {
       Abi.macosArm64 => 'macos-arm64',
       Abi.macosX64 => 'macos-x64',
       _ => 'macos',
+    };
+  }
+
+  static String windowsReleaseAssetPreference({
+    required bool installed,
+    required Abi abi,
+  }) {
+    final package = installed ? 'installer' : 'portable';
+    return switch (abi) {
+      Abi.windowsX64 => 'windows-x64-$package',
+      _ => 'windows-$package',
+    };
+  }
+
+  static String androidReleaseAssetPreference(Abi abi) {
+    return switch (abi) {
+      Abi.androidArm64 => 'android-arm64-v8a',
+      Abi.androidArm => 'android-armeabi-v7a',
+      Abi.androidX64 => 'android-x86_64',
+      _ => 'android-apk',
     };
   }
 

@@ -90,6 +90,56 @@ void main() {
     expect(info.primaryAsset?.fileName, contains('_macOS_3.1.0_'));
   });
 
+  test('Windows x64 lookup selects architecture-labelled packages', () async {
+    final dio = Dio(BaseOptions(baseUrl: GitHubApiService.defaultBaseUrl))
+      ..httpClientAdapter = _ArchitectureSplitReleaseDioAdapter();
+    final service = GitHubApiService(dio: dio);
+
+    final installer = await service.fetchLatestRelease(
+      owner: 'Aaalice233',
+      repo: 'Aaalice_NAI_Launcher',
+      currentVersion: '3.0.0+36',
+      platform: 'windows-x64-installer',
+    );
+    final portable = await service.fetchLatestRelease(
+      owner: 'Aaalice233',
+      repo: 'Aaalice_NAI_Launcher',
+      currentVersion: '3.0.0+36',
+      platform: 'windows-x64-portable',
+    );
+
+    expect(installer.primaryAsset?.type, ReleaseAssetType.windowsX64Installer);
+    expect(portable.primaryAsset?.type, ReleaseAssetType.windowsX64Portable);
+  });
+
+  test('Android lookup selects its ABI and keeps universal fallback', () async {
+    final dio = Dio(BaseOptions(baseUrl: GitHubApiService.defaultBaseUrl))
+      ..httpClientAdapter = _ArchitectureSplitReleaseDioAdapter();
+    final service = GitHubApiService(dio: dio);
+
+    for (final entry in {
+      'android-arm64-v8a': ReleaseAssetType.androidArm64V8aApk,
+      'android-armeabi-v7a': ReleaseAssetType.androidArmeabiV7aApk,
+      'android-x86_64': ReleaseAssetType.androidX8664Apk,
+    }.entries) {
+      final info = await service.fetchLatestRelease(
+        owner: 'Aaalice233',
+        repo: 'Aaalice_NAI_Launcher',
+        currentVersion: '3.0.0+36',
+        platform: entry.key,
+      );
+      expect(info.primaryAsset?.type, entry.value);
+    }
+
+    final legacy = await service.fetchLatestRelease(
+      owner: 'Aaalice233',
+      repo: 'Aaalice_NAI_Launcher',
+      currentVersion: '3.0.0+36',
+      platform: 'android-apk',
+    );
+    expect(legacy.primaryAsset?.type, ReleaseAssetType.androidApk);
+  });
+
   test('stable lookup rejects invalid manifest metadata', () async {
     final adapter = _StableReleaseDioAdapter(
       manifestOverride: {
@@ -402,6 +452,76 @@ class _MacosSplitReleaseDioAdapter implements HttpClientAdapter {
                   'size': 102,
                 },
               ],
+      }),
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['application/octet-stream'],
+      },
+    );
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _ArchitectureSplitReleaseDioAdapter implements HttpClientAdapter {
+  static const manifestUrl =
+      'https://github.com/Aaalice233/Aaalice_NAI_Launcher/'
+      'releases/latest/download/release_manifest.json';
+  static const hash =
+      '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    expect(options.uri.toString(), manifestUrl);
+    Map<String, Object> asset(String platform, String type, String fileName) =>
+        {
+          'platform': platform,
+          'type': type,
+          'fileName': fileName,
+          'downloadUrl':
+              'https://github.com/Aaalice233/Aaalice_NAI_Launcher/'
+              'releases/download/v3.1.0/$fileName',
+          'sha256': hash,
+          'size': 101,
+        };
+
+    return ResponseBody.fromString(
+      jsonEncode({
+        'version': '3.1.0+37',
+        'tag': 'v3.1.0',
+        'assets': [
+          asset('android', 'android-apk', 'NAI_Launcher_Android_3.1.0+37.apk'),
+          asset(
+            'android-arm64-v8a',
+            'android-arm64-v8a-apk',
+            'NAI_Launcher_Android_arm64-v8a_3.1.0+37.apk',
+          ),
+          asset(
+            'android-armeabi-v7a',
+            'android-armeabi-v7a-apk',
+            'NAI_Launcher_Android_armeabi-v7a_3.1.0+37.apk',
+          ),
+          asset(
+            'android-x86_64',
+            'android-x86_64-apk',
+            'NAI_Launcher_Android_x86_64_3.1.0+37.apk',
+          ),
+          asset(
+            'windows-x64',
+            'windows-x64-installer',
+            'NAI_Launcher_Windows_x64_3.1.0+37_Setup.exe',
+          ),
+          asset(
+            'windows-x64',
+            'windows-x64-portable',
+            'NAI_Launcher_Windows_x64_3.1.0+37_Portable.zip',
+          ),
+        ],
       }),
       200,
       headers: {

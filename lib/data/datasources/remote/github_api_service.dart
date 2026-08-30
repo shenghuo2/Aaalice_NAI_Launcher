@@ -362,19 +362,29 @@ class GitHubApiService {
     String platform,
   ) {
     final normalizedPlatform = platform.toLowerCase();
+    if (normalizedPlatform == 'windows-x64-installer') {
+      return _firstAssetOfType(assets, ReleaseAssetType.windowsX64Installer) ??
+          _firstAssetOfType(assets, ReleaseAssetType.windowsInstaller);
+    }
+    if (normalizedPlatform == 'windows-x64-portable') {
+      return _firstAssetOfType(assets, ReleaseAssetType.windowsX64Portable) ??
+          _firstAssetOfType(assets, ReleaseAssetType.windowsPortable) ??
+          _firstAssetOfType(assets, ReleaseAssetType.windowsX64Installer) ??
+          _firstAssetOfType(assets, ReleaseAssetType.windowsInstaller);
+    }
     if (normalizedPlatform == 'windows-installer') {
-      return _firstAssetOfType(assets, ReleaseAssetType.windowsInstaller);
+      return _firstAssetOfType(assets, ReleaseAssetType.windowsInstaller) ??
+          _firstAssetOfType(assets, ReleaseAssetType.windowsX64Installer);
     }
     if (normalizedPlatform == 'windows-portable' ||
         normalizedPlatform == 'windows') {
       return _firstAssetOfType(assets, ReleaseAssetType.windowsPortable) ??
-          _firstAssetOfType(assets, ReleaseAssetType.windowsInstaller);
+          _firstAssetOfType(assets, ReleaseAssetType.windowsX64Portable) ??
+          _firstAssetOfType(assets, ReleaseAssetType.windowsInstaller) ??
+          _firstAssetOfType(assets, ReleaseAssetType.windowsX64Installer);
     }
     if (normalizedPlatform == 'macos-arm64') {
-      return _firstAssetOfType(
-            assets,
-            ReleaseAssetType.macosArm64Portable,
-          ) ??
+      return _firstAssetOfType(assets, ReleaseAssetType.macosArm64Portable) ??
           _firstAssetOfType(assets, ReleaseAssetType.macosPortable);
     }
     if (normalizedPlatform == 'macos-x64') {
@@ -388,7 +398,22 @@ class GitHubApiService {
     }
     if (normalizedPlatform == 'android-apk' ||
         normalizedPlatform == 'android') {
-      return _firstAssetOfType(assets, ReleaseAssetType.androidApk);
+      return _firstAssetOfType(assets, ReleaseAssetType.androidApk) ??
+          _firstAssetOfType(assets, ReleaseAssetType.androidArm64V8aApk) ??
+          _firstAssetOfType(assets, ReleaseAssetType.androidArmeabiV7aApk) ??
+          _firstAssetOfType(assets, ReleaseAssetType.androidX8664Apk);
+    }
+    if (normalizedPlatform == 'android-arm64-v8a') {
+      return _firstAssetOfType(assets, ReleaseAssetType.androidArm64V8aApk) ??
+          _firstAssetOfType(assets, ReleaseAssetType.androidApk);
+    }
+    if (normalizedPlatform == 'android-armeabi-v7a') {
+      return _firstAssetOfType(assets, ReleaseAssetType.androidArmeabiV7aApk) ??
+          _firstAssetOfType(assets, ReleaseAssetType.androidApk);
+    }
+    if (normalizedPlatform == 'android-x86_64') {
+      return _firstAssetOfType(assets, ReleaseAssetType.androidX8664Apk) ??
+          _firstAssetOfType(assets, ReleaseAssetType.androidApk);
     }
     return assets
         .where((asset) => asset.type != ReleaseAssetType.unknown)

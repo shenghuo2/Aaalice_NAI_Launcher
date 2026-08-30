@@ -8,7 +8,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/services/update_check_service.dart';
 import '../../core/services/update_installer_service.dart';
 import '../../core/utils/app_logger.dart';
-import '../../data/models/version/release_asset_info.dart';
 import '../../data/models/version/version_info.dart';
 
 part 'update_provider.g.dart';
@@ -347,7 +346,7 @@ class UpdateStateNotifier extends _$UpdateStateNotifier {
       await ref
           .read(updateInstallerServiceProvider)
           .installAndRestart(downloaded);
-      if (downloaded.asset.type == ReleaseAssetType.androidApk) {
+      if (downloaded.asset.isAndroidApk) {
         final service = ref.read(updateCheckServiceProvider);
         await service.remindLater();
         state = state.copyWith(

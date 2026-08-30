@@ -76,7 +76,7 @@ class DownloadedUpdate {
     required this.version,
   });
 
-  bool get isPortableZip => asset.type == ReleaseAssetType.windowsPortable;
+  bool get isPortableZip => asset.isWindowsPortable;
 }
 
 /// 从磁盘恢复的待安装更新。
@@ -336,7 +336,7 @@ class UpdateInstallerService {
 
     final installationType = _installationService.getInstallationType();
     if (installationType == AppInstallationType.androidApk) {
-      if (update.asset.type != ReleaseAssetType.androidApk) {
+      if (!update.asset.isAndroidApk) {
         throw const UpdateInstallException('Android 更新包格式不正确');
       }
       try {

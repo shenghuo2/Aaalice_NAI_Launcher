@@ -147,12 +147,14 @@ jobs:
           }
 
   build-windows:
-    name: Build Windows
+    name: Build Windows x64
     # A trusted tag may use a prewarmed runner configured by repository vars.
     runs-on: ${{ vars.WINDOWS_FLUTTER_RUNNER || 'windows-2022' }}
     needs: prepare
     env:
       WINDOWS_CACHE_NAMESPACE: ${{ vars.WINDOWS_FLUTTER_RUNNER != '' && 'nai-self-hosted' || 'nai-hosted' }}
+      WINDOWS_ARCHITECTURE: x64
+      WINDOWS_BUNDLE_PATH: build/windows/x64/runner/Release
 
     steps:
       - name: Checkout immutable release commit without LFS payloads
@@ -203,9 +205,9 @@ jobs:
             .dart_tool/flutter_build
             build/native_assets
             build/windows
-          key: ${{ env.WINDOWS_CACHE_NAMESPACE }}-windows-build-${{ runner.os }}-${{ env.FLUTTER_VERSION }}-${{ hashFiles('pubspec.lock', 'windows/**') }}-${{ hashFiles('pubspec.yaml', 'l10n.yaml', 'lib/**', 'assets/**', 'fonts/**') }}
+          key: ${{ env.WINDOWS_CACHE_NAMESPACE }}-windows-${{ env.WINDOWS_ARCHITECTURE }}-build-${{ runner.os }}-${{ env.FLUTTER_VERSION }}-${{ hashFiles('pubspec.lock', 'windows/**') }}-${{ hashFiles('pubspec.yaml', 'l10n.yaml', 'lib/**', 'assets/**', 'fonts/**') }}
           restore-keys: |
-            ${{ env.WINDOWS_CACHE_NAMESPACE }}-windows-build-${{ runner.os }}-${{ env.FLUTTER_VERSION }}-${{ hashFiles('pubspec.lock', 'windows/**') }}-
+            ${{ env.WINDOWS_CACHE_NAMESPACE }}-windows-${{ env.WINDOWS_ARCHITECTURE }}-build-${{ runner.os }}-${{ env.FLUTTER_VERSION }}-${{ hashFiles('pubspec.lock', 'windows/**') }}-
 
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v4
@@ -257,7 +259,7 @@ jobs:
             [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_BASE64)
           )
           ./scripts/sign_windows_binary.ps1 `
-            -Path 'build/windows/x64/runner/Release/nai_launcher.exe' `
+            -Path (Join-Path $env:WINDOWS_BUNDLE_PATH 'nai_launcher.exe') `
             -CertificatePath $certificatePath `
             -CertificatePassword $env:WINDOWS_SIGNING_CERT_PASSWORD
 
@@ -267,13 +269,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           ./scripts/package_windows_release.ps1 `
             -Version '${{ needs.prepare.outputs.version }}' `
+            -Architecture $env:WINDOWS_ARCHITECTURE `
             -SkipFlutterBuild
 
       - name: Verify Windows portable package
         shell: pwsh
         run: |
           ./scripts/verify_windows_portable_package.ps1 `
-            -ArchivePath 'dist/NAI_Launcher_Windows_${{ needs.prepare.outputs.version }}_Portable.zip' `
+            -ArchivePath 'dist/NAI_Launcher_Windows_x64_${{ needs.prepare.outputs.version }}_Portable.zip' `
             -ExpectedVersion '${{ needs.prepare.outputs.version }}'
 
       - name: Sign Windows installer
@@ -288,7 +291,7 @@ jobs:
             exit 0
           }
           ./scripts/sign_windows_binary.ps1 `
-            -Path 'dist/NAI_Launcher_Windows_${{ needs.prepare.outputs.version }}_Setup.exe' `
+            -Path 'dist/NAI_Launcher_Windows_x64_${{ needs.prepare.outputs.version }}_Setup.exe' `
             -CertificatePath $certificatePath `
             -CertificatePassword $env:WINDOWS_SIGNING_CERT_PASSWORD
 
@@ -300,10 +303,10 @@ jobs:
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-release
+          name: windows-x64-release
           path: |
-            dist/NAI_Launcher_Windows_*_Setup.exe
-            dist/NAI_Launcher_Windows_*_Portable.zip
+            dist/NAI_Launcher_Windows_x64_*_Setup.exe
+            dist/NAI_Launcher_Windows_x64_*_Portable.zip
           if-no-files-found: error
 
   build-macos:
@@ -476,47 +479,19 @@ jobs:
           echo "ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"
           echo "ANDROID_EXPECTED_SIGNER_SHA256=$expected_signer_sha256" >> "$GITHUB_ENV"
 
-      - name: Build signed Android APK
-        run: flutter build apk --release
+      - name: Build signed split and compatibility Android APKs
+        run: |
+          flutter build apk --release
+          mkdir -p build/app/outputs/compatibility-apk
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            build/app/outputs/compatibility-apk/app-release.apk
+          flutter build apk --release --split-per-abi
 
-      - name: Verify and package Android APK
+      - name: Verify and package Android APKs
         run: |
           set -euo pipefail
-          apk='build/app/outputs/flutter-apk/app-release.apk'
-          test -s "$apk"
           apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$apksigner"
-          verification="$("$apksigner" verify --verbose --print-certs "$apk" 2>&1)"
-          printf '%s\n' "$verification"
-          signer_count="$(
-            sed -nE 's/^Number of signers: ([0-9]+)$/\1/p' \
-              <<< "$verification"
-          )"
-          if [[ "$signer_count" != "1" ]]; then
-            echo "Android release APK must contain exactly one signer; found: ${signer_count:-unknown}" >&2
-            exit 1
-          fi
-          mapfile -t signer_digests < <(
-            sed -nE \
-              -e 's/^[[:space:]]*(Signer #1 certificate|V2 Signer: certificate) SHA-256 digest: ([0-9a-fA-F]{64})[[:space:]]*$/\2/p' \
-              <<< "$verification" |
-              tr '[:upper:]' '[:lower:]' |
-              sort -u
-          )
-          if (( ${#signer_digests[@]} != 1 )); then
-            echo 'Unable to determine exactly one Android APK signer digest.' >&2
-            exit 1
-          fi
-          actual_signer_sha256="${signer_digests[0]}"
-          if [[ "$actual_signer_sha256" != "$ANDROID_EXPECTED_SIGNER_SHA256" ]]; then
-            echo 'Android release APK signer does not match the configured keystore.' >&2
-            exit 1
-          fi
-          if grep -qi 'CN=Android Debug' <<< "$verification"; then
-            echo 'Android release APK was signed with the debug certificate.' >&2
-            exit 1
-          fi
-
           expected_version='${{ needs.prepare.outputs.version }}'
           if [[ ! "$expected_version" =~ ^(.+)\+([0-9]+)$ ]]; then
             echo "Android release version must include a numeric build number: $expected_version" >&2
@@ -526,16 +501,60 @@ jobs:
           expected_version_code="${BASH_REMATCH[2]}"
           aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           test -x "$aapt"
-          package_line="$("$aapt" dump badging "$apk" | head -n 1)"
-          if [[ "$package_line" != *"name='com.aaalice.nai_launcher'"* || \
-                "$package_line" != *"versionCode='$expected_version_code'"* || \
-                "$package_line" != *"versionName='$expected_version_name'"* ]]; then
-            echo "Android APK package/version mismatch: $package_line" >&2
-            exit 1
-          fi
-
           mkdir -p dist
-          cp "$apk" "dist/NAI_Launcher_Android_${{ needs.prepare.outputs.version }}.apk"
+
+          packages=(
+            "build/app/outputs/compatibility-apk/app-release.apk|armeabi-v7a,arm64-v8a,x86_64|NAI_Launcher_Android_${expected_version}.apk"
+            "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk|arm64-v8a|NAI_Launcher_Android_arm64-v8a_${expected_version}.apk"
+            "build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk|armeabi-v7a|NAI_Launcher_Android_armeabi-v7a_${expected_version}.apk"
+            "build/app/outputs/flutter-apk/app-x86_64-release.apk|x86_64|NAI_Launcher_Android_x86_64_${expected_version}.apk"
+          )
+          for package in "${packages[@]}"; do
+            IFS='|' read -r apk expected_abis file_name <<< "$package"
+            test -s "$apk"
+
+            verification="$("$apksigner" verify --verbose --print-certs "$apk" 2>&1)"
+            printf '%s\n' "$verification"
+            signer_count="$(sed -nE 's/^Number of signers: ([0-9]+)$/\1/p' <<< "$verification")"
+            if [[ "$signer_count" != "1" ]]; then
+              echo "$apk must contain exactly one signer; found: ${signer_count:-unknown}" >&2
+              exit 1
+            fi
+            mapfile -t signer_digests < <(
+              sed -nE \
+                -e 's/^[[:space:]]*(Signer #1 certificate|V2 Signer: certificate) SHA-256 digest: ([0-9a-fA-F]{64})[[:space:]]*$/\2/p' \
+                <<< "$verification" |
+                tr '[:upper:]' '[:lower:]' |
+                sort -u
+            )
+            if (( ${#signer_digests[@]} != 1 )) || \
+                [[ "${signer_digests[0]}" != "$ANDROID_EXPECTED_SIGNER_SHA256" ]]; then
+              echo "$apk signer does not match the configured keystore." >&2
+              exit 1
+            fi
+            if grep -qi 'CN=Android Debug' <<< "$verification"; then
+              echo "$apk was signed with the debug certificate." >&2
+              exit 1
+            fi
+
+            badging="$("$aapt" dump badging "$apk")"
+            package_line="$(sed -n '1p' <<< "$badging")"
+            if [[ "$package_line" != *"name='com.aaalice.nai_launcher'"* || \
+                  "$package_line" != *"versionCode='$expected_version_code'"* || \
+                  "$package_line" != *"versionName='$expected_version_name'"* ]]; then
+              echo "Android APK package/version mismatch: $package_line" >&2
+              exit 1
+            fi
+            native_line="$(sed -nE '/^native-code: /p' <<< "$badging")"
+            mapfile -t actual_abis < <(grep -oE "'[^']+'" <<< "$native_line" | tr -d "'" | sort)
+            mapfile -t wanted_abis < <(tr ',' '\n' <<< "$expected_abis" | sort)
+            if [[ "${actual_abis[*]}" != "${wanted_abis[*]}" ]]; then
+              echo "$apk ABI mismatch: expected ${wanted_abis[*]}, found ${actual_abis[*]:-none}" >&2
+              exit 1
+            fi
+
+            cp "$apk" "dist/$file_name"
+          done
 
       - name: Remove Android signing key
         if: ${{ always() }}
@@ -544,7 +563,7 @@ jobs:
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-release
+          name: android-split-release
           path: dist/NAI_Launcher_Android_*.apk
           if-no-files-found: error
 

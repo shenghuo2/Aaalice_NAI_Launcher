@@ -55,5 +55,48 @@ void main() {
         'macos',
       );
     });
+
+    test('selects architecture-specific Windows x64 packages', () {
+      expect(
+        AppInstallationService.windowsReleaseAssetPreference(
+          installed: true,
+          abi: Abi.windowsX64,
+        ),
+        'windows-x64-installer',
+      );
+      expect(
+        AppInstallationService.windowsReleaseAssetPreference(
+          installed: false,
+          abi: Abi.windowsX64,
+        ),
+        'windows-x64-portable',
+      );
+      expect(
+        AppInstallationService.windowsReleaseAssetPreference(
+          installed: true,
+          abi: Abi.windowsArm64,
+        ),
+        'windows-installer',
+      );
+    });
+
+    test('selects the matching split Android release ABI', () {
+      expect(
+        AppInstallationService.androidReleaseAssetPreference(Abi.androidArm64),
+        'android-arm64-v8a',
+      );
+      expect(
+        AppInstallationService.androidReleaseAssetPreference(Abi.androidArm),
+        'android-armeabi-v7a',
+      );
+      expect(
+        AppInstallationService.androidReleaseAssetPreference(Abi.androidX64),
+        'android-x86_64',
+      );
+      expect(
+        AppInstallationService.androidReleaseAssetPreference(Abi.androidIA32),
+        'android-apk',
+      );
+    });
   });
 }

@@ -16,6 +16,24 @@ void main() {
       expect(asset.typeId, 'windows-installer');
     });
 
+    test('keeps x64 Windows assets architecture-specific', () {
+      final installer = ReleaseAssetInfo.fromGitHubAsset({
+        'name': 'NAI_Launcher_Windows_x64_3.0.0+36_Setup.exe',
+        'browser_download_url': 'https://example.com/setup.exe',
+      });
+      final portable = ReleaseAssetInfo.fromManifestAsset({
+        'type': 'windows-x64-portable',
+        'fileName': 'NAI_Launcher_Windows_x64_3.0.0+36_Portable.zip',
+      });
+
+      expect(installer.type, ReleaseAssetType.windowsX64Installer);
+      expect(installer.platform, 'windows-x64');
+      expect(installer.typeId, 'windows-x64-installer');
+      expect(portable.type, ReleaseAssetType.windowsX64Portable);
+      expect(portable.isWindowsPortable, isTrue);
+      expect(portable.supportsInAppInstall, isTrue);
+    });
+
     test('detects portable assets', () {
       final windowsAsset = ReleaseAssetInfo.fromGitHubAsset({
         'name': 'NAI_Launcher_Windows_1.0.0_Portable.zip',
@@ -61,6 +79,28 @@ void main() {
       expect(asset.supportsInAppInstall, isTrue);
       expect(asset.typeId, 'android-apk');
       expect(asset.label, 'Android APK');
+    });
+
+    test('keeps split Android APKs ABI-specific', () {
+      final arm64 = ReleaseAssetInfo.fromGitHubAsset({
+        'name': 'NAI_Launcher_Android_arm64-v8a_3.0.0+36.apk',
+        'browser_download_url': 'https://example.com/arm64.apk',
+      });
+      final armv7 = ReleaseAssetInfo.fromGitHubAsset({
+        'name': 'NAI_Launcher_Android_armeabi-v7a_3.0.0+36.apk',
+        'browser_download_url': 'https://example.com/armv7.apk',
+      });
+      final x64 = ReleaseAssetInfo.fromManifestAsset({
+        'type': 'android-x86_64-apk',
+        'fileName': 'NAI_Launcher_Android_x86_64_3.0.0+36.apk',
+      });
+
+      expect(arm64.type, ReleaseAssetType.androidArm64V8aApk);
+      expect(arm64.platform, 'android-arm64-v8a');
+      expect(armv7.type, ReleaseAssetType.androidArmeabiV7aApk);
+      expect(x64.type, ReleaseAssetType.androidX8664Apk);
+      expect(x64.typeId, 'android-x86_64-apk');
+      expect([arm64, armv7, x64].every((asset) => asset.isAndroidApk), isTrue);
     });
 
     test('merges manifest metadata with GitHub asset', () {

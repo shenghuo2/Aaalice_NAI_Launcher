@@ -179,11 +179,14 @@ Download the package for your platform from [GitHub Releases](https://github.com
 
 | Platform | File | Notes |
 | --- | --- | --- |
-| Windows | `NAI_Launcher_Windows_<version>_Setup.exe` | Installer package, recommended for most users. |
-| Windows | `NAI_Launcher_Windows_<version>_Portable.zip` | Portable package; extract and run without installing. |
+| Windows x64 | `NAI_Launcher_Windows_x64_<version>_Setup.exe` | Installer package, recommended for most users. Windows on ARM can run it through system x64 emulation. |
+| Windows x64 | `NAI_Launcher_Windows_x64_<version>_Portable.zip` | Portable package; extract and run without installing. |
 | macOS Apple Silicon | `NAI_Launcher_macOS_arm64_<version>_Portable.zip` | For M-series Macs; extract and open `Aaalice NAI Launcher.app`. |
 | macOS Intel | `NAI_Launcher_macOS_x64_<version>_Portable.zip` | For Intel Macs; extract and open `Aaalice NAI Launcher.app`. |
-| Android | `NAI_Launcher_Android_<version>.apk` | Sideload the APK; the first installation may require permission to install unknown apps. |
+| Android ARM64 | `NAI_Launcher_Android_arm64-v8a_<version>.apk` | Recommended for nearly all modern Android phones and tablets. |
+| Android ARMv7 | `NAI_Launcher_Android_armeabi-v7a_<version>.apk` | For older 32-bit ARM devices only. |
+| Android x86_64 | `NAI_Launcher_Android_x86_64_<version>.apk` | For x86_64 devices and emulators. |
+| Android Universal | `NAI_Launcher_Android_<version>.apk` | Compatibility package for upgrades from older app versions or when the CPU ABI is unknown; larger download. |
 
 ### 2. Sign in to NovelAI
 

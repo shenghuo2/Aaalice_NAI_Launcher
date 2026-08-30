@@ -13,6 +13,10 @@
   !define OUT_FILE "NAI_Launcher_Windows_Setup.exe"
 !endif
 
+!ifndef ARCHITECTURE
+  !define ARCHITECTURE "x64"
+!endif
+
 !ifndef INSTALL_DIR
   !define INSTALL_DIR "$LOCALAPPDATA\Programs\Aaalice NAI Launcher"
 !endif
@@ -239,6 +243,7 @@ Section "${APP_NAME}" SecMain
 
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "Architecture" "${ARCHITECTURE}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "${PUBLISHER}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\${APP_EXE}"

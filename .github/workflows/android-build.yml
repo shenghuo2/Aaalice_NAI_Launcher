@@ -15,7 +15,7 @@ env:
 
 jobs:
   build:
-    name: Build installable Android APK
+    name: Build installable split Android APKs
     runs-on: ubuntu-latest
     timeout-minutes: 40
 
@@ -57,19 +57,20 @@ jobs:
       - name: Verify generated files
         run: git diff --exit-code
 
-      - name: Build release-mode APK
-        run: flutter build apk --release
+      - name: Build release-mode split and compatibility APKs
+        run: |
+          flutter build apk --release
+          mkdir -p build/app/outputs/compatibility-apk
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            build/app/outputs/compatibility-apk/app-release.apk
+          flutter build apk --release --split-per-abi
 
-      - name: Verify and prepare APK artifact
-        id: artifact
+      - name: Verify and prepare APK artifacts
         shell: bash
         run: |
           set -euo pipefail
-          apk='build/app/outputs/flutter-apk/app-release.apk'
-          test -s "$apk"
           apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$apksigner"
-          "$apksigner" verify --verbose --print-certs "$apk"
 
           app_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' pubspec.yaml)"
           if [[ ! "$app_version" =~ ^(.+)\+([0-9]+)$ ]]; then
@@ -80,28 +81,70 @@ jobs:
           version_code="${BASH_REMATCH[2]}"
           aapt="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           test -x "$aapt"
-          package_line="$("$aapt" dump badging "$apk" | head -n 1)"
-          if [[ "$package_line" != *"name='com.aaalice.nai_launcher'"* || \
-                "$package_line" != *"versionCode='$version_code'"* || \
-                "$package_line" != *"versionName='$version'"* ]]; then
-            echo "Android APK package/version mismatch: $package_line" >&2
-            exit 1
-          fi
-
-          file_name="NAI_Launcher_Android_${version}_${GITHUB_SHA::7}.apk"
-          output="dist/$file_name"
           mkdir -p dist
-          cp "$apk" "$output"
-          (cd dist && sha256sum "$file_name" > "$file_name.sha256")
-          echo "path=$output" >> "$GITHUB_OUTPUT"
+
+          packages=(
+            "build/app/outputs/compatibility-apk/app-release.apk|armeabi-v7a,arm64-v8a,x86_64|NAI_Launcher_Android_${version}_${GITHUB_SHA::7}.apk"
+            "build/app/outputs/flutter-apk/app-arm64-v8a-release.apk|arm64-v8a|NAI_Launcher_Android_arm64-v8a_${version}_${GITHUB_SHA::7}.apk"
+            "build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk|armeabi-v7a|NAI_Launcher_Android_armeabi-v7a_${version}_${GITHUB_SHA::7}.apk"
+            "build/app/outputs/flutter-apk/app-x86_64-release.apk|x86_64|NAI_Launcher_Android_x86_64_${version}_${GITHUB_SHA::7}.apk"
+          )
+          for package in "${packages[@]}"; do
+            IFS='|' read -r apk expected_abis file_name <<< "$package"
+            test -s "$apk"
+            "$apksigner" verify --verbose --print-certs "$apk"
+
+            badging="$("$aapt" dump badging "$apk")"
+            package_line="$(sed -n '1p' <<< "$badging")"
+            if [[ "$package_line" != *"name='com.aaalice.nai_launcher'"* || \
+                  "$package_line" != *"versionCode='$version_code'"* || \
+                  "$package_line" != *"versionName='$version'"* ]]; then
+              echo "Android APK package/version mismatch: $package_line" >&2
+              exit 1
+            fi
+            native_line="$(sed -nE '/^native-code: /p' <<< "$badging")"
+            mapfile -t actual_abis < <(grep -oE "'[^']+'" <<< "$native_line" | tr -d "'" | sort)
+            mapfile -t wanted_abis < <(tr ',' '\n' <<< "$expected_abis" | sort)
+            if [[ "${actual_abis[*]}" != "${wanted_abis[*]}" ]]; then
+              echo "$apk ABI mismatch: expected ${wanted_abis[*]}, found ${actual_abis[*]:-none}" >&2
+              exit 1
+            fi
+
+            cp "$apk" "dist/$file_name"
+            (cd dist && sha256sum "$file_name" > "$file_name.sha256")
+          done
+
+      - name: Verify split release metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $match = Select-String -Path pubspec.yaml -Pattern '^version:\s*(.+)$'
+          $version = $match.Matches[0].Groups[1].Value.Trim()
+          ./scripts/generate_release_metadata.ps1 `
+            -AssetDirectory dist `
+            -OutputDirectory dist `
+            -Version $version `
+            -Tag "android-build-${{ github.run_number }}" `
+            -Repository '${{ github.repository }}'
+          $manifest = Get-Content -LiteralPath dist/release_manifest.json -Raw -Encoding UTF8 | ConvertFrom-Json
+          $types = @($manifest.assets | ForEach-Object { $_.type } | Sort-Object)
+          $expected = @(
+            'android-apk',
+            'android-arm64-v8a-apk',
+            'android-armeabi-v7a-apk',
+            'android-x86_64-apk'
+          ) | Sort-Object
+          if (($types -join ',') -ne ($expected -join ',')) {
+            throw "Unexpected Android release asset types: $($types -join ', ')"
+          }
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: NAI-Launcher-Android-${{ github.run_number }}-${{ github.sha }}
           path: |
-            ${{ steps.artifact.outputs.path }}
-            ${{ steps.artifact.outputs.path }}.sha256
+            dist/*.apk
+            dist/*.apk.sha256
           if-no-files-found: error
           retention-days: 30
           compression-level: 0

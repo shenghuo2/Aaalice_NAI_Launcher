@@ -20,6 +20,22 @@ function Get-AssetInfo {
   param([System.IO.FileInfo]$File)
 
   $name = $File.Name
+  if ($name -match '_Windows_x64_.*_Setup\.exe$') {
+    return [ordered]@{
+      platform = 'windows-x64'
+      type = 'windows-x64-installer'
+      label = 'Windows x64 安装版'
+      description = '适用于 64 位 Windows，推荐普通用户使用，支持应用内一键更新。'
+    }
+  }
+  if ($name -match '_Windows_x64_.*_Portable\.zip$') {
+    return [ordered]@{
+      platform = 'windows-x64'
+      type = 'windows-x64-portable'
+      label = 'Windows x64 便携版'
+      description = '适用于 64 位 Windows，解压即用并支持应用内更新。'
+    }
+  }
   if ($name -match '_Windows_.*_Setup\.exe$') {
     return [ordered]@{
       platform = 'windows'
@@ -50,6 +66,30 @@ function Get-AssetInfo {
       type = 'macos-x64-portable'
       label = 'macOS Intel 便携版'
       description = '适用于 Intel Mac，解压后打开应用。'
+    }
+  }
+  if ($name -match '_Android_arm64-v8a_.*\.apk$') {
+    return [ordered]@{
+      platform = 'android-arm64-v8a'
+      type = 'android-arm64-v8a-apk'
+      label = 'Android ARM64 APK'
+      description = '适用于大多数 64 位 ARM Android 手机和平板。'
+    }
+  }
+  if ($name -match '_Android_armeabi-v7a_.*\.apk$') {
+    return [ordered]@{
+      platform = 'android-armeabi-v7a'
+      type = 'android-armeabi-v7a-apk'
+      label = 'Android ARMv7 APK'
+      description = '适用于较旧的 32 位 ARM Android 设备。'
+    }
+  }
+  if ($name -match '_Android_x86_64_.*\.apk$') {
+    return [ordered]@{
+      platform = 'android-x86_64'
+      type = 'android-x86_64-apk'
+      label = 'Android x86_64 APK'
+      description = '适用于 x86_64 Android 设备和模拟器。'
     }
   }
   if ($name -match '_Android_.*\.apk$') {
@@ -171,6 +211,12 @@ function Get-DownloadBadge {
     'windows-portable' {
       return "[![Windows Portable x64](https://img.shields.io/badge/Portable-x64-56B4D3?style=flat-square&logo=windows11&logoColor=white)]($url)"
     }
+    'windows-x64-installer' {
+      return "[![Windows Setup x64](https://img.shields.io/badge/Setup-x64-0078D4?style=flat-square&logo=windows11&logoColor=white)]($url)"
+    }
+    'windows-x64-portable' {
+      return "[![Windows Portable x64](https://img.shields.io/badge/Portable-x64-56B4D3?style=flat-square&logo=windows11&logoColor=white)]($url)"
+    }
     'macos-arm64-portable' {
       return "[![macOS Apple Silicon](https://img.shields.io/badge/Apple_Silicon-arm64-555555?style=flat-square&logo=apple&logoColor=white)]($url)"
     }
@@ -178,7 +224,16 @@ function Get-DownloadBadge {
       return "[![macOS Intel](https://img.shields.io/badge/Intel-x64-777777?style=flat-square&logo=apple&logoColor=white)]($url)"
     }
     'android-apk' {
-      return "[![Android APK](https://img.shields.io/badge/Android-APK-3DDC84?style=flat-square&logo=android&logoColor=white)]($url)"
+      return "[![Android Universal](https://img.shields.io/badge/Android-Universal-3DDC84?style=flat-square&logo=android&logoColor=white)]($url)"
+    }
+    'android-arm64-v8a-apk' {
+      return "[![Android ARM64](https://img.shields.io/badge/Android-ARM64-3DDC84?style=flat-square&logo=android&logoColor=white)]($url)"
+    }
+    'android-armeabi-v7a-apk' {
+      return "[![Android ARMv7](https://img.shields.io/badge/Android-ARMv7-3DDC84?style=flat-square&logo=android&logoColor=white)]($url)"
+    }
+    'android-x86_64-apk' {
+      return "[![Android x86_64](https://img.shields.io/badge/Android-x86__64-3DDC84?style=flat-square&logo=android&logoColor=white)]($url)"
     }
     default {
       throw "Cannot create download badge for asset type: $type"
@@ -224,9 +279,9 @@ $releaseLines = @(
 $releaseLines += $downloadRows
 $releaseLines += @(
   "",
-  "> **应用内更新：** Windows 安装版用户无需手动下载。应用会自动选择 Setup x64，完成下载与 SHA256 校验后退出旧版本、静默安装并重新启动。Portable 版也支持应用内自动更新和失败回滚。",
+  "> **应用内更新：** Windows 会自动选择 x64 Setup/Portable，Android 会自动选择设备 ABI；下载完成后均校验文件大小与 SHA256。Windows 随后自动替换并重启，Android 交给系统确认安装。",
   "",
-  "> **安装提示：** Android 下载 APK 后由系统确认更新；macOS 请按 Mac 芯片选择 Apple Silicon 或 Intel ZIP，更新时需手动替换应用。Windows Setup 为普通用户的推荐版本，Portable 适合放在自定义目录。",
+  "> **安装提示：** Android 通常选择 ARM64，只有旧 32 位 ARM 设备使用 ARMv7，模拟器可能使用 x86_64；Universal 用于旧版客户端兼容升级。macOS 请按 Mac 芯片选择 Apple Silicon 或 Intel ZIP。Windows 当前只提供 x64。",
   "",
   "## 📝 更新内容",
   "",

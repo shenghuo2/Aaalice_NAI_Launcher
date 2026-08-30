@@ -179,11 +179,14 @@ NAI Launcher 面向长期使用 NovelAI 的创作者：生成图片、反复调�
 
 | 平台 | 文件 | 说明 |
 | --- | --- | --- |
-| Windows | `NAI_Launcher_Windows_<version>_Setup.exe` | 安装版，适合大多数用户。 |
-| Windows | `NAI_Launcher_Windows_<version>_Portable.zip` | 便携版，解压后直接运行，不改变安装目录。 |
+| Windows x64 | `NAI_Launcher_Windows_x64_<version>_Setup.exe` | 安装版，适合大多数用户。Windows on ARM 可通过系统的 x64 模拟运行。 |
+| Windows x64 | `NAI_Launcher_Windows_x64_<version>_Portable.zip` | 便携版，解压后直接运行，不改变安装目录。 |
 | macOS Apple Silicon | `NAI_Launcher_macOS_arm64_<version>_Portable.zip` | 适用于 M 系列 Mac，解压后打开 `Aaalice NAI Launcher.app`。 |
 | macOS Intel | `NAI_Launcher_macOS_x64_<version>_Portable.zip` | 适用于 Intel Mac，解压后打开 `Aaalice NAI Launcher.app`。 |
-| Android | `NAI_Launcher_Android_<version>.apk` | APK 侧载安装；首次安装可能需要允许文件管理器或浏览器安装未知应用。 |
+| Android ARM64 | `NAI_Launcher_Android_arm64-v8a_<version>.apk` | 适用于绝大多数现代 Android 手机和平板，推荐优先下载。 |
+| Android ARMv7 | `NAI_Launcher_Android_armeabi-v7a_<version>.apk` | 仅适用于较旧的 32 位 ARM 设备。 |
+| Android x86_64 | `NAI_Launcher_Android_x86_64_<version>.apk` | 适用于 x86_64 设备和模拟器。 |
+| Android Universal | `NAI_Launcher_Android_<version>.apk` | 用于旧版应用覆盖升级或无法确认 CPU 架构时；文件更大。 |
 
 ### 2. 登录 NovelAI
 

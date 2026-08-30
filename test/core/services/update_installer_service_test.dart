@@ -197,7 +197,7 @@ void main() {
 
     test('hands a verified Android APK to the system installer', () async {
       final updateDir = Directory('${tempDir.path}/updates')..createSync();
-      final apk = File('${updateDir.path}/launcher.apk');
+      final apk = File('${updateDir.path}/launcher-arm64-v8a.apk');
       await apk.writeAsString('verified apk');
       final hash = await UpdateInstallerService.calculateSha256(apk);
       String? installedPath;
@@ -210,9 +210,9 @@ void main() {
         shutdownHandler: (_) async => shutdownCalled = true,
       );
       final asset = ReleaseAssetInfo(
-        type: ReleaseAssetType.androidApk,
-        platform: 'android',
-        fileName: 'launcher.apk',
+        type: ReleaseAssetType.androidArm64V8aApk,
+        platform: 'android-arm64-v8a',
+        fileName: 'launcher-arm64-v8a.apk',
         downloadUrl: 'https://example.com/launcher.apk',
         sha256: hash,
         size: await apk.length(),
@@ -371,8 +371,8 @@ void main() {
 
     test('DownloadedUpdate identifies portable zip packages', () {
       const portableAsset = ReleaseAssetInfo(
-        type: ReleaseAssetType.windowsPortable,
-        platform: 'windows',
+        type: ReleaseAssetType.windowsX64Portable,
+        platform: 'windows-x64',
         fileName: 'update.zip',
         downloadUrl: 'https://example.com/update.zip',
       );
