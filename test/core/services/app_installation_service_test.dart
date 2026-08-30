@@ -1,3 +1,5 @@
+import 'dart:ffi';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_launcher/core/services/app_installation_service.dart';
 
@@ -36,6 +38,21 @@ void main() {
               r'C:\Users\alice\AppData\Local\Programs\Aaalice NAI Launcher\',
         ),
         isTrue,
+      );
+    });
+
+    test('selects the matching split macOS release architecture', () {
+      expect(
+        AppInstallationService.macosReleaseAssetPreference(Abi.macosArm64),
+        'macos-arm64',
+      );
+      expect(
+        AppInstallationService.macosReleaseAssetPreference(Abi.macosX64),
+        'macos-x64',
+      );
+      expect(
+        AppInstallationService.macosReleaseAssetPreference(Abi.linuxX64),
+        'macos',
       );
     });
   });

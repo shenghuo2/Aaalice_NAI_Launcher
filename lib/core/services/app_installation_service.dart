@@ -1,3 +1,4 @@
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +17,11 @@ enum AppInstallationType {
 
 /// 判断当前应用是安装版还是便携版。
 class AppInstallationService {
+  AppInstallationService({Abi? currentAbi})
+    : _currentAbi = currentAbi ?? Abi.current();
+
+  final Abi _currentAbi;
+
   static const uninstallRegistryPath =
       r'Software\Microsoft\Windows\CurrentVersion\Uninstall\Aaalice NAI Launcher';
 
@@ -38,9 +44,19 @@ class AppInstallationService {
     return switch (getInstallationType()) {
       AppInstallationType.windowsInstaller => 'windows-installer',
       AppInstallationType.windowsPortable => 'windows-portable',
-      AppInstallationType.macosPortable => 'macos',
+      AppInstallationType.macosPortable => macosReleaseAssetPreference(
+        _currentAbi,
+      ),
       AppInstallationType.androidApk => 'android-apk',
       AppInstallationType.unsupported => 'unknown',
+    };
+  }
+
+  static String macosReleaseAssetPreference(Abi abi) {
+    return switch (abi) {
+      Abi.macosArm64 => 'macos-arm64',
+      Abi.macosX64 => 'macos-x64',
+      _ => 'macos',
     };
   }
 

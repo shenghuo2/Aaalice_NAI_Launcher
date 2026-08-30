@@ -370,8 +370,21 @@ class GitHubApiService {
       return _firstAssetOfType(assets, ReleaseAssetType.windowsPortable) ??
           _firstAssetOfType(assets, ReleaseAssetType.windowsInstaller);
     }
+    if (normalizedPlatform == 'macos-arm64') {
+      return _firstAssetOfType(
+            assets,
+            ReleaseAssetType.macosArm64Portable,
+          ) ??
+          _firstAssetOfType(assets, ReleaseAssetType.macosPortable);
+    }
+    if (normalizedPlatform == 'macos-x64') {
+      return _firstAssetOfType(assets, ReleaseAssetType.macosX64Portable) ??
+          _firstAssetOfType(assets, ReleaseAssetType.macosPortable);
+    }
     if (normalizedPlatform == 'macos') {
-      return _firstAssetOfType(assets, ReleaseAssetType.macosPortable);
+      return _firstAssetOfType(assets, ReleaseAssetType.macosPortable) ??
+          _firstAssetOfType(assets, ReleaseAssetType.macosArm64Portable) ??
+          _firstAssetOfType(assets, ReleaseAssetType.macosX64Portable);
     }
     if (normalizedPlatform == 'android-apk' ||
         normalizedPlatform == 'android') {

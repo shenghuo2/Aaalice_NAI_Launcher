@@ -2,6 +2,8 @@
 enum ReleaseAssetType {
   windowsInstaller,
   windowsPortable,
+  macosArm64Portable,
+  macosX64Portable,
   macosPortable,
   androidApk,
   unknown,
@@ -39,6 +41,8 @@ class ReleaseAssetInfo {
   String get typeId => switch (type) {
     ReleaseAssetType.windowsInstaller => 'windows-installer',
     ReleaseAssetType.windowsPortable => 'windows-portable',
+    ReleaseAssetType.macosArm64Portable => 'macos-arm64-portable',
+    ReleaseAssetType.macosX64Portable => 'macos-x64-portable',
     ReleaseAssetType.macosPortable => 'macos-portable',
     ReleaseAssetType.androidApk => 'android-apk',
     ReleaseAssetType.unknown => 'unknown',
@@ -119,6 +123,8 @@ class ReleaseAssetInfo {
     return switch (value) {
       'windows-installer' => ReleaseAssetType.windowsInstaller,
       'windows-portable' => ReleaseAssetType.windowsPortable,
+      'macos-arm64-portable' => ReleaseAssetType.macosArm64Portable,
+      'macos-x64-portable' => ReleaseAssetType.macosX64Portable,
       'macos-portable' => ReleaseAssetType.macosPortable,
       'android-apk' => ReleaseAssetType.androidApk,
       'unknown' => ReleaseAssetType.unknown,
@@ -137,6 +143,13 @@ class ReleaseAssetInfo {
         (lowerName.contains('portable') || lowerName.endsWith('.zip'))) {
       return ReleaseAssetType.windowsPortable;
     }
+    if (lowerName.contains('macos') && lowerName.contains('arm64')) {
+      return ReleaseAssetType.macosArm64Portable;
+    }
+    if (lowerName.contains('macos') &&
+        (lowerName.contains('x64') || lowerName.contains('x86_64'))) {
+      return ReleaseAssetType.macosX64Portable;
+    }
     if ((lowerName.contains('macos') || lowerName.contains('mac')) &&
         (lowerName.contains('portable') || lowerName.endsWith('.zip'))) {
       return ReleaseAssetType.macosPortable;
@@ -151,6 +164,8 @@ class ReleaseAssetInfo {
     return switch (type) {
       ReleaseAssetType.windowsInstaller ||
       ReleaseAssetType.windowsPortable => 'windows',
+      ReleaseAssetType.macosArm64Portable => 'macos-arm64',
+      ReleaseAssetType.macosX64Portable => 'macos-x64',
       ReleaseAssetType.macosPortable => 'macos',
       ReleaseAssetType.androidApk => 'android',
       ReleaseAssetType.unknown => 'unknown',
@@ -161,6 +176,8 @@ class ReleaseAssetInfo {
     return switch (type) {
       ReleaseAssetType.windowsInstaller => 'Windows 安装版',
       ReleaseAssetType.windowsPortable => 'Windows 便携版',
+      ReleaseAssetType.macosArm64Portable => 'macOS Apple Silicon 便携版',
+      ReleaseAssetType.macosX64Portable => 'macOS Intel 便携版',
       ReleaseAssetType.macosPortable => 'macOS 便携版',
       ReleaseAssetType.androidApk => 'Android APK',
       ReleaseAssetType.unknown => '下载文件',
@@ -171,6 +188,9 @@ class ReleaseAssetInfo {
     return switch (type) {
       ReleaseAssetType.windowsInstaller => '推荐普通用户使用，支持应用内一键更新。',
       ReleaseAssetType.windowsPortable => '解压即用，支持应用内自动更新。',
+      ReleaseAssetType.macosArm64Portable =>
+        '适用于 Apple Silicon（M 系列）Mac，解压后打开应用。',
+      ReleaseAssetType.macosX64Portable => '适用于 Intel Mac，解压后打开应用。',
       ReleaseAssetType.macosPortable => '解压后打开应用，更新时需要手动替换。',
       ReleaseAssetType.androidApk => '下载后由 Android 系统确认并安装更新。',
       ReleaseAssetType.unknown => '请查看 Release 页面说明。',

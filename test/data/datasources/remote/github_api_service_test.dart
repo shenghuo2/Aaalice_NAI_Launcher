@@ -50,6 +50,46 @@ void main() {
     );
   });
 
+  test('macOS lookup selects the asset matching the current CPU', () async {
+    final dio = Dio(BaseOptions(baseUrl: GitHubApiService.defaultBaseUrl))
+      ..httpClientAdapter = _MacosSplitReleaseDioAdapter();
+    final service = GitHubApiService(dio: dio);
+
+    final arm64 = await service.fetchLatestRelease(
+      owner: 'Aaalice233',
+      repo: 'Aaalice_NAI_Launcher',
+      currentVersion: '3.0.0+36',
+      platform: 'macos-arm64',
+    );
+    final x64 = await service.fetchLatestRelease(
+      owner: 'Aaalice233',
+      repo: 'Aaalice_NAI_Launcher',
+      currentVersion: '3.0.0+36',
+      platform: 'macos-x64',
+    );
+
+    expect(arm64.primaryAsset?.type, ReleaseAssetType.macosArm64Portable);
+    expect(arm64.primaryAsset?.fileName, contains('_arm64_'));
+    expect(x64.primaryAsset?.type, ReleaseAssetType.macosX64Portable);
+    expect(x64.primaryAsset?.fileName, contains('_x64_'));
+  });
+
+  test('architecture lookup accepts an older universal macOS asset', () async {
+    final dio = Dio(BaseOptions(baseUrl: GitHubApiService.defaultBaseUrl))
+      ..httpClientAdapter = _MacosSplitReleaseDioAdapter(legacyOnly: true);
+    final service = GitHubApiService(dio: dio);
+
+    final info = await service.fetchLatestRelease(
+      owner: 'Aaalice233',
+      repo: 'Aaalice_NAI_Launcher',
+      currentVersion: '2.9.0',
+      platform: 'macos-arm64',
+    );
+
+    expect(info.primaryAsset?.type, ReleaseAssetType.macosPortable);
+    expect(info.primaryAsset?.fileName, contains('_macOS_3.1.0_'));
+  });
+
   test('stable lookup rejects invalid manifest metadata', () async {
     final adapter = _StableReleaseDioAdapter(
       manifestOverride: {
@@ -296,6 +336,79 @@ class _StatusDioAdapter implements HttpClientAdapter {
     Stream<Uint8List>? requestStream,
     Future<void>? cancelFuture,
   ) async => ResponseBody.fromString('request failed', statusCode);
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _MacosSplitReleaseDioAdapter implements HttpClientAdapter {
+  static const manifestUrl =
+      'https://github.com/Aaalice233/Aaalice_NAI_Launcher/'
+      'releases/latest/download/release_manifest.json';
+  static const hash =
+      '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+  _MacosSplitReleaseDioAdapter({this.legacyOnly = false});
+
+  final bool legacyOnly;
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    expect(options.uri.toString(), manifestUrl);
+    return ResponseBody.fromString(
+      jsonEncode({
+        'version': '3.1.0+37',
+        'tag': 'v3.1.0',
+        'releaseNotes': 'Split macOS packages',
+        'assets': legacyOnly
+            ? [
+                {
+                  'platform': 'macos',
+                  'type': 'macos-portable',
+                  'fileName': 'NAI_Launcher_macOS_3.1.0_Portable.zip',
+                  'downloadUrl':
+                      'https://github.com/Aaalice233/Aaalice_NAI_Launcher/'
+                      'releases/download/v3.1.0/'
+                      'NAI_Launcher_macOS_3.1.0_Portable.zip',
+                  'sha256': hash,
+                  'size': 201,
+                },
+              ]
+            : [
+                {
+                  'platform': 'macos',
+                  'type': 'macos-arm64-portable',
+                  'fileName': 'NAI_Launcher_macOS_arm64_3.1.0_Portable.zip',
+                  'downloadUrl':
+                      'https://github.com/Aaalice233/Aaalice_NAI_Launcher/'
+                      'releases/download/v3.1.0/'
+                      'NAI_Launcher_macOS_arm64_3.1.0_Portable.zip',
+                  'sha256': hash,
+                  'size': 101,
+                },
+                {
+                  'platform': 'macos',
+                  'type': 'macos-x64-portable',
+                  'fileName': 'NAI_Launcher_macOS_x64_3.1.0_Portable.zip',
+                  'downloadUrl':
+                      'https://github.com/Aaalice233/Aaalice_NAI_Launcher/'
+                      'releases/download/v3.1.0/'
+                      'NAI_Launcher_macOS_x64_3.1.0_Portable.zip',
+                  'sha256': hash,
+                  'size': 102,
+                },
+              ],
+      }),
+      200,
+      headers: {
+        Headers.contentTypeHeader: ['application/octet-stream'],
+      },
+    );
+  }
 
   @override
   void close({bool force = false}) {}

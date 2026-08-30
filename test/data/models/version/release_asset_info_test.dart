@@ -33,6 +33,22 @@ void main() {
       expect(macosAsset.platform, 'macos');
     });
 
+    test('keeps split macOS assets architecture-specific', () {
+      final arm64Asset = ReleaseAssetInfo.fromManifestAsset({
+        'type': 'macos-arm64-portable',
+        'fileName': 'NAI_Launcher_macOS_arm64_3.0.0_Portable.zip',
+      });
+      final x64Asset = ReleaseAssetInfo.fromGitHubAsset({
+        'name': 'NAI_Launcher_macOS_x64_3.0.0_Portable.zip',
+        'browser_download_url': 'https://example.com/macos-x64.zip',
+      });
+
+      expect(arm64Asset.type, ReleaseAssetType.macosArm64Portable);
+      expect(arm64Asset.typeId, 'macos-arm64-portable');
+      expect(x64Asset.type, ReleaseAssetType.macosX64Portable);
+      expect(x64Asset.platform, 'macos-x64');
+    });
+
     test('detects Android APK as a verified system-installed update', () {
       final asset = ReleaseAssetInfo.fromGitHubAsset({
         'name': 'NAI_Launcher_Android_1.0.0+17.apk',

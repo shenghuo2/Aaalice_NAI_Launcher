@@ -8,7 +8,11 @@ on:
       - ".github/workflows/macos-build.yml"
       - ".github/workflows/release.yml"
       - "scripts/build_macos_arch.sh"
+      - "scripts/test_macos_upgrade_compatibility.sh"
       - "scripts/generate_release_metadata.ps1"
+      - "lib/core/services/app_installation_service.dart"
+      - "lib/data/datasources/remote/github_api_service.dart"
+      - "lib/data/models/version/release_asset_info.dart"
 
 permissions:
   contents: read
@@ -20,6 +24,9 @@ concurrency:
 env:
   FLUTTER_VERSION: "3.44.2"
   PUB_HOSTED_URL: "https://pub.dev"
+  UPSTREAM_MACOS_BASELINE_ASSET: "NAI_Launcher_macOS_3.0.0+36_Portable.zip"
+  UPSTREAM_MACOS_BASELINE_URL: "https://github.com/Aaalice233/Aaalice_NAI_Launcher/releases/download/v3.0.0/NAI_Launcher_macOS_3.0.0%2B36_Portable.zip"
+  UPSTREAM_MACOS_CHECKSUMS_URL: "https://github.com/Aaalice233/Aaalice_NAI_Launcher/releases/download/v3.0.0/checksums.txt"
 
 jobs:
   build:
@@ -70,8 +77,25 @@ jobs:
       - name: Verify generated files
         run: git diff --exit-code -- lib
 
+      - name: Test split macOS release selection
+        if: matrix.architecture == 'arm64'
+        run: |
+          flutter test \
+            test/core/services/app_installation_service_test.dart \
+            test/data/models/version/release_asset_info_test.dart \
+            test/data/datasources/remote/github_api_service_test.dart
+
       - name: Build and verify macOS ${{ matrix.display_name }} release
         run: ./scripts/build_macos_arch.sh "${{ matrix.architecture }}"
+
+      - name: Test replacement of upstream universal macOS app
+        run: |
+          ./scripts/test_macos_upgrade_compatibility.sh \
+            "${{ matrix.architecture }}" \
+            "build/macos/Build/Products/Release/Aaalice NAI Launcher.app" \
+            "$UPSTREAM_MACOS_BASELINE_URL" \
+            "$UPSTREAM_MACOS_CHECKSUMS_URL" \
+            "$UPSTREAM_MACOS_BASELINE_ASSET"
 
       - name: Package macOS artifact
         id: package
