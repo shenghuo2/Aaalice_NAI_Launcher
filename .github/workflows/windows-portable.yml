@@ -12,6 +12,17 @@ on:
         options:
           - debug
           - release
+  push:
+    paths:
+      - ".github/workflows/windows-portable.yml"
+      - ".github/workflows/release.yml"
+      - "installer/windows/**"
+      - "scripts/generate_release_metadata.ps1"
+      - "scripts/package_windows_release.ps1"
+      - "scripts/verify_windows_binary_architecture.ps1"
+      - "lib/core/services/app_installation_service.dart"
+      - "lib/data/datasources/remote/github_api_service.dart"
+      - "lib/data/models/version/release_asset_info.dart"
 
 permissions:
   contents: read
