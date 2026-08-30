@@ -15,6 +15,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get app_subtitle => 'NovelAI Third-party Client';
 
   @override
+  String get desktopWindow_minimize => 'Minimize';
+
+  @override
+  String get desktopWindow_maximize => 'Maximize';
+
+  @override
+  String get desktopWindow_restore => 'Restore';
+
+  @override
+  String get desktopWindow_close => 'Close window';
+
+  @override
   String get common_cancel => 'Cancel';
 
   @override
@@ -1419,6 +1431,16 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get generation_previewApplySeed =>
       'Use the seed of the displayed image';
+
+  @override
+  String get generation_imageComparison => 'Compare';
+
+  @override
+  String get generation_imageComparisonHint =>
+      'Compare the generated image with its source image';
+
+  @override
+  String get generation_imageComparisonDivider => 'Image comparison divider';
 
   @override
   String get generation_transparencyBackgroundTitle =>
@@ -13536,6 +13558,29 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get agentSettings_subtitle =>
       'Manage the chat model, tool permissions, web access, system prompt, and Skills.';
+
+  @override
+  String get agentSettings_readingAppearance => 'Reading and density';
+
+  @override
+  String get agentSettings_readingTextSize => 'Reading text size';
+
+  @override
+  String get agentSettings_readingTextSizeDescription =>
+      'Applies only to Agent panels and combines with the global text scale.';
+
+  @override
+  String get agentSettings_density => 'Interface density';
+
+  @override
+  String get agentSettings_densityDescription =>
+      'Comfortable preserves touch targets and spacing; compact fits more on desktop.';
+
+  @override
+  String get agentSettings_densityComfortable => 'Comfortable';
+
+  @override
+  String get agentSettings_densityCompact => 'Compact';
 
   @override
   String get agentSettings_chatModel => 'Chat model';

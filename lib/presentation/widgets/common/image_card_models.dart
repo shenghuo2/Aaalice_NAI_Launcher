@@ -19,6 +19,7 @@ class ImageCardViewData {
     required this.isFavorite,
     required this.isPushingToPicManager,
     required this.underlay,
+    required this.imageContent,
     required this.isGenerating,
     required this.progress,
     required this.currentImage,
@@ -43,6 +44,7 @@ class ImageCardViewData {
   final bool isFavorite;
   final bool isPushingToPicManager;
   final Widget? underlay;
+  final Widget? imageContent;
   final bool isGenerating;
   final double? progress;
   final int? currentImage;

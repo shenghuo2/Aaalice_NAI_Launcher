@@ -64,6 +64,7 @@ class SelectableImageCard extends ConsumerStatefulWidget {
     this.onPushToPicManager,
     this.isPushingToPicManager = false,
     this.underlay,
+    this.imageContent,
     this.isGenerating = false,
     this.progress,
     this.currentImage,
@@ -123,6 +124,7 @@ class SelectableImageCard extends ConsumerStatefulWidget {
   final VoidCallback? onPushToPicManager;
   final bool isPushingToPicManager;
   final Widget? underlay;
+  final Widget? imageContent;
   final bool isGenerating;
   final double? progress;
   final int? currentImage;
@@ -155,6 +157,7 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
     isFavorite: widget.isFavorite,
     isPushingToPicManager: widget.isPushingToPicManager,
     underlay: widget.underlay,
+    imageContent: widget.imageContent,
     isGenerating: widget.isGenerating,
     progress: widget.progress,
     currentImage: widget.currentImage,
