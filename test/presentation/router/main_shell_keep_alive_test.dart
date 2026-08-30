@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:nai_launcher/core/storage/local_storage_service.dart';
 import 'package:nai_launcher/core/shortcuts/shortcut_config.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:nai_launcher/presentation/providers/account_manager_provider.dart';
 import 'package:nai_launcher/presentation/providers/auth_provider.dart';
+import 'package:nai_launcher/presentation/providers/character_position_canvas_provider.dart';
 import 'package:nai_launcher/presentation/providers/shortcuts_provider.dart';
 import 'package:nai_launcher/presentation/router/app_router.dart';
 
@@ -25,6 +27,8 @@ void main() {
         shortcutConfigNotifierProvider.overrideWith(
           _TestShortcutConfigNotifier.new,
         ),
+        localStorageServiceProvider.overrideWith((ref) => _TestStorage()),
+        characterPositionCanvasAvailableProvider.overrideWith((ref) => true),
       ],
     );
     addTearDown(container.dispose);
@@ -70,8 +74,18 @@ void main() {
       );
     }
 
+    final canvasSubscription = container.listen<bool>(
+      characterPositionCanvasProvider,
+      (_, __) {},
+      fireImmediately: true,
+    );
+    addTearDown(canvasSubscription.close);
+    container.read(characterPositionCanvasProvider.notifier).open();
+    expect(container.read(characterPositionCanvasProvider), isTrue);
+
     router.go('/branch/${AppBranch.settings.index}');
     await tester.pumpAndSettle();
+    expect(container.read(characterPositionCanvasProvider), isFalse);
     router.go('/branch/${AppBranch.generation.index}');
     await tester.pumpAndSettle();
 
@@ -157,3 +171,5 @@ class _TestShortcutConfigNotifier extends ShortcutConfigNotifier {
   @override
   Future<ShortcutConfig> build() async => ShortcutConfig.createDefault();
 }
+
+class _TestStorage extends LocalStorageService {}

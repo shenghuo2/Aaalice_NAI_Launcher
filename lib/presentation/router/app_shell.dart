@@ -7,6 +7,7 @@ import '../../core/shortcuts/default_shortcuts.dart';
 import '../../core/utils/localization_extension.dart';
 import '../adaptive/window_size_class.dart';
 import '../providers/auth_provider.dart';
+import '../providers/character_position_canvas_provider.dart';
 import '../providers/prompt_maximize_provider.dart';
 import '../widgets/app_branch_visibility.dart';
 import '../widgets/drop/global_drop_handler.dart';
@@ -72,14 +73,23 @@ class _MainShellState extends ConsumerState<MainShell> {
   void didUpdateWidget(MainShell oldWidget) {
     super.didUpdateWidget(oldWidget);
     final currentIndex = widget.navigationShell.currentIndex;
+    final previousIndex = _previousIndex;
 
-    if (_previousIndex == AppBranch.generation.index &&
+    if (previousIndex != currentIndex) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref.read(shellPanelProvider.notifier).state = null;
+      });
+    }
+
+    if (previousIndex == AppBranch.generation.index &&
         currentIndex != AppBranch.generation.index) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted ||
             widget.navigationShell.currentIndex == AppBranch.generation.index) {
           return;
         }
+        ref.invalidate(characterPositionCanvasProvider);
         ref.read(promptMaximizeNotifierProvider.notifier).setMaximized(false);
       });
     }

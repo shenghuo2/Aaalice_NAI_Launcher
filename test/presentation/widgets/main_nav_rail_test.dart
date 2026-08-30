@@ -11,6 +11,7 @@ import 'package:nai_launcher/presentation/providers/account_manager_provider.dar
 import 'package:nai_launcher/presentation/providers/auth_provider.dart';
 import 'package:nai_launcher/presentation/providers/queue_execution_provider.dart';
 import 'package:nai_launcher/presentation/providers/replication_queue_provider.dart';
+import 'package:nai_launcher/presentation/router/app_branch.dart';
 import 'package:nai_launcher/presentation/widgets/navigation/main_nav_rail.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -120,6 +121,13 @@ void main() {
       MainNavRail.collapsedWidth,
     );
     expect(_labelOpacity(tester, '画布'), 0);
+
+    final settingsIcon = find.descendant(
+      of: find.byKey(const ValueKey('main-nav-settings')),
+      matching: find.byIcon(Icons.settings),
+    );
+    await tester.tap(settingsIcon);
+    verify(() => navigationShell.goBranch(AppBranch.settings.index)).called(1);
 
     final agentIcon = find.byIcon(Icons.smart_toy_outlined);
     final agentTooltip = find.ancestor(

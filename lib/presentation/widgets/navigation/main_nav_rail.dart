@@ -242,6 +242,7 @@ class MainNavRail extends ConsumerWidget {
 
           // Bottom Settings
           _NavIcon(
+            key: const ValueKey('main-nav-settings'),
             icon: Icons.settings,
             label: context.l10n.nav_settings,
             isSelected: selectedIndex == 8,

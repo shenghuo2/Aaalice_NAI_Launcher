@@ -242,7 +242,7 @@ void main() {
           .data,
       '集成',
     );
-    expect(segmentLabels, const ['提示词助手', 'ComfyUI', 'Krita']);
+    expect(segmentLabels, const ['提示词助手', 'ComfyUI', 'Krita', 'Pic Manager']);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -433,6 +433,7 @@ void main() {
     expect(segmentedButton.segments.map((segment) => segment.enabled), [
       isTrue,
       isFalse,
+      isTrue,
     ]);
     expect(find.text('桌面浮层交互'), findsNothing);
 
