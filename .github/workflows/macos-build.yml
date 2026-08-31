@@ -11,11 +11,16 @@ on:
       - "scripts/package_macos_dmg.sh"
       - "scripts/test_macos_upgrade_compatibility.sh"
       - "scripts/generate_release_metadata.ps1"
+      - "lib/core/constants/app_build_version.dart"
+      - "lib/core/constants/app_version.dart"
       - "lib/core/services/app_installation_service.dart"
       - "lib/core/services/macos_update_script.dart"
+      - "lib/core/services/update_check_service.dart"
       - "lib/core/services/update_installer_service.dart"
       - "lib/data/datasources/remote/github_api_service.dart"
       - "lib/data/models/version/release_asset_info.dart"
+      - "test/core/constants/app_build_version_test.dart"
+      - "test/core/services/update_check_service_test.dart"
 
 permissions:
   contents: read
@@ -73,9 +78,14 @@ jobs:
       - name: Test split macOS release selection
         if: matrix.architecture == 'arm64'
         run: |
+          app_semver="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' pubspec.yaml)"
+          flutter test \
+            --dart-define="APP_SEMVER=$app_semver" \
+            test/core/constants/app_build_version_test.dart
           flutter test \
             test/core/services/app_installation_service_test.dart \
             test/core/services/macos_update_script_test.dart \
+            test/core/services/update_check_service_test.dart \
             test/core/services/update_installer_service_test.dart \
             test/data/models/version/release_asset_info_test.dart \
             test/data/datasources/remote/github_api_service_test.dart

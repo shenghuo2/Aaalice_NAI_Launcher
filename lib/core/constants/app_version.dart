@@ -1,5 +1,7 @@
 import 'package:package_info_plus/package_info_plus.dart';
 
+import 'app_build_version.dart';
+
 /// 应用版本号配置
 /// 
 /// 从 pubspec.yaml 自动读取版本号
@@ -28,7 +30,7 @@ class AppVersion {
   /// 从 pubspec.yaml 的 version 字段解析
   /// 例如: 1.0.0-Beta3.1
   static String get versionName {
-    final version = _info.version;
+    final version = fullVersion.split('+').first;
     // 解析 x.y.z-prerelease+build -> 返回 x.y.z-Prerelease
     final match = RegExp(r'(\d+\.\d+\.\d+)-([^+]+)').firstMatch(version);
     if (match != null) {
@@ -45,17 +47,20 @@ class AppVersion {
 
   /// 完整版本号
   /// 例如: 1.0.0-beta3.1+3
-  static String get fullVersion => _info.version;
+  static String get fullVersion => AppBuildVersion.resolve(
+    platformVersion: _info.version,
+    buildNumber: _info.buildNumber,
+  );
 
   /// 主版本号
-  static int get major => int.tryParse(_info.version.split('.')[0]) ?? 0;
+  static int get major => int.tryParse(fullVersion.split('.')[0]) ?? 0;
 
   /// 次版本号
-  static int get minor => int.tryParse(_info.version.split('.')[1]) ?? 0;
+  static int get minor => int.tryParse(fullVersion.split('.')[1]) ?? 0;
 
   /// 修订号
   static int get patch {
-    final patchPart = _info.version.split('.')[2];
+    final patchPart = fullVersion.split('.')[2];
     return int.tryParse(patchPart.split('-')[0].split('+')[0]) ?? 0;
   }
 

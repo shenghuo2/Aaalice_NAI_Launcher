@@ -4,6 +4,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../../data/datasources/remote/github_api_service.dart';
 import '../../../data/models/version/version_info.dart';
+import '../constants/app_build_version.dart';
 import '../storage/local_storage_service.dart';
 import 'app_installation_service.dart';
 
@@ -209,6 +210,10 @@ class UpdateCheckService {
   /// 包信息
   final PackageInfo _packageInfo;
 
+  /// Full pubspec SemVer embedded at build time. macOS bundle metadata cannot
+  /// preserve prerelease identifiers and must not be used as the update key.
+  final String _embeddedSemver;
+
   /// 当前安装形态检测服务
   final AppInstallationService _installationService;
 
@@ -245,10 +250,12 @@ class UpdateCheckService {
     LocalStorageService? storage,
     UpdateCheckStorage? checkStorage,
     DateTime Function()? now,
+    String embeddedSemver = AppBuildVersion.embeddedSemver,
   }) : assert(storage == null || checkStorage == null),
        _gitHubApiService = gitHubApiService,
        _packageInfo = packageInfo,
        _installationService = installationService,
+       _embeddedSemver = embeddedSemver,
        _now = now ?? DateTime.now,
        _storage =
            checkStorage ??
@@ -366,13 +373,15 @@ class UpdateCheckService {
     }
   }
 
-  /// 当前应用完整版本。PackageInfo 将 pubspec 的 `+build` 拆到 buildNumber，
-  /// 必须重新组合后再与 Release manifest 比较，否则会把同一构建误判为更新。
+  /// 当前应用完整版本。发布构建优先使用编译期 SemVer，因为 macOS 会把
+  /// `3.0.0-picmanager.2` 之类的版本改写为 `3.0.0.2`。没有编译期值的
+  /// 本地构建仍兼容 PackageInfo 拆分 version/buildNumber 的行为。
   String get currentVersion {
-    final version = _packageInfo.version.trim();
-    final buildNumber = _packageInfo.buildNumber.trim();
-    if (buildNumber.isEmpty || version.contains('+')) return version;
-    return '$version+$buildNumber';
+    return AppBuildVersion.resolve(
+      platformVersion: _packageInfo.version,
+      buildNumber: _packageInfo.buildNumber,
+      embeddedVersion: _embeddedSemver,
+    );
   }
 
   /// 标记为成功完成检查

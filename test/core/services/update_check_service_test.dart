@@ -134,12 +134,12 @@ void main() {
     expect(storage.prerelease, isTrue);
   });
 
-  test('fork prerelease builds always inspect prerelease releases', () async {
+  test('macOS fork builds use embedded SemVer and inspect prereleases', () async {
     api = _FakeGitHubApiService(
       (current) async => VersionInfo(
-        version: '3.0.0-picmanager.1+37',
+        version: '3.0.0-picmanager.3+39',
         currentVersion: current,
-        isNewer: false,
+        isNewer: true,
       ),
     );
     final service = UpdateCheckService(
@@ -147,19 +147,22 @@ void main() {
       packageInfo: PackageInfo(
         appName: 'NAI Launcher',
         packageName: 'nai_launcher',
-        version: '3.0.0-picmanager.1',
-        buildNumber: '37',
+        version: '3.0.0.2',
+        buildNumber: '38',
       ),
       installationService: _FakeInstallationService(),
       checkStorage: storage,
       now: () => now,
+      embeddedSemver: '3.0.0-picmanager.2+38',
     );
 
     expect(storage.prerelease, isFalse);
-    await service.checkForUpdates();
+    expect(service.currentVersion, '3.0.0-picmanager.2+38');
+    final update = await service.checkForUpdates();
 
     expect(api.lastIncludePrerelease, isTrue);
     expect(api.lastOwner, 'shenghuo2');
+    expect(update?.version, '3.0.0-picmanager.3+39');
   });
 
   test(

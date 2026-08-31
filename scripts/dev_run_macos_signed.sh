@@ -29,7 +29,8 @@ fi
 
 echo "[1/3] flutter build macos --$MODE ..."
 pkill -f "Aaalice NAI Launcher.app/Contents/MacOS" 2>/dev/null || true
-flutter build macos --"$MODE"
+APP_SEMVER="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' pubspec.yaml)"
+flutter build macos --"$MODE" --dart-define="APP_SEMVER=$APP_SEMVER"
 
 APP="build/macos/Build/Products/$SUBDIR/Aaalice NAI Launcher.app"
 echo "[2/3] 用 '$IDENTITY' 重签 ..."

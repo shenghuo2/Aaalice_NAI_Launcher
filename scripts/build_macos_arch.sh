@@ -22,6 +22,12 @@ esac
 release_config="macos/Flutter/Flutter-Release.xcconfig"
 app_path="build/macos/Build/Products/Release/Aaalice NAI Launcher.app"
 config_backup="$(mktemp "${TMPDIR:-/tmp}/nai-launcher-macos-config.XXXXXX")"
+app_semver="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' pubspec.yaml)"
+
+if [[ ! "$app_semver" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?\+[0-9]+$ ]]; then
+  echo "pubspec.yaml contains an invalid release SemVer: $app_semver" >&2
+  exit 1
+fi
 
 cp "$release_config" "$config_backup"
 restore_config() {
@@ -33,10 +39,20 @@ trap restore_config EXIT
 printf '\n// Set by scripts/build_macos_arch.sh for this build only.\nEXCLUDED_ARCHS = %s\n' \
   "$excluded_arch" >> "$release_config"
 
-flutter build macos --release --no-pub
+flutter build macos \
+  --release \
+  --no-pub \
+  --dart-define="APP_SEMVER=$app_semver"
 
 if [[ ! -d "$app_path" ]]; then
   echo "macOS application bundle was not produced: $app_path" >&2
+  exit 1
+fi
+
+bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app_path/Contents/Info.plist")"
+expected_build="${app_semver##*+}"
+if [[ "$bundle_version" != "$expected_build" ]]; then
+  echo "macOS bundle build number mismatch: expected $expected_build, found $bundle_version" >&2
   exit 1
 fi
 
