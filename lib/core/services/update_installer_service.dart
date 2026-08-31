@@ -15,6 +15,7 @@ import '../utils/app_logger.dart';
 import 'android_app_installer_service.dart';
 import 'app_installation_service.dart';
 import 'desktop_app_shutdown_service.dart';
+import 'macos_update_script.dart';
 import 'verified_resumable_downloader.dart';
 import 'windows_update_script.dart';
 
@@ -77,6 +78,8 @@ class DownloadedUpdate {
   });
 
   bool get isPortableZip => asset.isWindowsPortable;
+
+  bool get isMacOSDmg => asset.isMacOSDmg;
 }
 
 /// 从磁盘恢复的待安装更新。
@@ -105,7 +108,7 @@ class UpdateExecutionResult {
   });
 }
 
-/// Windows 应用内更新服务。
+/// Windows、macOS 与 Android 应用内更新服务。
 ///
 /// 下载使用 `.part` 文件和 HTTP Range 真正续传；完整包必须同时通过
 /// 长度与 SHA256 校验。安装由独立脚本在应用优雅退出后执行，并留下
@@ -118,6 +121,7 @@ class UpdateInstallerService {
   final UpdateSha256Calculator _sha256Calculator;
   final UpdateProcessStarter _processStarter;
   final Directory? _updateDirectoryOverride;
+  final String? _executablePathOverride;
 
   static const Duration _staleFileAge = Duration(days: 14);
   static const String _updateDirectoryName = 'nai_launcher_updates';
@@ -133,6 +137,7 @@ class UpdateInstallerService {
     UpdateSha256Calculator? sha256Calculator,
     UpdateProcessStarter processStarter = startUpdateProcess,
     Directory? updateDirectory,
+    String? executablePath,
   }) : _downloader = VerifiedResumableDownloader(
          dio: dio,
          sha256Calculator: sha256Calculator,
@@ -143,7 +148,8 @@ class UpdateInstallerService {
        _shutdownHandler = shutdownHandler,
        _sha256Calculator = sha256Calculator ?? calculateSha256,
        _processStarter = processStarter,
-       _updateDirectoryOverride = updateDirectory;
+       _updateDirectoryOverride = updateDirectory,
+       _executablePathOverride = executablePath;
 
   bool get supportsInAppInstall => _installationService.supportsInAppInstall;
 
@@ -324,8 +330,8 @@ class UpdateInstallerService {
     }
   }
 
-  /// 启动平台更新流程。Windows 交给独立脚本并退出；Android 交给系统
-  /// Package Installer 确认，应用不会自行绕过系统安装权限。
+  /// 启动平台更新流程。Windows 与 macOS 交给独立脚本并退出；Android
+  /// 交给系统 Package Installer 确认，应用不会自行绕过系统安装权限。
   Future<void> installAndRestart(DownloadedUpdate update) async {
     if (!await update.file.exists()) {
       throw const UpdateInstallException('更新包已被清理，请重新下载');
@@ -354,12 +360,16 @@ class UpdateInstallerService {
       }
       return;
     }
+    if (installationType == AppInstallationType.macosPortable) {
+      await _installMacOSUpdate(update);
+      return;
+    }
     if (installationType != AppInstallationType.windowsInstaller &&
         installationType != AppInstallationType.windowsPortable) {
       throw const UpdateInstallException('当前平台不支持应用内自动更新');
     }
 
-    final scriptFile = await _writeUpdateScript(update);
+    final scriptFile = await _writeWindowsUpdateScript(update);
     AppLogger.i(
       'Launching update script: ${scriptFile.path} '
           '(pid=$pid, package=${update.file.path})',
@@ -390,7 +400,52 @@ class UpdateInstallerService {
     await _shutdownHandler(0);
   }
 
-  Future<File> _writeUpdateScript(DownloadedUpdate update) async {
+  Future<void> _installMacOSUpdate(DownloadedUpdate update) async {
+    if (!update.isMacOSDmg) {
+      throw const UpdateInstallException('macOS 更新包必须为 DMG 格式');
+    }
+    final executablePath =
+        _executablePathOverride ?? Platform.resolvedExecutable;
+    final appBundlePath = AppInstallationService.macosAppBundleFromExecutable(
+      executablePath,
+    );
+    if (appBundlePath == null ||
+        !AppInstallationService.isMacOSBundleReplaceable(appBundlePath)) {
+      throw const UpdateInstallException('请先将应用移动到“应用程序”或其他可写目录，再使用应用内更新');
+    }
+    final appBundle = Directory(appBundlePath);
+    final appParent = Directory(p.dirname(appBundlePath));
+    final infoPlist = File(p.join(appBundlePath, 'Contents', 'Info.plist'));
+    if (!await appBundle.exists() ||
+        !await appParent.exists() ||
+        !await infoPlist.exists()) {
+      throw const UpdateInstallException('无法定位当前 macOS 应用包');
+    }
+    final writable = await Process.run('/usr/bin/test', ['-w', appParent.path]);
+    if (writable.exitCode != 0) {
+      throw const UpdateInstallException('当前应用目录不可写，无法自动替换；请调整权限后重试');
+    }
+
+    final scriptFile = await _writeMacOSUpdateScript(
+      update,
+      appBundlePath: appBundlePath,
+    );
+    AppLogger.i(
+      'Launching macOS update script: ${scriptFile.path} '
+          '(pid=$pid, package=${update.file.path})',
+      'UpdateInstaller',
+    );
+    try {
+      await _processStarter('/bin/bash', [
+        scriptFile.path,
+      ], ProcessStartMode.normal);
+    } catch (error) {
+      throw UpdateInstallException('启动 macOS 更新程序失败', originalError: error);
+    }
+    await _shutdownHandler(0);
+  }
+
+  Future<File> _writeWindowsUpdateScript(DownloadedUpdate update) async {
     final updateDir = await _ensureUpdateDir();
     final scriptFile = File(
       p.join(updateDir.path, 'nai_launcher_update_${update.version}.ps1'),
@@ -400,7 +455,8 @@ class UpdateInstallerService {
     final logFile = File(
       p.join(updateDir.path, 'update_${update.version}.log'),
     );
-    final executablePath = Platform.resolvedExecutable;
+    final executablePath =
+        _executablePathOverride ?? Platform.resolvedExecutable;
     final appDirectory = p.dirname(executablePath);
     final parentDirectory = p.dirname(appDirectory);
     final safeVersion = update.version.replaceAll(
@@ -437,6 +493,38 @@ class UpdateInstallerService {
             logPath: logFile.path,
           );
 
+    await scriptFile.writeAsString(script, flush: true);
+    return scriptFile;
+  }
+
+  Future<File> _writeMacOSUpdateScript(
+    DownloadedUpdate update, {
+    required String appBundlePath,
+  }) async {
+    final updateDir = await _ensureUpdateDir();
+    final safeVersion = update.version.replaceAll(
+      RegExp(r'[^0-9A-Za-z._-]'),
+      '_',
+    );
+    final scriptFile = File(
+      p.join(updateDir.path, 'nai_launcher_update_$safeVersion.sh'),
+    );
+    final resultFile = await _resultMetadataFile();
+    final pendingFile = await _pendingMetadataFile();
+    final logFile = File(p.join(updateDir.path, 'update_$safeVersion.log'));
+    final appParent = p.dirname(appBundlePath);
+    final appName = p.basenameWithoutExtension(appBundlePath);
+    final script = MacOSUpdateScript.build(
+      appPid: pid,
+      version: update.version,
+      dmgPath: update.file.path,
+      targetAppPath: appBundlePath,
+      mountDirectory: p.join(updateDir.path, 'macos_mount_$safeVersion'),
+      backupAppPath: p.join(appParent, '.$appName.nai-backup-$safeVersion.app'),
+      resultPath: resultFile.path,
+      pendingMetadataPath: pendingFile.path,
+      logPath: logFile.path,
+    );
     await scriptFile.writeAsString(script, flush: true);
     return scriptFile;
   }

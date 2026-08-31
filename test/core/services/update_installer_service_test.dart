@@ -21,6 +21,15 @@ class _AndroidInstallationService extends AppInstallationService {
   bool get supportsInAppInstall => true;
 }
 
+class _MacOSInstallationService extends AppInstallationService {
+  @override
+  AppInstallationType getInstallationType() =>
+      AppInstallationType.macosPortable;
+
+  @override
+  bool get supportsInAppInstall => true;
+}
+
 void main() {
   group('UpdateInstallerService', () {
     late Directory tempDir;
@@ -369,6 +378,63 @@ void main() {
       skip: !Platform.isWindows,
     );
 
+    test(
+      'starts the macOS DMG updater before shutting down the application',
+      () async {
+        final updateDir = Directory('${tempDir.path}/updates')..createSync();
+        final appBundle = Directory(
+          '${tempDir.path}/Applications/Aaalice NAI Launcher.app',
+        );
+        final contents = Directory('${appBundle.path}/Contents')
+          ..createSync(recursive: true);
+        final executable = File('${contents.path}/MacOS/nai_launcher');
+        await executable.parent.create(recursive: true);
+        await executable.writeAsString('old executable');
+        await File('${contents.path}/Info.plist').writeAsString('<plist/>');
+        final dmg = File('${updateDir.path}/update.dmg');
+        await dmg.writeAsString('verified dmg');
+        final hash = await UpdateInstallerService.calculateSha256(dmg);
+        final events = <String>[];
+        String? updaterExecutable;
+        List<String>? updaterArguments;
+        ProcessStartMode? updaterMode;
+        final service = UpdateInstallerService(
+          dio: Dio(),
+          installationService: _MacOSInstallationService(),
+          updateDirectory: updateDir,
+          executablePath: executable.path,
+          processStarter: (command, arguments, mode) async {
+            events.add('process');
+            updaterExecutable = command;
+            updaterArguments = arguments;
+            updaterMode = mode;
+          },
+          shutdownHandler: (_) async => events.add('shutdown'),
+        );
+        final asset = ReleaseAssetInfo(
+          type: ReleaseAssetType.macosArm64Dmg,
+          platform: 'macos-arm64',
+          fileName: 'update.dmg',
+          downloadUrl: 'https://example.com/update.dmg',
+          sha256: hash,
+          size: await dmg.length(),
+        );
+
+        await service.installAndRestart(
+          DownloadedUpdate(file: dmg, asset: asset, version: '3.1.0+38'),
+        );
+
+        expect(events, ['process', 'shutdown']);
+        expect(updaterExecutable, '/bin/bash');
+        expect(updaterMode, ProcessStartMode.normal);
+        expect(updaterArguments, hasLength(1));
+        final script = await File(updaterArguments!.single).readAsString();
+        expect(script, contains(appBundle.path));
+        expect(script, contains(dmg.path));
+        expect(script, contains('Previous application version restored.'));
+      },
+    );
+
     test('DownloadedUpdate identifies portable zip packages', () {
       const portableAsset = ReleaseAssetInfo(
         type: ReleaseAssetType.windowsX64Portable,
@@ -398,6 +464,21 @@ void main() {
           version: '1.0.0',
         ).isPortableZip,
         isFalse,
+      );
+
+      const dmgAsset = ReleaseAssetInfo(
+        type: ReleaseAssetType.macosArm64Dmg,
+        platform: 'macos-arm64',
+        fileName: 'update.dmg',
+        downloadUrl: 'https://example.com/update.dmg',
+      );
+      expect(
+        DownloadedUpdate(
+          file: File('update.dmg'),
+          asset: dmgAsset,
+          version: '1.0.0',
+        ).isMacOSDmg,
+        isTrue,
       );
     });
   });

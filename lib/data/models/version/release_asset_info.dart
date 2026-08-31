@@ -4,6 +4,9 @@ enum ReleaseAssetType {
   windowsX64Portable,
   windowsInstaller,
   windowsPortable,
+  macosArm64Dmg,
+  macosX64Dmg,
+  macosDmg,
   macosArm64Portable,
   macosX64Portable,
   macosPortable,
@@ -42,6 +45,13 @@ class ReleaseAssetInfo {
       type == ReleaseAssetType.windowsX64Portable ||
       type == ReleaseAssetType.windowsPortable;
 
+  bool get isMacOSDmg => switch (type) {
+    ReleaseAssetType.macosArm64Dmg ||
+    ReleaseAssetType.macosX64Dmg ||
+    ReleaseAssetType.macosDmg => true,
+    _ => false,
+  };
+
   bool get isAndroidApk => switch (type) {
     ReleaseAssetType.androidArm64V8aApk ||
     ReleaseAssetType.androidArmeabiV7aApk ||
@@ -55,6 +65,9 @@ class ReleaseAssetInfo {
     ReleaseAssetType.windowsX64Portable ||
     ReleaseAssetType.windowsInstaller ||
     ReleaseAssetType.windowsPortable ||
+    ReleaseAssetType.macosArm64Dmg ||
+    ReleaseAssetType.macosX64Dmg ||
+    ReleaseAssetType.macosDmg ||
     ReleaseAssetType.androidArm64V8aApk ||
     ReleaseAssetType.androidArmeabiV7aApk ||
     ReleaseAssetType.androidX8664Apk ||
@@ -67,6 +80,9 @@ class ReleaseAssetInfo {
     ReleaseAssetType.windowsX64Portable => 'windows-x64-portable',
     ReleaseAssetType.windowsInstaller => 'windows-installer',
     ReleaseAssetType.windowsPortable => 'windows-portable',
+    ReleaseAssetType.macosArm64Dmg => 'macos-arm64-dmg',
+    ReleaseAssetType.macosX64Dmg => 'macos-x64-dmg',
+    ReleaseAssetType.macosDmg => 'macos-dmg',
     ReleaseAssetType.macosArm64Portable => 'macos-arm64-portable',
     ReleaseAssetType.macosX64Portable => 'macos-x64-portable',
     ReleaseAssetType.macosPortable => 'macos-portable',
@@ -154,6 +170,9 @@ class ReleaseAssetInfo {
       'windows-x64-portable' => ReleaseAssetType.windowsX64Portable,
       'windows-installer' => ReleaseAssetType.windowsInstaller,
       'windows-portable' => ReleaseAssetType.windowsPortable,
+      'macos-arm64-dmg' => ReleaseAssetType.macosArm64Dmg,
+      'macos-x64-dmg' => ReleaseAssetType.macosX64Dmg,
+      'macos-dmg' => ReleaseAssetType.macosDmg,
       'macos-arm64-portable' => ReleaseAssetType.macosArm64Portable,
       'macos-x64-portable' => ReleaseAssetType.macosX64Portable,
       'macos-portable' => ReleaseAssetType.macosPortable,
@@ -187,6 +206,20 @@ class ReleaseAssetInfo {
     if (lowerName.contains('windows') &&
         (lowerName.contains('portable') || lowerName.endsWith('.zip'))) {
       return ReleaseAssetType.windowsPortable;
+    }
+    if (lowerName.contains('macos') &&
+        lowerName.contains('arm64') &&
+        lowerName.endsWith('.dmg')) {
+      return ReleaseAssetType.macosArm64Dmg;
+    }
+    if (lowerName.contains('macos') &&
+        (lowerName.contains('x64') || lowerName.contains('x86_64')) &&
+        lowerName.endsWith('.dmg')) {
+      return ReleaseAssetType.macosX64Dmg;
+    }
+    if ((lowerName.contains('macos') || lowerName.contains('mac')) &&
+        lowerName.endsWith('.dmg')) {
+      return ReleaseAssetType.macosDmg;
     }
     if (lowerName.contains('macos') && lowerName.contains('arm64')) {
       return ReleaseAssetType.macosArm64Portable;
@@ -226,6 +259,9 @@ class ReleaseAssetInfo {
       ReleaseAssetType.windowsX64Portable => 'windows-x64',
       ReleaseAssetType.windowsInstaller ||
       ReleaseAssetType.windowsPortable => 'windows',
+      ReleaseAssetType.macosArm64Dmg => 'macos-arm64',
+      ReleaseAssetType.macosX64Dmg => 'macos-x64',
+      ReleaseAssetType.macosDmg => 'macos',
       ReleaseAssetType.macosArm64Portable => 'macos-arm64',
       ReleaseAssetType.macosX64Portable => 'macos-x64',
       ReleaseAssetType.macosPortable => 'macos',
@@ -243,6 +279,9 @@ class ReleaseAssetInfo {
       ReleaseAssetType.windowsX64Portable => 'Windows x64 便携版',
       ReleaseAssetType.windowsInstaller => 'Windows 安装版',
       ReleaseAssetType.windowsPortable => 'Windows 便携版',
+      ReleaseAssetType.macosArm64Dmg => 'macOS Apple Silicon DMG',
+      ReleaseAssetType.macosX64Dmg => 'macOS Intel DMG',
+      ReleaseAssetType.macosDmg => 'macOS DMG',
       ReleaseAssetType.macosArm64Portable => 'macOS Apple Silicon 便携版',
       ReleaseAssetType.macosX64Portable => 'macOS Intel 便携版',
       ReleaseAssetType.macosPortable => 'macOS 便携版',
@@ -261,6 +300,10 @@ class ReleaseAssetInfo {
       ReleaseAssetType.windowsX64Portable => '适用于 64 位 Windows，解压即用，支持应用内自动更新。',
       ReleaseAssetType.windowsInstaller => '推荐普通用户使用，支持应用内一键更新。',
       ReleaseAssetType.windowsPortable => '解压即用，支持应用内自动更新。',
+      ReleaseAssetType.macosArm64Dmg =>
+        '适用于 Apple Silicon（M 系列）Mac，支持应用内自动替换并重启。',
+      ReleaseAssetType.macosX64Dmg => '适用于 Intel Mac，支持应用内自动替换并重启。',
+      ReleaseAssetType.macosDmg => 'macOS 磁盘映像，支持应用内自动替换并重启。',
       ReleaseAssetType.macosArm64Portable =>
         '适用于 Apple Silicon（M 系列）Mac，解压后打开应用。',
       ReleaseAssetType.macosX64Portable => '适用于 Intel Mac，解压后打开应用。',

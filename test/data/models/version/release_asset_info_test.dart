@@ -67,6 +67,25 @@ void main() {
       expect(x64Asset.platform, 'macos-x64');
     });
 
+    test('detects split macOS DMGs as in-app installable updates', () {
+      final arm64 = ReleaseAssetInfo.fromGitHubAsset({
+        'name': 'NAI_Launcher_macOS_arm64_3.1.0+38.dmg',
+        'browser_download_url': 'https://example.com/macos-arm64.dmg',
+      });
+      final x64 = ReleaseAssetInfo.fromManifestAsset({
+        'type': 'macos-x64-dmg',
+        'fileName': 'NAI_Launcher_macOS_x64_3.1.0+38.dmg',
+      });
+
+      expect(arm64.type, ReleaseAssetType.macosArm64Dmg);
+      expect(arm64.typeId, 'macos-arm64-dmg');
+      expect(arm64.isMacOSDmg, isTrue);
+      expect(arm64.supportsInAppInstall, isTrue);
+      expect(x64.type, ReleaseAssetType.macosX64Dmg);
+      expect(x64.platform, 'macos-x64');
+      expect(x64.supportsInAppInstall, isTrue);
+    });
+
     test('detects Android APK as a verified system-installed update', () {
       final asset = ReleaseAssetInfo.fromGitHubAsset({
         'name': 'NAI_Launcher_Android_1.0.0+17.apk',

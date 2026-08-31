@@ -366,14 +366,17 @@ jobs:
         run: |
           version="${{ needs.prepare.outputs.version }}"
           mkdir -p dist
-          cd "build/macos/Build/Products/Release"
-          ditto -c -k --sequesterRsrc --keepParent "Aaalice NAI Launcher.app" "$GITHUB_WORKSPACE/dist/NAI_Launcher_macOS_${{ matrix.architecture }}_${version}_Portable.zip"
+          ./scripts/package_macos_dmg.sh \
+            "${{ matrix.architecture }}" \
+            "$version" \
+            "build/macos/Build/Products/Release/Aaalice NAI Launcher.app" \
+            "$GITHUB_WORKSPACE/dist/NAI_Launcher_macOS_${{ matrix.architecture }}_${version}.dmg"
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-release-${{ matrix.architecture }}
-          path: dist/NAI_Launcher_macOS_${{ matrix.architecture }}_*_Portable.zip
+          path: dist/NAI_Launcher_macOS_${{ matrix.architecture }}_*.dmg
           if-no-files-found: error
 
   build-android:

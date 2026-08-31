@@ -11,6 +11,8 @@ class _FakeGitHubApiService extends GitHubApiService {
 
   final Future<VersionInfo> Function(String currentVersion) handler;
   bool? lastIncludePrerelease;
+  String? lastOwner;
+  String? lastRepo;
 
   @override
   Future<VersionInfo> fetchLatestRelease({
@@ -20,6 +22,8 @@ class _FakeGitHubApiService extends GitHubApiService {
     String platform = 'windows',
     bool includePrerelease = false,
   }) {
+    lastOwner = owner;
+    lastRepo = repo;
     lastIncludePrerelease = includePrerelease;
     return handler(currentVersion);
   }
@@ -120,11 +124,42 @@ void main() {
 
     await service.checkForUpdates();
     expect(api.lastIncludePrerelease, isFalse);
+    expect(api.lastOwner, UpdateCheckService.defaultOwner);
+    expect(api.lastOwner, 'shenghuo2');
+    expect(api.lastRepo, 'Aaalice_NAI_Launcher');
 
     await service.setIncludePrerelease(true);
     await service.checkForUpdates();
     expect(api.lastIncludePrerelease, isTrue);
     expect(storage.prerelease, isTrue);
+  });
+
+  test('fork prerelease builds always inspect prerelease releases', () async {
+    api = _FakeGitHubApiService(
+      (current) async => VersionInfo(
+        version: '3.0.0-picmanager.1+37',
+        currentVersion: current,
+        isNewer: false,
+      ),
+    );
+    final service = UpdateCheckService(
+      gitHubApiService: api,
+      packageInfo: PackageInfo(
+        appName: 'NAI Launcher',
+        packageName: 'nai_launcher',
+        version: '3.0.0-picmanager.1',
+        buildNumber: '37',
+      ),
+      installationService: _FakeInstallationService(),
+      checkStorage: storage,
+      now: () => now,
+    );
+
+    expect(storage.prerelease, isFalse);
+    await service.checkForUpdates();
+
+    expect(api.lastIncludePrerelease, isTrue);
+    expect(api.lastOwner, 'shenghuo2');
   });
 
   test(

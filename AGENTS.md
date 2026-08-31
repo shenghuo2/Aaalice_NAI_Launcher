@@ -56,7 +56,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .pi/skills/aaalice-hot-reload/scri
 pwsh -NoProfile -ExecutionPolicy Bypass -File .pi/skills/aaalice-runtime-verify/scripts/android_verify.ps1 -Name <scenario> -HotReload -Action "tap:x,y","wait:500"
 ```
 
-Windows x64 release 产物位于 `build/windows/x64/runner/Release/`，打包名称必须带 `Windows_x64`，且在发布前校验全部 PE 二进制架构。macOS 使用 `scripts/build_release_macos.sh arm64` 或 `scripts/build_release_macos.sh x64` 构建单架构包，产物位于 `build/macos/Build/Products/Release/Aaalice NAI Launcher.app`；本地 Keychain 反复授权时使用 `scripts/create_macos_dev_cert.sh` 与 `scripts/dev_run_macos_signed.sh debug`。Android 使用 `flutter build apk --release --split-per-abi` 生成 `arm64-v8a`、`armeabi-v7a`、`x86_64` 三个单 ABI APK；Release 暂时同时提供 universal APK 作为旧客户端覆盖升级的兼容桥。推送 `v*` Tag 时由 `.github/workflows/release.yml` 构建并发布正式签名 APK，`.github/workflows/android-build.yml` 仅用于按需手动构建可安装 APK 与 SHA-256 Actions artifact。
+Windows x64 release 产物位于 `build/windows/x64/runner/Release/`，打包名称必须带 `Windows_x64`，且在发布前校验全部 PE 二进制架构。macOS 使用 `scripts/build_release_macos.sh arm64` 或 `scripts/build_release_macos.sh x64` 构建单架构包，产物位于 `build/macos/Build/Products/Release/Aaalice NAI Launcher.app`；本地 Keychain 反复授权时使用 `scripts/create_macos_dev_cert.sh` 与 `scripts/dev_run_macos_signed.sh debug`。Android 使用 `flutter build apk --release --split-per-abi` 生成 `arm64-v8a`、`armeabi-v7a`、`x86_64` 三个单 ABI APK；Release 暂时同时提供 universal APK 作为旧客户端覆盖升级的兼容桥。推送 `v*` Tag 时由 `.github/workflows/release.yml` 构建并发布正式签名 APK，macOS 发布产物必须是按架构拆分并可供应用内更新的 DMG；`.github/workflows/android-build.yml` 仅用于按需手动构建可安装 APK 与 SHA-256 Actions artifact。
 
 项目热重载与按需运行验收由 `.pi/skills/` 中的三个项目 skill 管理：`aaalice-dev-sessions` 负责通过 Orca 创建、复用和关闭唯一的 `PC热重载` / `安卓热重载` 终端；`aaalice-hot-reload` 负责判定并触发 `r`、`R` 或完整重建，随后按 Orca cursor 增量读取两端日志；`aaalice-runtime-verify` 在用户明确要求自动化验收时负责真实 UI 自动化与布局检查。Agent 不得另开第二个 `flutter run` 或 `flutter attach`，仓库 `scripts/` 下不再保留项目热重载入口。
 
@@ -158,11 +158,13 @@ Changelog 条目应面向用户描述结果，不要只写内部实现名。常�
 
 ## 发布流程
 
+Fork 应用内更新版本只从 `feature/fork-in-app-updater` 的已验证提交创建标签；先将上游和其他 Fork 功能合入该分支，再按 [`docs/fork-update-release.md`](docs/fork-update-release.md) 执行。首个修复更新源的桥接版本需要用户手动覆盖，后续版本才能连续应用内升级。
+
 1. 切换到 `main`，拉取最新代码，确认所有待发布修改均已提交且工作区干净。
 2. 更新 `pubspec.yaml` 版本号；tag 必须等于去掉 `+build` 后的版本，如 `1.0.0+17` 对应 `v1.0.0`。
 3. 运行 `pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/prepare_changelog_review.ps1`，根据报告与完整 diff 重写版本日志并提交。
 4. 运行 `dart run tool/tag_catalog/verify_bundled_databases.dart`，确认 LFS 数据库是真实 SQLite 文件；按风险运行测试、分析和 release build。
-5. 创建并推送 `v*` tag。GitHub Actions `Release` workflow 会构建 Windows x64 Setup/Portable、macOS Apple Silicon/Intel Portable、三个签名 Android 单 ABI APK 与兼容 universal APK，并生成 `release_manifest.json`、`checksums.txt` 和 Release notes。
+5. 创建并推送 `v*` tag。GitHub Actions `Release` workflow 会构建 Windows x64 Setup/Portable、macOS Apple Silicon/Intel DMG、三个签名 Android 单 ABI APK 与兼容 universal APK，并生成 `release_manifest.json`、`checksums.txt` 和 Release notes。
 6. Windows 本地打包使用 `scripts/package_windows_release.ps1`；签名使用 `scripts/sign_windows_binary.ps1`。Windows CI secrets 为 `WINDOWS_SIGNING_CERT_BASE64` 与 `WINDOWS_SIGNING_CERT_PASSWORD`。Android 正式发布必须配置 `ANDROID_SIGNING_KEYSTORE_BASE64`、`ANDROID_SIGNING_KEYSTORE_PASSWORD`、`ANDROID_SIGNING_KEY_ALIAS` 与 `ANDROID_SIGNING_KEY_PASSWORD`；缺少任一项时 Release workflow 必须失败，不得发布调试签名 APK。
 
 ## README 双语同步规范

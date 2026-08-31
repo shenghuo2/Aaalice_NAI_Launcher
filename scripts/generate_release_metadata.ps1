@@ -52,6 +52,22 @@ function Get-AssetInfo {
       description = '解压即用，支持应用内一键更新，适合放在自定义目录。'
     }
   }
+  if ($name -match '_macOS_arm64_.*\.dmg$') {
+    return [ordered]@{
+      platform = 'macos'
+      type = 'macos-arm64-dmg'
+      label = 'macOS Apple Silicon DMG'
+      description = '适用于 Apple Silicon（M 系列）Mac，支持应用内自动替换并重启。'
+    }
+  }
+  if ($name -match '_macOS_x64_.*\.dmg$') {
+    return [ordered]@{
+      platform = 'macos'
+      type = 'macos-x64-dmg'
+      label = 'macOS Intel DMG'
+      description = '适用于 Intel Mac，支持应用内自动替换并重启。'
+    }
+  }
   if ($name -match '_macOS_arm64_.*_Portable\.zip$') {
     return [ordered]@{
       platform = 'macos'
@@ -149,7 +165,7 @@ New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $outputPath = Resolve-Path $OutputDirectory
 
 $releaseFiles = Get-ChildItem -Path $assetPath -File |
-  Where-Object { $_.Extension -in @('.exe', '.zip', '.apk') } |
+  Where-Object { $_.Extension -in @('.exe', '.zip', '.dmg', '.apk') } |
   Sort-Object Name
 
 if (-not $releaseFiles) {
@@ -223,6 +239,12 @@ function Get-DownloadBadge {
     'macos-x64-portable' {
       return "[![macOS Intel](https://img.shields.io/badge/Intel-x64-777777?style=flat-square&logo=apple&logoColor=white)]($url)"
     }
+    'macos-arm64-dmg' {
+      return "[![macOS Apple Silicon DMG](https://img.shields.io/badge/DMG-Apple_Silicon-555555?style=flat-square&logo=apple&logoColor=white)]($url)"
+    }
+    'macos-x64-dmg' {
+      return "[![macOS Intel DMG](https://img.shields.io/badge/DMG-Intel-777777?style=flat-square&logo=apple&logoColor=white)]($url)"
+    }
     'android-apk' {
       return "[![Android Universal](https://img.shields.io/badge/Android-Universal-3DDC84?style=flat-square&logo=android&logoColor=white)]($url)"
     }
@@ -243,7 +265,7 @@ function Get-DownloadBadge {
 
 $windowsBadges = @(
   $assets |
-    Where-Object { $_['platform'] -eq 'windows' } |
+    Where-Object { $_['platform'] -like 'windows*' } |
     ForEach-Object { Get-DownloadBadge -Asset $_ }
 )
 $macosBadges = @(
@@ -279,9 +301,9 @@ $releaseLines = @(
 $releaseLines += $downloadRows
 $releaseLines += @(
   "",
-  "> **应用内更新：** Windows 会自动选择 x64 Setup/Portable，Android 会自动选择设备 ABI；下载完成后均校验文件大小与 SHA256。Windows 随后自动替换并重启，Android 交给系统确认安装。",
+  "> **应用内更新：** Windows 会自动选择 x64 Setup/Portable，macOS 会选择匹配芯片的 DMG，Android 会选择设备 ABI；下载完成后均校验文件大小与 SHA256。Windows 与 macOS 随后自动替换并重启，Android 交给系统确认安装。",
   "",
-  "> **安装提示：** Android 通常选择 ARM64，只有旧 32 位 ARM 设备使用 ARMv7，模拟器可能使用 x86_64；Universal 用于旧版客户端兼容升级。macOS 请按 Mac 芯片选择 Apple Silicon 或 Intel ZIP。Windows 当前只提供 x64。",
+  "> **安装提示：** Android 通常选择 ARM64，只有旧 32 位 ARM 设备使用 ARMv7，模拟器可能使用 x86_64；Universal 用于旧版客户端兼容升级。macOS 首次安装请按芯片选择 Apple Silicon 或 Intel DMG，并将应用放到“应用程序”或其他可写目录。Windows 当前只提供 x64。",
   "",
   "## 📝 更新内容",
   "",

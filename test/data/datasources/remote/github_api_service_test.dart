@@ -68,9 +68,9 @@ void main() {
       platform: 'macos-x64',
     );
 
-    expect(arm64.primaryAsset?.type, ReleaseAssetType.macosArm64Portable);
+    expect(arm64.primaryAsset?.type, ReleaseAssetType.macosArm64Dmg);
     expect(arm64.primaryAsset?.fileName, contains('_arm64_'));
-    expect(x64.primaryAsset?.type, ReleaseAssetType.macosX64Portable);
+    expect(x64.primaryAsset?.type, ReleaseAssetType.macosX64Dmg);
     expect(x64.primaryAsset?.fileName, contains('_x64_'));
   });
 
@@ -431,23 +431,23 @@ class _MacosSplitReleaseDioAdapter implements HttpClientAdapter {
             : [
                 {
                   'platform': 'macos',
-                  'type': 'macos-arm64-portable',
-                  'fileName': 'NAI_Launcher_macOS_arm64_3.1.0_Portable.zip',
+                  'type': 'macos-arm64-dmg',
+                  'fileName': 'NAI_Launcher_macOS_arm64_3.1.0.dmg',
                   'downloadUrl':
                       'https://github.com/Aaalice233/Aaalice_NAI_Launcher/'
                       'releases/download/v3.1.0/'
-                      'NAI_Launcher_macOS_arm64_3.1.0_Portable.zip',
+                      'NAI_Launcher_macOS_arm64_3.1.0.dmg',
                   'sha256': hash,
                   'size': 101,
                 },
                 {
                   'platform': 'macos',
-                  'type': 'macos-x64-portable',
-                  'fileName': 'NAI_Launcher_macOS_x64_3.1.0_Portable.zip',
+                  'type': 'macos-x64-dmg',
+                  'fileName': 'NAI_Launcher_macOS_x64_3.1.0.dmg',
                   'downloadUrl':
                       'https://github.com/Aaalice233/Aaalice_NAI_Launcher/'
                       'releases/download/v3.1.0/'
-                      'NAI_Launcher_macOS_x64_3.1.0_Portable.zip',
+                      'NAI_Launcher_macOS_x64_3.1.0.dmg',
                   'sha256': hash,
                   'size': 102,
                 },

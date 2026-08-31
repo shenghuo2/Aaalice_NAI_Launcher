@@ -56,6 +56,40 @@ void main() {
       );
     });
 
+    test('finds a macOS app bundle from its executable', () {
+      expect(
+        AppInstallationService.macosAppBundleFromExecutable(
+          '/Applications/Aaalice NAI Launcher.app/Contents/MacOS/nai_launcher',
+        ),
+        '/Applications/Aaalice NAI Launcher.app',
+      );
+      expect(
+        AppInstallationService.macosAppBundleFromExecutable('/usr/bin/dart'),
+        isNull,
+      );
+    });
+
+    test('rejects read-only and translocated macOS app bundles', () {
+      expect(
+        AppInstallationService.isMacOSBundleReplaceable(
+          '/Applications/Aaalice NAI Launcher.app',
+        ),
+        isTrue,
+      );
+      expect(
+        AppInstallationService.isMacOSBundleReplaceable(
+          '/Volumes/NAI Launcher/Aaalice NAI Launcher.app',
+        ),
+        isFalse,
+      );
+      expect(
+        AppInstallationService.isMacOSBundleReplaceable(
+          '/private/var/folders/AppTranslocation/ABC/App.app',
+        ),
+        isFalse,
+      );
+    });
+
     test('selects architecture-specific Windows x64 packages', () {
       expect(
         AppInstallationService.windowsReleaseAssetPreference(

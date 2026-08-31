@@ -215,7 +215,7 @@ class UpdateCheckService {
   final DateTime Function() _now;
 
   /// 默认仓库所有者
-  static const String defaultOwner = 'Aaalice233';
+  static const String defaultOwner = 'shenghuo2';
 
   /// 默认仓库名称
   static const String defaultRepo = 'Aaalice_NAI_Launcher';
@@ -425,7 +425,8 @@ class UpdateCheckService {
 
   /// 获取是否包含预发布版本
   bool shouldIncludePrerelease() {
-    return _storage.getIncludePrereleaseUpdates();
+    return VersionInfoComparator.isPrerelease(currentVersion) ||
+        _storage.getIncludePrereleaseUpdates();
   }
 
   /// 设置是否包含预发布版本

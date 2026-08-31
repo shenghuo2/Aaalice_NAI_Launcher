@@ -390,8 +390,8 @@ class UpdateCheckDialog extends ConsumerWidget {
         ? versionInfo.displayVersion
         : 'v${versionInfo.displayVersion}';
     final rawContentBase = Uri.parse(
-      'https://raw.githubusercontent.com/Aaalice233/'
-      'Aaalice_NAI_Launcher/$versionTag/',
+      'https://raw.githubusercontent.com/${UpdateCheckService.defaultOwner}/'
+      '${UpdateCheckService.defaultRepo}/$versionTag/',
     );
     final codeBackground = colorScheme.surfaceContainerHighest;
     final codeForeground = _readableForeground(codeBackground);
@@ -518,7 +518,8 @@ class UpdateCheckDialog extends ConsumerWidget {
           : null;
     }
     return Uri.parse(
-      'https://github.com/Aaalice233/Aaalice_NAI_Launcher/blob/'
+      'https://github.com/${UpdateCheckService.defaultOwner}/'
+      '${UpdateCheckService.defaultRepo}/blob/'
       '$versionTag/',
     ).resolveUri(uri);
   }

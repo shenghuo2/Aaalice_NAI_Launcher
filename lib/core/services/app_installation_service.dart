@@ -88,13 +88,33 @@ class AppInstallationService {
     };
   }
 
-  /// Windows 由独立更新器替换应用；Android 下载并校验 APK 后交给
-  /// 系统安装界面确认。macOS 涉及签名与隔离属性，暂不支持自动替换。
+  /// Windows 与 macOS 由独立更新器替换应用；Android 下载并校验 APK
+  /// 后交给系统安装界面确认。
   bool get supportsInAppInstall {
     final type = getInstallationType();
+    if (type == AppInstallationType.macosPortable) {
+      final appBundle = macosAppBundleFromExecutable(
+        Platform.resolvedExecutable,
+      );
+      return appBundle != null && isMacOSBundleReplaceable(appBundle);
+    }
     return type == AppInstallationType.windowsInstaller ||
         type == AppInstallationType.windowsPortable ||
         type == AppInstallationType.androidApk;
+  }
+
+  static String? macosAppBundleFromExecutable(String executablePath) {
+    final normalized = executablePath.replaceAll('\\', '/');
+    final markerIndex = normalized.indexOf('.app/Contents/MacOS/');
+    if (markerIndex < 0) return null;
+    return normalized.substring(0, markerIndex + '.app'.length);
+  }
+
+  static bool isMacOSBundleReplaceable(String appBundlePath) {
+    final normalized = appBundlePath.replaceAll('\\', '/');
+    return normalized.endsWith('.app') &&
+        !normalized.startsWith('/Volumes/') &&
+        !normalized.contains('/AppTranslocation/');
   }
 
   bool _isInstalledWindowsApp() {

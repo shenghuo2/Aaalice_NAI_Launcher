@@ -384,15 +384,22 @@ class GitHubApiService {
           _firstAssetOfType(assets, ReleaseAssetType.windowsX64Installer);
     }
     if (normalizedPlatform == 'macos-arm64') {
-      return _firstAssetOfType(assets, ReleaseAssetType.macosArm64Portable) ??
+      return _firstAssetOfType(assets, ReleaseAssetType.macosArm64Dmg) ??
+          _firstAssetOfType(assets, ReleaseAssetType.macosDmg) ??
+          _firstAssetOfType(assets, ReleaseAssetType.macosArm64Portable) ??
           _firstAssetOfType(assets, ReleaseAssetType.macosPortable);
     }
     if (normalizedPlatform == 'macos-x64') {
-      return _firstAssetOfType(assets, ReleaseAssetType.macosX64Portable) ??
+      return _firstAssetOfType(assets, ReleaseAssetType.macosX64Dmg) ??
+          _firstAssetOfType(assets, ReleaseAssetType.macosDmg) ??
+          _firstAssetOfType(assets, ReleaseAssetType.macosX64Portable) ??
           _firstAssetOfType(assets, ReleaseAssetType.macosPortable);
     }
     if (normalizedPlatform == 'macos') {
-      return _firstAssetOfType(assets, ReleaseAssetType.macosPortable) ??
+      return _firstAssetOfType(assets, ReleaseAssetType.macosDmg) ??
+          _firstAssetOfType(assets, ReleaseAssetType.macosArm64Dmg) ??
+          _firstAssetOfType(assets, ReleaseAssetType.macosX64Dmg) ??
+          _firstAssetOfType(assets, ReleaseAssetType.macosPortable) ??
           _firstAssetOfType(assets, ReleaseAssetType.macosArm64Portable) ??
           _firstAssetOfType(assets, ReleaseAssetType.macosX64Portable);
     }

@@ -8,9 +8,12 @@ on:
       - ".github/workflows/macos-build.yml"
       - ".github/workflows/release.yml"
       - "scripts/build_macos_arch.sh"
+      - "scripts/package_macos_dmg.sh"
       - "scripts/test_macos_upgrade_compatibility.sh"
       - "scripts/generate_release_metadata.ps1"
       - "lib/core/services/app_installation_service.dart"
+      - "lib/core/services/macos_update_script.dart"
+      - "lib/core/services/update_installer_service.dart"
       - "lib/data/datasources/remote/github_api_service.dart"
       - "lib/data/models/version/release_asset_info.dart"
 
@@ -72,6 +75,8 @@ jobs:
         run: |
           flutter test \
             test/core/services/app_installation_service_test.dart \
+            test/core/services/macos_update_script_test.dart \
+            test/core/services/update_installer_service_test.dart \
             test/data/models/version/release_asset_info_test.dart \
             test/data/datasources/remote/github_api_service_test.dart
 
@@ -94,11 +99,14 @@ jobs:
           set -euo pipefail
           app_version="$(sed -nE 's/^version:[[:space:]]*([^[:space:]]+).*/\1/p' pubspec.yaml)"
           version="${app_version%%+*}"
-          file_name="NAI_Launcher_macOS_${{ matrix.architecture }}_${version}_${GITHUB_SHA::7}_Portable.zip"
+          file_name="NAI_Launcher_macOS_${{ matrix.architecture }}_${version}_${GITHUB_SHA::7}.dmg"
           output="$GITHUB_WORKSPACE/dist/$file_name"
           mkdir -p dist
-          cd "build/macos/Build/Products/Release"
-          ditto -c -k --sequesterRsrc --keepParent "Aaalice NAI Launcher.app" "$output"
+          ./scripts/package_macos_dmg.sh \
+            "${{ matrix.architecture }}" \
+            "$app_version" \
+            "build/macos/Build/Products/Release/Aaalice NAI Launcher.app" \
+            "$output"
           cd "$GITHUB_WORKSPACE/dist"
           shasum -a 256 "$file_name" > "$file_name.sha256"
           echo "archive=$output" >> "$GITHUB_OUTPUT"
@@ -155,7 +163,7 @@ jobs:
             -Raw `
             -Encoding UTF8 | ConvertFrom-Json
           $types = @($manifest.assets | ForEach-Object { $_.type } | Sort-Object)
-          $expected = @('macos-arm64-portable', 'macos-x64-portable')
+          $expected = @('macos-arm64-dmg', 'macos-x64-dmg')
           if (($types -join ',') -ne ($expected -join ',')) {
             throw "Unexpected macOS release asset types: $($types -join ', ')"
           }
