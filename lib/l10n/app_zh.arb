@@ -581,6 +581,8 @@
   "prompt_searchPrevious": "上一个命中",
   "prompt_searchNext": "下一个命中",
   "prompt_searchClose": "关闭搜索",
+  "prompt_disableTag": "禁用标签",
+  "prompt_enableTag": "启用标签",
   "prompt_replaceHint": "替换为",
   "prompt_replaceToggle": "显示/隐藏替换",
   "prompt_replaceCurrent": "替换当前命中（Enter）",

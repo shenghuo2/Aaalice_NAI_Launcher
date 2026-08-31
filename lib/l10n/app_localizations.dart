@@ -2993,6 +2993,18 @@ abstract class AppLocalizations {
   /// **'Close search'**
   String get prompt_searchClose;
 
+  /// No description provided for @prompt_disableTag.
+  ///
+  /// In en, this message translates to:
+  /// **'Disable tag'**
+  String get prompt_disableTag;
+
+  /// No description provided for @prompt_enableTag.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable tag'**
+  String get prompt_enableTag;
+
   /// No description provided for @prompt_replaceHint.
   ///
   /// In en, this message translates to:

@@ -32,6 +32,45 @@ void main() {
     });
 
     test(
+      'should never send disabled editing tags in the API payload',
+      () async {
+        const params = ImageParams(
+          prompt: 'one, ~two~',
+          negativePrompt: 'bad, ~worse~',
+          model: ImageModels.animeDiffusionV45Full,
+          qualityToggle: false,
+          ucPreset: UcPresets.noneApiValue,
+          characters: [
+            CharacterPrompt(
+              prompt: 'girl, ~hat~',
+              negativePrompt: 'lowres, ~blurry~',
+            ),
+          ],
+        );
+
+        final result = await NAIImageRequestBuilder(
+          params: params,
+          encodeVibe: _fakeEncodeVibe,
+        ).build(sampler: Samplers.kEuler);
+        final parameters = result.requestParameters;
+
+        expect(result.requestData['input'], 'one');
+        expect(parameters['negative_prompt'], 'bad');
+        expect(
+          parameters['v4_prompt']['caption']['char_captions']
+              .single['char_caption'],
+          'girl',
+        );
+        expect(
+          parameters['v4_negative_prompt']['caption']['char_captions']
+              .single['char_caption'],
+          'lowres',
+        );
+        expect(result.requestData.toString(), isNot(contains('~')));
+      },
+    );
+
+    test(
       'should send effective prompt while forwarding native preset flags',
       () async {
         final params = ImageParams(

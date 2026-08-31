@@ -8,6 +8,7 @@ import 'package:nai_launcher/presentation/themes/core/input_surface_style.dart';
 import 'package:nai_launcher/core/utils/localization_extension.dart';
 
 import '../../../../core/utils/nai_prompt_formatter.dart';
+import '../../../../core/utils/disabled_prompt_tag_syntax.dart';
 import '../../../../core/utils/prompt_regex_replacer.dart';
 import '../../../../core/utils/sd_to_nai_converter.dart';
 import '../../../../data/models/character/character_prompt.dart';
@@ -426,9 +427,42 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
   }
 
   String _assistantInputText() {
-    return ref
+    final prompt = ref
         .read(fixedTagsNotifierProvider)
         .stripFromPrompt(_effectiveController.text);
+    return DisabledPromptTagSyntax.outputOf(prompt);
+  }
+
+  void _toggleActiveTag() {
+    final controller = _effectiveController;
+    final currentValue = controller.value;
+    final edit = DisabledPromptTagSyntax.toggleSelection(
+      currentValue.text,
+      selectionBase: currentValue.selection.baseOffset,
+      selectionExtent: currentValue.selection.extentOffset,
+    );
+    if (edit == null) return;
+
+    final nextValue = currentValue.copyWith(
+      text: edit.text,
+      selection: TextSelection(
+        baseOffset: edit.selectionBase,
+        extentOffset: edit.selectionExtent,
+        affinity: currentValue.selection.affinity,
+        isDirectional: currentValue.selection.isDirectional,
+      ),
+      composing: TextRange.empty,
+    );
+    controller.value = nextValue;
+    _handleTextChanged(edit.text);
+    ref
+        .read(promptAssistantHistoryProvider.notifier)
+        .recordExternalChange(
+          _sessionId,
+          before: currentValue.text,
+          after: edit.text,
+        );
+    _effectiveFocusNode.requestFocus();
   }
 
   /// 焦点变化回调
@@ -1083,18 +1117,19 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
           ),
       ],
     );
+    final editorArea = _buildEditorArea(inputStack);
 
     if (!_searchVisible) {
-      return inputStack;
+      return editorArea;
     }
 
-    if (widget.expands) {
+    if (widget.expands || !widget.fitContent) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildSearchToolbar(context),
           const SizedBox(height: 8),
-          Expanded(child: inputStack),
+          Expanded(child: editorArea),
         ],
       );
     }
@@ -1105,8 +1140,107 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
       children: [
         _buildSearchToolbar(context),
         const SizedBox(height: 8),
-        inputStack,
+        editorArea,
       ],
+    );
+  }
+
+  Widget _buildEditorArea(Widget inputStack) {
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: _effectiveController,
+      child: inputStack,
+      builder: (context, value, child) {
+        final selection = value.selection;
+        final segment = widget.config.readOnly || !selection.isValid
+            ? null
+            : DisabledPromptTagSyntax.segmentForSelection(
+                value.text,
+                selectionStart: selection.start,
+                selectionEnd: selection.end,
+              );
+        final actionBar = segment == null
+            ? null
+            : _buildTagActionBar(context, value.text, segment);
+
+        if (widget.expands || !widget.fitContent) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: child!),
+              if (actionBar != null) ...[const SizedBox(height: 6), actionBar],
+            ],
+          );
+        }
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            child!,
+            if (actionBar != null) ...[const SizedBox(height: 6), actionBar],
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildTagActionBar(
+    BuildContext context,
+    String prompt,
+    DisabledPromptTagSegment segment,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final actionLabel = segment.disabled
+        ? context.l10n.prompt_enableTag
+        : context.l10n.prompt_disableTag;
+    final tagStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+      color: segment.disabled
+          ? colorScheme.outline
+          : colorScheme.onSurfaceVariant,
+      decoration: segment.disabled ? TextDecoration.lineThrough : null,
+    );
+
+    return Container(
+      key: const ValueKey('prompt_tag_action_bar'),
+      height: 36,
+      padding: const EdgeInsets.only(left: 10, right: 2),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.sell_outlined,
+            size: 16,
+            color: colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              segment.contentText(prompt).trim(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: tagStyle,
+            ),
+          ),
+          SizedBox(
+            width: 32,
+            height: 32,
+            child: IconButton(
+              key: const ValueKey('prompt_tag_toggle_button'),
+              icon: Icon(
+                segment.disabled ? Icons.visibility : Icons.visibility_off,
+                size: 18,
+              ),
+              tooltip: actionLabel,
+              onPressed: _toggleActiveTag,
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

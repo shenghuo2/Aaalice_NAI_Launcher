@@ -2,6 +2,7 @@ import '../../data/models/character/character_prompt.dart' as ui_character;
 import '../../data/models/image/image_params.dart';
 import '../utils/app_logger.dart';
 import '../utils/character_prompt_block_parser.dart';
+import '../utils/disabled_prompt_tag_syntax.dart';
 
 /// 角色转换结果
 ///
@@ -76,8 +77,10 @@ class CharacterConversionService {
         .where(
           (character) =>
               character.enabled &&
-              (character.prompt.isNotEmpty ||
-                  character.negativePrompt.isNotEmpty),
+              (DisabledPromptTagSyntax.outputOf(character.prompt).isNotEmpty ||
+                  DisabledPromptTagSyntax.outputOf(
+                    character.negativePrompt,
+                  ).isNotEmpty),
         )
         .toList();
 
@@ -98,17 +101,21 @@ class CharacterConversionService {
 
       // 先展开别名，再由共享解析器拆分角色词库扩展语法。这样通过
       // `<词库名>` 添加的角色也不会把 `negative` 标记发送给 NovelAI。
-      String resolvedPromptSource = uiChar.prompt;
-      String resolvedNegativePrompt = uiChar.negativePrompt;
+      String resolvedPromptSource = DisabledPromptTagSyntax.outputOf(
+        uiChar.prompt,
+      );
+      String resolvedNegativePrompt = DisabledPromptTagSyntax.outputOf(
+        uiChar.negativePrompt,
+      );
 
       if (resolveAliases) {
         final aliasResolver = _aliasResolver;
         if (aliasResolver != null) {
-          final promptWithAliases = aliasResolver(uiChar.prompt);
-          final negativeWithAliases = aliasResolver(uiChar.negativePrompt);
+          final promptWithAliases = aliasResolver(resolvedPromptSource);
+          final negativeWithAliases = aliasResolver(resolvedNegativePrompt);
 
-          if (promptWithAliases != uiChar.prompt ||
-              negativeWithAliases != uiChar.negativePrompt) {
+          if (promptWithAliases != resolvedPromptSource ||
+              negativeWithAliases != resolvedNegativePrompt) {
             resolvedPromptSource = promptWithAliases;
             resolvedNegativePrompt = negativeWithAliases;
             aliasesWereResolved = true;
@@ -166,7 +173,10 @@ class CharacterConversionService {
     return config.characters.any(
       (character) =>
           character.enabled &&
-          (character.prompt.isNotEmpty || character.negativePrompt.isNotEmpty),
+          (DisabledPromptTagSyntax.outputOf(character.prompt).isNotEmpty ||
+              DisabledPromptTagSyntax.outputOf(
+                character.negativePrompt,
+              ).isNotEmpty),
     );
   }
 
@@ -178,8 +188,10 @@ class CharacterConversionService {
         .where(
           (character) =>
               character.enabled &&
-              (character.prompt.isNotEmpty ||
-                  character.negativePrompt.isNotEmpty),
+              (DisabledPromptTagSyntax.outputOf(character.prompt).isNotEmpty ||
+                  DisabledPromptTagSyntax.outputOf(
+                    character.negativePrompt,
+                  ).isNotEmpty),
         )
         .length;
   }

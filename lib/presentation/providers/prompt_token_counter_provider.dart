@@ -7,6 +7,7 @@ import '../../core/services/prompt_token_counter_service.dart';
 import '../../core/utils/novelai_auto_text.dart';
 import '../../core/utils/prompt_preset_resolution.dart';
 import '../../core/utils/character_prompt_block_parser.dart';
+import '../../core/utils/disabled_prompt_tag_syntax.dart';
 import '../../core/utils/prompt_semantics_utils.dart';
 import '../../data/models/character/character_prompt.dart' as ui_character;
 import '../../data/models/image/image_params.dart';
@@ -219,9 +220,11 @@ PromptTokenCountPayload _buildPositiveTokenCountPayload({
   bool useCoords = false,
 }) {
   final resolvedPrompt = CharacterPromptBlockParser.parse(
-    resolveAliases(prompt),
+    resolveAliases(DisabledPromptTagSyntax.outputOf(prompt)),
   ).positivePrompt.trim();
-  final resolvedNegativePrompt = resolveAliases(negativePrompt).trim();
+  final resolvedNegativePrompt = resolveAliases(
+    DisabledPromptTagSyntax.outputOf(negativePrompt),
+  ).trim();
   final promptWithFixedTags = fixedTagsState
       .applyToPrompt(resolvedPrompt)
       .trim();
@@ -248,8 +251,10 @@ PromptTokenCountPayload _buildPositiveTokenCountPayload({
       .where(
         (character) =>
             character.enabled &&
-            (character.prompt.isNotEmpty ||
-                character.negativePrompt.isNotEmpty),
+            (DisabledPromptTagSyntax.outputOf(character.prompt).isNotEmpty ||
+                DisabledPromptTagSyntax.outputOf(
+                  character.negativePrompt,
+                ).isNotEmpty),
       )
       .toList(growable: false);
   final resolvedCharacters = <NovelAiAutoTextCharacter>[];
@@ -257,7 +262,7 @@ PromptTokenCountPayload _buildPositiveTokenCountPayload({
   for (var index = 0; index < enabledCharacters.length; index++) {
     final character = enabledCharacters[index];
     final resolvedPrompt = CharacterPromptBlockParser.parse(
-      resolveAliases(character.prompt),
+      resolveAliases(DisabledPromptTagSyntax.outputOf(character.prompt)),
     ).positivePrompt.trim();
     final customPosition = character.customPosition;
     final position =
@@ -349,8 +354,12 @@ PromptTokenCountPayload _buildNegativeTokenCountPayload({
   required List<ui_character.CharacterPrompt> characters,
   required String Function(String text) resolveAliases,
 }) {
-  final resolvedPrompt = resolveAliases(prompt).trim();
-  final resolvedNegativePrompt = resolveAliases(negativePrompt).trim();
+  final resolvedPrompt = resolveAliases(
+    DisabledPromptTagSyntax.outputOf(prompt),
+  ).trim();
+  final resolvedNegativePrompt = resolveAliases(
+    DisabledPromptTagSyntax.outputOf(negativePrompt),
+  ).trim();
   final promptWithFixedTags = fixedTagsState
       .applyToPrompt(resolvedPrompt)
       .trim();
@@ -388,10 +397,12 @@ PromptTokenCountPayload _buildNegativeTokenCountPayload({
       .where((character) => character.enabled)
       .map((character) {
         final parsedPrompt = CharacterPromptBlockParser.parse(
-          resolveAliases(character.prompt),
+          resolveAliases(DisabledPromptTagSyntax.outputOf(character.prompt)),
         );
         return parsedPrompt.mergeNegativePrompt(
-          resolveAliases(character.negativePrompt),
+          resolveAliases(
+            DisabledPromptTagSyntax.outputOf(character.negativePrompt),
+          ),
         );
       })
       .where((text) => text.isNotEmpty)

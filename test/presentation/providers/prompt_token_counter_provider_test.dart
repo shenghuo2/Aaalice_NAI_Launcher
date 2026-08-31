@@ -213,6 +213,45 @@ void main() {
       expect(negative.extraTexts, ['red hair']);
     });
 
+    test('disabled tags are excluded from positive and negative payloads', () {
+      const characters = [
+        CharacterPrompt(
+          id: 'alice',
+          name: 'Alice',
+          prompt: 'girl, ~hat~',
+          negativePrompt: 'lowres, ~blurry~',
+        ),
+      ];
+
+      final positive = buildPromptTokenCountPayload(
+        target: PromptTokenCountTarget.positive,
+        prompt: 'one, ~two~',
+        negativePrompt: 'bad, ~worse~',
+        model: api.ImageModels.animeDiffusionV45Full,
+        fixedTagsState: const FixedTagsState(),
+        qualityToggle: false,
+        ucPreset: api.UcPresets.noneApiValue,
+        characters: characters,
+        resolveAliases: _resolveAliases,
+      );
+      final negative = buildPromptTokenCountPayload(
+        target: PromptTokenCountTarget.negative,
+        prompt: 'one, ~two~',
+        negativePrompt: 'bad, ~worse~',
+        model: api.ImageModels.animeDiffusionV45Full,
+        fixedTagsState: const FixedTagsState(),
+        qualityToggle: false,
+        ucPreset: api.UcPresets.noneApiValue,
+        characters: characters,
+        resolveAliases: _resolveAliases,
+      );
+
+      expect(positive.mainText, 'one');
+      expect(positive.extraTexts, ['girl']);
+      expect(negative.mainText, 'bad');
+      expect(negative.extraTexts, ['lowres']);
+    });
+
     test('positive V5 payload should count the generated text block', () {
       final payload = buildPromptTokenCountPayload(
         target: PromptTokenCountTarget.positive,

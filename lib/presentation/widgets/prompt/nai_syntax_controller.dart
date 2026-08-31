@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/utils/alias_parser.dart';
 import '../../../core/utils/character_prompt_block_parser.dart';
+import '../../../core/utils/disabled_prompt_tag_syntax.dart';
 
 /// NAI 语法高亮控制器
 /// 继承 TextEditingController，重写 buildTextSpan 实现语法着色
@@ -213,6 +214,7 @@ class NaiSyntaxController extends TextEditingController {
     final backgroundMarks = List<_HighlightMark?>.filled(text.length, null);
     final pipeMarks = List<_PipeMark?>.filled(text.length, null);
     final negativeMarks = List<_NegativeMark?>.filled(text.length, null);
+    final disabledMarks = List<_DisabledMark?>.filled(text.length, null);
     final errors = <String>[];
 
     if (includeEmphasis) {
@@ -221,6 +223,7 @@ class NaiSyntaxController extends TextEditingController {
     }
     _applyOfficialPipeHighlights(text, pipeMarks);
     _applyCharacterNegativeHighlights(text, negativeMarks, errors);
+    _applyDisabledTagHighlights(text, disabledMarks);
     _syntaxErrors = errors;
 
     return _buildHighlightedSpans(
@@ -230,7 +233,23 @@ class NaiSyntaxController extends TextEditingController {
       backgroundMarks,
       pipeMarks,
       negativeMarks,
+      disabledMarks,
     );
+  }
+
+  void _applyDisabledTagHighlights(String text, List<_DisabledMark?> marks) {
+    for (final segment in DisabledPromptTagSyntax.segments(text)) {
+      if (!segment.disabled) continue;
+      marks[segment.start] = _DisabledMark.marker;
+      marks[segment.end - 1] = _DisabledMark.marker;
+      for (
+        var index = segment.contentStart;
+        index < segment.contentEnd;
+        index++
+      ) {
+        marks[index] = _DisabledMark.content;
+      }
+    }
   }
 
   void _applyCharacterNegativeHighlights(
@@ -442,6 +461,7 @@ class NaiSyntaxController extends TextEditingController {
     List<_HighlightMark?> backgroundMarks,
     List<_PipeMark?> pipeMarks,
     List<_NegativeMark?> negativeMarks,
+    List<_DisabledMark?> disabledMarks,
   ) {
     final spans = <TextSpan>[];
     var start = 0;
@@ -449,6 +469,7 @@ class NaiSyntaxController extends TextEditingController {
       backgroundMarks[0],
       pipeMarks[0],
       negativeMarks[0],
+      disabledMarks[0],
     );
 
     for (var index = 1; index <= text.length; index++) {
@@ -458,6 +479,7 @@ class NaiSyntaxController extends TextEditingController {
               backgroundMarks[index],
               pipeMarks[index],
               negativeMarks[index],
+              disabledMarks[index],
             );
       if (nextDecoration == decoration) continue;
 
@@ -481,6 +503,8 @@ enum _PipeMark { single, double }
 
 enum _NegativeMark { keyword, boundary, content }
 
+enum _DisabledMark { marker, content }
+
 class _HighlightMark {
   final _HighlightTone tone;
   final double opacity;
@@ -499,18 +523,25 @@ class _SpanDecoration {
   final _HighlightMark? background;
   final _PipeMark? pipe;
   final _NegativeMark? negative;
+  final _DisabledMark? disabled;
 
-  const _SpanDecoration(this.background, this.pipe, this.negative);
+  const _SpanDecoration(
+    this.background,
+    this.pipe,
+    this.negative,
+    this.disabled,
+  );
 
   @override
   bool operator ==(Object other) =>
       other is _SpanDecoration &&
       other.background == background &&
       other.pipe == pipe &&
-      other.negative == negative;
+      other.negative == negative &&
+      other.disabled == disabled;
 
   @override
-  int get hashCode => Object.hash(background, pipe, negative);
+  int get hashCode => Object.hash(background, pipe, negative, disabled);
 }
 
 /// 官网强调高亮的默认主题色。
@@ -521,6 +552,7 @@ class NaiSyntaxColors {
   final Color midIntensityColor;
   final Color pipeColor;
   final Color negativeColor;
+  final Color disabledColor;
 
   const NaiSyntaxColors._({
     required this.isDark,
@@ -529,6 +561,7 @@ class NaiSyntaxColors {
     required this.midIntensityColor,
     required this.pipeColor,
     required this.negativeColor,
+    required this.disabledColor,
   });
 
   factory NaiSyntaxColors.fromTheme(ThemeData theme) {
@@ -542,6 +575,7 @@ class NaiSyntaxColors {
         theme.colorScheme.error.withValues(alpha: 0.58),
         theme.colorScheme.onSurfaceVariant,
       ),
+      disabledColor: theme.colorScheme.outline,
     );
   }
 
@@ -552,6 +586,7 @@ class NaiSyntaxColors {
     midIntensityColor,
     pipeColor,
     negativeColor,
+    disabledColor,
   );
 
   TextStyle _applyDecoration(TextStyle baseStyle, _SpanDecoration decoration) {
@@ -572,6 +607,18 @@ class NaiSyntaxColors {
       style = style.copyWith(
         color: decoration.negative == null ? pipeColor : negativeColor,
         fontWeight: FontWeight.w800,
+      );
+    }
+    if (decoration.disabled != null) {
+      style = baseStyle.copyWith(
+        height: 1.35,
+        color: decoration.disabled == _DisabledMark.marker
+            ? disabledColor.withValues(alpha: 0.45)
+            : disabledColor,
+        decoration: decoration.disabled == _DisabledMark.content
+            ? TextDecoration.lineThrough
+            : TextDecoration.none,
+        decorationColor: disabledColor,
       );
     }
     return style;

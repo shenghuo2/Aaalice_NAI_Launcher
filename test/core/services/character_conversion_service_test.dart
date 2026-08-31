@@ -231,5 +231,32 @@ void main() {
       expect(service.hasEnabledCharacters(config), isTrue);
       expect(service.getEnabledCharacterCount(config), 1);
     });
+
+    test('removes disabled character tags and omits disabled-only entries', () {
+      const config = ui_character.CharacterPromptConfig(
+        characters: [
+          ui_character.CharacterPrompt(
+            id: 'mixed',
+            name: 'Mixed',
+            prompt: 'girl, ~hat~',
+            negativePrompt: 'lowres, ~blurry~',
+          ),
+          ui_character.CharacterPrompt(
+            id: 'disabled-only',
+            name: 'Disabled only',
+            prompt: '~boy~',
+            negativePrompt: '~bad hands~',
+          ),
+        ],
+      );
+
+      final service = CharacterConversionService();
+      final result = service.convert(config);
+
+      expect(result.characters, hasLength(1));
+      expect(result.characters.single.prompt, 'girl');
+      expect(result.characters.single.negativePrompt, 'lowres');
+      expect(service.getEnabledCharacterCount(config), 1);
+    });
   });
 }

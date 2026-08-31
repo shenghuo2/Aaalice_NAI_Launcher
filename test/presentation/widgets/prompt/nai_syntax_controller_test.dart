@@ -205,6 +205,30 @@ void main() {
       expect(controller.syntaxErrors, contains('negative(...) 块未闭合'));
       expect(controller.syntaxErrors, contains('negative(...) 块不能为空'));
     });
+
+    testWidgets('renders disabled tag content with a strike-through', (
+      tester,
+    ) async {
+      final controller = NaiSyntaxController(text: 'one, ~{two}~, three');
+      addTearDown(controller.dispose);
+
+      final children = await _buildTextSpanChildren(tester, controller);
+      final disabledContent = children
+          .where((span) => span.style?.decoration == TextDecoration.lineThrough)
+          .toList();
+      final markers = children.where((span) => span.text == '~').toList();
+
+      expect(disabledContent.map((span) => span.text).join(), '{two}');
+      expect(
+        disabledContent.every((span) => span.style?.backgroundColor == null),
+        isTrue,
+      );
+      expect(markers, hasLength(2));
+      expect(
+        markers.every((span) => span.style?.decoration == TextDecoration.none),
+        isTrue,
+      );
+    });
   });
 }
 
