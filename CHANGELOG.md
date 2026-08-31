@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [3.0.0-picmanager.2] - 2026-08-31
+
+> [!WARNING]
+> **这是非正式自动更新测试版，不建议作为稳定版长期使用。** 本次主要用于验证 Fork 更新通道以及 Windows、macOS、Android 的应用内更新链路；升级前请备份重要数据并保留上一版本安装包。
+
+### ✨ 新增
+
+- 提示词标签现在可在选中或点击后临时禁用与重新启用；禁用项会以灰色删除线显示，并从正负提示词、角色提示词、Token 统计、提示词助手和最终 NovelAI 请求中排除。
+- macOS 新增完整的 DMG 应用内更新流程：自动选择 Apple Silicon 或 Intel 包，校验文件大小、SHA-256、Bundle ID、版本和代码签名后替换应用并重新启动；新版本启动失败时会自动恢复上一版本。
+
+### 🛠 改进
+
+- 应用更新源切换到本 Fork，预发布构建会自动检查 Fork 的最新非正式版本；Windows、macOS 和 Android 会按当前安装形态、芯片或 ABI 选择对应安装包。
+- macOS 更新仅在应用位于可写目录时启用，并拒绝从 DMG 挂载目录或 App Translocation 路径直接替换，避免破坏当前应用。
+
+### ⚠️ 注意
+
+- 公开的 `v3.0.0-picmanager.1` 仍使用旧更新源，无法直接发现本版本。首次测试需要手动安装本版本，或从已经包含 Fork 更新通道的 Actions 测试包发起更新；安装本版本后，后续 Fork 预发布版本才能连续应用内升级。
+- macOS 当前使用 ad-hoc 签名，尚未配置 Apple Developer ID 签名和公证。请先将应用从 DMG 移到 `/Applications`、`~/Applications` 或其他可写目录；标准用户无法写入 `/Applications` 时应使用 `~/Applications`。
+
 ## [3.0.0-picmanager.1] - 2026-08-30
 
 ### ✨ 新增
