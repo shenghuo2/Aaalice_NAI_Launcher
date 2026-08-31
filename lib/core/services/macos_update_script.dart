@@ -16,9 +16,19 @@ class MacOSUpdateScript {
     required String pendingMetadataPath,
     required String logPath,
   }) {
+    final publicVersion = version.split('+').first;
+    final buildSeparator = version.lastIndexOf('+');
+    final buildVersion = buildSeparator < 0
+        ? ''
+        : version.substring(buildSeparator + 1);
     return _template
         .replaceAll('@@APP_PID@@', appPid.toString())
         .replaceAll('@@VERSION@@', _shellQuote(version))
+        .replaceAll(
+          '@@EXPECTED_SHORT_VERSION@@',
+          _shellQuote(_macOSShortVersion(publicVersion)),
+        )
+        .replaceAll('@@EXPECTED_BUILD_VERSION@@', _shellQuote(buildVersion))
         .replaceAll('@@DMG_PATH@@', _shellQuote(dmgPath))
         .replaceAll('@@TARGET_APP@@', _shellQuote(targetAppPath))
         .replaceAll('@@MOUNT_DIR@@', _shellQuote(mountDirectory))
@@ -33,6 +43,19 @@ class MacOSUpdateScript {
 
   static String _shellQuote(String value) {
     return "'${value.replaceAll("'", "'\"'\"'")}'";
+  }
+
+  /// Mirrors Flutter's validatedBuildNameForPlatform rule for macOS.
+  static String _macOSShortVersion(String value) {
+    final sanitized = value.replaceAll(RegExp(r'[^\d\.]'), '');
+    final segments = sanitized
+        .split('.')
+        .where((segment) => segment.isNotEmpty)
+        .toList();
+    while (segments.length < 3) {
+      segments.add('0');
+    }
+    return segments.join('.');
   }
 
   static const _template = r'''#!/bin/bash
@@ -187,10 +210,14 @@ CandidateBundleId="$(plist_value "$CandidateApp" CFBundleIdentifier)"
 CurrentExecutable="$(plist_value "$TargetApp" CFBundleExecutable)"
 CandidateExecutable="$(plist_value "$CandidateApp" CFBundleExecutable)"
 CandidateVersion="$(plist_value "$CandidateApp" CFBundleShortVersionString)"
-ExpectedVersion="${Version%%+*}"
+CandidateBuildVersion="$(plist_value "$CandidateApp" CFBundleVersion)"
+ExpectedVersion=@@EXPECTED_SHORT_VERSION@@
+ExpectedBuildVersion=@@EXPECTED_BUILD_VERSION@@
 if [[ -z "$CurrentBundleId" || "$CandidateBundleId" != "$CurrentBundleId" || \
       "$CandidateExecutable" != "$CurrentExecutable" || \
-      "$CandidateVersion" != "$ExpectedVersion" ]]; then
+      "$CandidateVersion" != "$ExpectedVersion" || \
+      ( -n "$ExpectedBuildVersion" && \
+        "$CandidateBuildVersion" != "$ExpectedBuildVersion" ) ]]; then
   write_log 'Update application identity or version does not match the installed app.'
   false
 fi

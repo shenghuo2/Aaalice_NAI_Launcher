@@ -26,6 +26,9 @@ void main() {
       expect(script, contains('hdiutil attach'));
       expect(script, contains('CFBundleIdentifier'));
       expect(script, contains('CFBundleShortVersionString'));
+      expect(script, contains('CFBundleVersion'));
+      expect(script, contains("ExpectedVersion='3.0.0.2'"));
+      expect(script, contains("ExpectedBuildVersion='38'"));
       expect(script, contains('codesign --verify --deep --strict'));
       expect(script, contains(r'mv -- "$TargetApp" "$BackupApp"'));
       expect(script, contains(r'/usr/bin/ditto "$CandidateApp" "$TargetApp"'));

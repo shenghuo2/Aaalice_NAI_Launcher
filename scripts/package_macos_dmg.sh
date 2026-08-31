@@ -26,6 +26,10 @@ fi
 
 app_name="$(basename "$app_path")"
 public_version="${version%%+*}"
+build_version=''
+if [[ "$version" == *+* ]]; then
+  build_version="${version##*+}"
+fi
 work_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/nai-macos-dmg.XXXXXX")"
 staging_dir="$work_root/staging"
 mount_dir="$work_root/mount"
@@ -39,6 +43,29 @@ cleanup() {
   rm -rf -- "$work_root"
 }
 trap cleanup EXIT
+
+flutter_macos_short_version() {
+  local cleaned segment result index
+  local -a raw_segments segments
+  cleaned="$(printf '%s' "$1" | LC_ALL=C tr -cd '0-9.')"
+  IFS='.' read -r -a raw_segments <<< "$cleaned"
+  segments=()
+  for segment in "${raw_segments[@]}"; do
+    if [[ -n "$segment" ]]; then
+      segments+=("$segment")
+    fi
+  done
+  while ((${#segments[@]} < 3)); do
+    segments+=('0')
+  done
+  result="${segments[0]}"
+  for ((index = 1; index < ${#segments[@]}; index++)); do
+    result+=".${segments[index]}"
+  done
+  printf '%s' "$result"
+}
+
+expected_short_version="$(flutter_macos_short_version "$public_version")"
 
 mkdir -p "$staging_dir" "$mount_dir" "$(dirname "$output_path")"
 codesign --verify --deep --strict --verbose=2 "$app_path"
@@ -68,8 +95,17 @@ packaged_version="$(
     -c 'Print :CFBundleShortVersionString' \
     "$packaged_app/Contents/Info.plist"
 )"
-if [[ "$packaged_version" != "$public_version" ]]; then
-  echo "Packaged app version mismatch: expected $public_version, found $packaged_version." >&2
+packaged_build_version="$(
+  /usr/libexec/PlistBuddy \
+    -c 'Print :CFBundleVersion' \
+    "$packaged_app/Contents/Info.plist"
+)"
+if [[ "$packaged_version" != "$expected_short_version" ]]; then
+  echo "Packaged app version mismatch: expected $expected_short_version, found $packaged_version." >&2
+  exit 1
+fi
+if [[ -n "$build_version" && "$packaged_build_version" != "$build_version" ]]; then
+  echo "Packaged app build mismatch: expected $build_version, found $packaged_build_version." >&2
   exit 1
 fi
 codesign --verify --deep --strict --verbose=2 "$packaged_app"
