@@ -303,7 +303,7 @@ $releaseLines += @(
   "",
   "> **应用内更新：** Windows 会自动选择 x64 Setup/Portable，macOS 会选择匹配芯片的 DMG，Android 会选择设备 ABI；下载完成后均校验文件大小与 SHA256。Windows 与 macOS 随后自动替换并重启，Android 交给系统确认安装。",
   "",
-  "> **安装提示：** Android 通常选择 ARM64，只有旧 32 位 ARM 设备使用 ARMv7，模拟器可能使用 x86_64；Universal 用于旧版客户端兼容升级。macOS 首次安装请按芯片选择 Apple Silicon 或 Intel DMG，并将应用放到“应用程序”或其他可写目录。Windows 当前只提供 x64。",
+  "> **安装提示：** Android 通常选择 ARM64，只有旧 32 位 ARM 设备使用 ARMv7，模拟器可能使用 x86_64；Universal 用于旧版客户端兼容升级。macOS 首次安装请按芯片选择 Apple Silicon 或 Intel DMG，并将应用放到「应用程序」或其他可写目录。Windows 当前只提供 x64。",
   "",
   "## 📝 更新内容",
   "",
