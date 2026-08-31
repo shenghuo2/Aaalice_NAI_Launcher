@@ -631,6 +631,8 @@
   "prompt_searchPrevious": "Previous match",
   "prompt_searchNext": "Next match",
   "prompt_searchClose": "Close search",
+  "prompt_disableTag": "Disable tag",
+  "prompt_enableTag": "Enable tag",
   "prompt_replaceHint": "Replace with",
   "prompt_replaceToggle": "Toggle replace",
   "prompt_replaceCurrent": "Replace current match (Enter)",

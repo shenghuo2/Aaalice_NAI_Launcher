@@ -6,6 +6,7 @@ import '../../constants/api_constants.dart';
 import '../../enums/precise_ref_type.dart';
 import '../../utils/app_logger.dart';
 import '../../utils/character_center_resolver.dart';
+import '../../utils/disabled_prompt_tag_syntax.dart';
 import '../../utils/inpaint_mask_utils.dart';
 import '../../utils/nai_resolution_adapter.dart';
 import '../../utils/nai_api_utils.dart';
@@ -228,6 +229,10 @@ class NAIImageRequestBuilder {
 
     for (var index = 0; index < params.characters.length; index++) {
       final char = params.characters[index];
+      final characterPrompt = DisabledPromptTagSyntax.outputOf(char.prompt);
+      final characterNegativePrompt = DisabledPromptTagSyntax.outputOf(
+        char.negativePrompt,
+      );
       final center = _resolveCharacterCenter(index);
       final x = center.x;
       final y = center.y;
@@ -236,20 +241,20 @@ class NAIImageRequestBuilder {
         'centers': [
           {'x': x, 'y': y},
         ],
-        'char_caption': char.prompt,
+        'char_caption': characterPrompt,
       });
 
       negativeCharCaptions.add({
         'centers': [
           {'x': x, 'y': y},
         ],
-        'char_caption': char.negativePrompt,
+        'char_caption': characterNegativePrompt,
       });
 
       characterPrompts.add({
         'center': {'x': x, 'y': y},
-        'prompt': char.prompt,
-        'uc': char.negativePrompt,
+        'prompt': characterPrompt,
+        'uc': characterNegativePrompt,
         'enabled': true,
       });
     }
@@ -290,7 +295,7 @@ class NAIImageRequestBuilder {
       final character = params.characters[index];
       final center = _resolveCharacterCenter(index);
       return NovelAiAutoTextCharacter(
-        prompt: character.prompt,
+        prompt: DisabledPromptTagSyntax.outputOf(character.prompt),
         centerX: center.x,
         centerY: center.y,
       );
@@ -589,8 +594,8 @@ class NAIImageRequestBuilder {
         ? ImageModels.resolveInpaintingModel(baseModel)
         : params.model;
     final promptSemantics = buildPromptSemanticsSnapshot(
-      prompt: params.prompt,
-      negativePrompt: params.negativePrompt,
+      prompt: DisabledPromptTagSyntax.outputOf(params.prompt),
+      negativePrompt: DisabledPromptTagSyntax.outputOf(params.negativePrompt),
       model: baseModel,
       qualityToggle: params.qualityToggle,
       ucPreset: params.ucPreset,

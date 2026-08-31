@@ -1590,6 +1590,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get prompt_searchClose => 'Close search';
 
   @override
+  String get prompt_disableTag => 'Disable tag';
+
+  @override
+  String get prompt_enableTag => 'Enable tag';
+
+  @override
   String get prompt_replaceHint => 'Replace with';
 
   @override

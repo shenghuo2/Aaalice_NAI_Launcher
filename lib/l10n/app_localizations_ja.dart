@@ -1560,6 +1560,12 @@ class AppLocalizationsJa extends AppLocalizations {
   String get prompt_searchClose => '検索を閉じる';
 
   @override
+  String get prompt_disableTag => 'タグを無効化';
+
+  @override
+  String get prompt_enableTag => 'タグを有効化';
+
+  @override
   String get prompt_replaceHint => '置換後の文字列';
 
   @override

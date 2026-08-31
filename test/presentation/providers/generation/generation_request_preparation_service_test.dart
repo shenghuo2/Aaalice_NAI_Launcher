@@ -45,13 +45,18 @@ void main() {
       );
 
       final result = await service.prepareInitial(
-        const ImageParams(prompt: '<alice>', negativePrompt: 'global uc'),
+        const ImageParams(
+          prompt: '<alice>, ~ignored tag~',
+          negativePrompt: 'global uc, ~ignored uc~',
+        ),
       );
 
       expect(result.params.prompt, 'girl, blue eyes, negative(fixed literal)');
       expect(result.params.negativePrompt, 'global uc');
       expect(result.params.prompt, isNot(contains('red hair')));
       expect(result.params.prompt, isNot(contains('glasses')));
+      expect(result.params.prompt, isNot(contains('ignored tag')));
+      expect(result.params.negativePrompt, isNot(contains('ignored uc')));
     },
   );
 }

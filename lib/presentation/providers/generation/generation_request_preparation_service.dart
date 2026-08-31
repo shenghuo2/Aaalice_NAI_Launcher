@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import '../../../core/utils/character_prompt_block_parser.dart';
+import '../../../core/utils/disabled_prompt_tag_syntax.dart';
 import '../../../core/utils/prompt_preset_resolution.dart';
 import '../../../data/models/image/image_params.dart';
 
@@ -117,14 +118,18 @@ class GenerationRequestPreparationService {
     }
 
     final resolvedPrompt = CharacterPromptBlockParser.parse(
-      promptPreparation.resolveAliases(effective.prompt),
+      promptPreparation.resolveAliases(
+        DisabledPromptTagSyntax.outputOf(effective.prompt),
+      ),
     ).positivePrompt;
     final promptWithFixedTags = promptPreparation.applyFixedPositiveTags(
       resolvedPrompt,
     );
     final negativePromptWithFixedTags = promptPreparation
         .applyFixedNegativeTags(
-          promptPreparation.resolveAliases(effective.negativePrompt),
+          promptPreparation.resolveAliases(
+            DisabledPromptTagSyntax.outputOf(effective.negativePrompt),
+          ),
         );
     effective = effective.copyWith(
       prompt: promptWithFixedTags,
@@ -163,7 +168,9 @@ class GenerationRequestPreparationService {
     if (prompt.isEmpty) return currentParams;
 
     final resolvedPrompt = CharacterPromptBlockParser.parse(
-      promptPreparation.resolveAliases(prompt),
+      promptPreparation.resolveAliases(
+        DisabledPromptTagSyntax.outputOf(prompt),
+      ),
     ).positivePrompt;
     var preparedPrompt = promptPreparation.applyFixedPositiveTags(
       resolvedPrompt,

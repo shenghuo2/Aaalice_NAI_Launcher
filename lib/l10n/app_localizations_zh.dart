@@ -1536,6 +1536,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get prompt_searchClose => '关闭搜索';
 
   @override
+  String get prompt_disableTag => '禁用标签';
+
+  @override
+  String get prompt_enableTag => '启用标签';
+
+  @override
   String get prompt_replaceHint => '替换为';
 
   @override
@@ -14811,6 +14817,12 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get prompt_searchClose => '關閉搜尋';
+
+  @override
+  String get prompt_disableTag => '停用標籤';
+
+  @override
+  String get prompt_enableTag => '啟用標籤';
 
   @override
   String get prompt_replaceHint => '替換為';

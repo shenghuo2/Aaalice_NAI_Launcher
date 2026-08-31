@@ -576,6 +576,8 @@
   "prompt_searchPrevious": "上一個命中",
   "prompt_searchNext": "下一個命中",
   "prompt_searchClose": "關閉搜尋",
+  "prompt_disableTag": "停用標籤",
+  "prompt_enableTag": "啟用標籤",
   "prompt_replaceHint": "替換為",
   "prompt_replaceToggle": "顯示/隱藏替換",
   "prompt_replaceCurrent": "替換當前命中（Enter）",
