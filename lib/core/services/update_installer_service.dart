@@ -421,7 +421,7 @@ class UpdateInstallerService {
         !await infoPlist.exists()) {
       throw const UpdateInstallException('无法定位当前 macOS 应用包');
     }
-    final writable = await Process.run('/usr/bin/test', ['-w', appParent.path]);
+    final writable = await Process.run('/bin/test', ['-w', appParent.path]);
     if (writable.exitCode != 0) {
       throw const UpdateInstallException('当前应用目录不可写，无法自动替换；请调整权限后重试');
     }
