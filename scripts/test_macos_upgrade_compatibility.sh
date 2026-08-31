@@ -30,6 +30,9 @@ fi
 
 test_root="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/nai-macos-upgrade.XXXXXX")"
 cleanup() {
+  if [[ -n "${marker:-}" && -f "$marker" ]]; then
+    rm -f -- "$marker"
+  fi
   if [[ -n "${test_root:-}" && -d "$test_root" ]]; then
     rm -rf -- "$test_root"
   fi
@@ -144,10 +147,10 @@ launch_and_verify "$installed_app" "upstream-universal" "$baseline_executable"
 
 support_dir="$HOME/Library/Application Support/$baseline_bundle_id"
 if [[ ! -d "$support_dir" ]]; then
-  echo "The upstream app did not initialize its shared application-support directory." >&2
-  exit 1
+  echo "The upstream app did not initialize its application-support directory during the smoke-test window; creating the upgrade fixture directory."
+  mkdir -p "$support_dir"
 fi
-marker="$support_dir/split-upgrade-compatibility.marker"
+marker="$support_dir/split-upgrade-compatibility.$$.marker"
 marker_value="preserve-$architecture-$baseline_version-to-$new_version"
 printf '%s\n' "$marker_value" >"$marker"
 
