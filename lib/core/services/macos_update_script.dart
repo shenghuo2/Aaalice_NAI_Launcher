@@ -124,7 +124,8 @@ launch_app() {
 
   # `open -n` hands process ownership to LaunchServices. Its helper process can
   # exit before the app settles, which made a healthy update look failed.
-  "$UpdatedExecutablePath" >> "$LogPath" 2>&1 &
+  NAI_LAUNCHER_UPDATE_RESTART=1 \
+    "$UpdatedExecutablePath" >> "$LogPath" 2>&1 &
   UpdatedExecutablePid=$!
   local iteration
   for iteration in {1..12}; do

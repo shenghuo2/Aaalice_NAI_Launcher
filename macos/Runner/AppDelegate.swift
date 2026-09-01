@@ -7,6 +7,8 @@ class AppDelegate: FlutterAppDelegate {
   private static let wakePrimaryNotification =
     Notification.Name("com.aaalice.nai-launcher.wake-primary")
   private static var primaryInstanceLock: Int32 = -2
+  private static let updateRestartEnvironment = "NAI_LAUNCHER_UPDATE_RESTART"
+  private static let updateLockWaitSeconds: TimeInterval = 12
 
   static func acquirePrimaryInstanceLock() -> Bool {
     if primaryInstanceLock >= 0 { return true }
@@ -15,13 +17,38 @@ class AppDelegate: FlutterAppDelegate {
     let lockPath = (NSTemporaryDirectory() as NSString)
       .appendingPathComponent("\(identifier)-\(getuid()).lock")
     let descriptor = open(lockPath, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
-    guard descriptor >= 0, flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
-      if descriptor >= 0 { close(descriptor) }
+    guard descriptor >= 0 else {
       primaryInstanceLock = -1
       return false
     }
-    primaryInstanceLock = descriptor
-    return true
+
+    let updatePendingPath = (NSTemporaryDirectory() as NSString)
+      .appendingPathComponent("nai_launcher_updates/pending_update.json")
+    let isUpdateRestart =
+      ProcessInfo.processInfo.environment[updateRestartEnvironment] == "1" ||
+      FileManager.default.fileExists(atPath: updatePendingPath)
+    let deadline = Date().addingTimeInterval(updateLockWaitSeconds)
+
+    repeat {
+      if flock(descriptor, LOCK_EX | LOCK_NB) == 0 {
+        let descriptorFlags = fcntl(descriptor, F_GETFD)
+        guard descriptorFlags >= 0,
+              fcntl(descriptor, F_SETFD, descriptorFlags | FD_CLOEXEC) == 0 else {
+          flock(descriptor, LOCK_UN)
+          close(descriptor)
+          primaryInstanceLock = -1
+          return false
+        }
+        primaryInstanceLock = descriptor
+        return true
+      }
+      if !isUpdateRestart || Date() >= deadline { break }
+      usleep(250_000)
+    } while true
+
+    close(descriptor)
+    primaryInstanceLock = -1
+    return false
   }
 
   static func notifyExistingPrimary() {

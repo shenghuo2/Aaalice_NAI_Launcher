@@ -32,6 +32,7 @@ void main() {
       expect(script, contains('codesign --verify --deep --strict'));
       expect(script, contains(r'mv -- "$TargetApp" "$BackupApp"'));
       expect(script, contains(r'/usr/bin/ditto "$CandidateApp" "$TargetApp"'));
+      expect(script, contains('NAI_LAUNCHER_UPDATE_RESTART=1'));
       expect(script, contains(r'"$UpdatedExecutablePath" >> "$LogPath" 2>&1 &'));
       expect(script, contains(r'UpdatedExecutablePid=$!'));
       expect(

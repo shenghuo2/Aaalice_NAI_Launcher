@@ -29,7 +29,9 @@ class _AboutSettingsSectionState extends ConsumerState<AboutSettingsSection> {
   Widget build(BuildContext context) {
     final updateState = ref.watch(updateStateProvider);
     final updateNotifier = ref.read(updateStateProvider.notifier);
-    final updateService = ref.watch(updateCheckServiceProvider);
+    final updateService = ref
+        .watch(updateCheckServiceReadyProvider)
+        .valueOrNull;
     final localStorageService = ref.watch(localStorageServiceProvider);
     final fileLoggingEnabled = localStorageService.getFileLoggingEnabled();
 
@@ -73,7 +75,7 @@ class _AboutSettingsSectionState extends ConsumerState<AboutSettingsSection> {
             children: [
               // 检查更新按钮
               FutureBuilder<DateTime?>(
-                future: updateService.getLastCheckTime(),
+                future: updateService?.getLastCheckTime(),
                 builder: (context, snapshot) {
                   final lastCheckTime = snapshot.data;
                   return ListTile(
@@ -101,7 +103,7 @@ class _AboutSettingsSectionState extends ConsumerState<AboutSettingsSection> {
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
                         : const Icon(Icons.chevron_right),
-                    onTap: updateState.isChecking
+                    onTap: updateService == null || updateState.isChecking
                         ? null
                         : () async {
                             if (updateState.hasNewVersion ||
@@ -121,7 +123,9 @@ class _AboutSettingsSectionState extends ConsumerState<AboutSettingsSection> {
               ),
               // 包含预发布版本开关
               FutureBuilder<bool>(
-                future: Future.value(updateService.shouldIncludePrerelease()),
+                future: updateService == null
+                    ? null
+                    : Future.value(updateService.shouldIncludePrerelease()),
                 builder: (context, snapshot) {
                   final includePrerelease = snapshot.data ?? false;
                   return SwitchListTile(
@@ -131,14 +135,14 @@ class _AboutSettingsSectionState extends ConsumerState<AboutSettingsSection> {
                       context.l10n.includePrereleaseUpdatesDescription,
                     ),
                     value: includePrerelease,
-                    onChanged: (value) async {
-                      await updateNotifier.setIncludePrerelease(value);
-                      if (mounted) {
-                        setState(
-                          () {},
-                        ); // Force widget rebuild to refresh value
-                      }
-                    },
+                    onChanged: updateService == null
+                        ? null
+                        : (value) async {
+                            await updateNotifier.setIncludePrerelease(value);
+                            if (mounted) {
+                              setState(() {});
+                            }
+                          },
                   );
                 },
               ),
