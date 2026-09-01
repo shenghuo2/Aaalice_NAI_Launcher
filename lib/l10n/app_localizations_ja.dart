@@ -993,9 +993,6 @@ class AppLocalizationsJa extends AppLocalizations {
   String get agentChat_disableWebAccess => 'ウェブアクセスを無効にする';
 
   @override
-  String get agentChat_webAccess => 'ウェブアクセス';
-
-  @override
   String agentChat_unsupportedImageFormat(Object fileName) {
     return 'サポートされていない画像形式です: $fileName';
   }
@@ -4638,16 +4635,6 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get nav_settings => '設定';
-
-  @override
-  String download_completed(Object name) {
-    return '$name ダウンロードが完了しました';
-  }
-
-  @override
-  String download_failed(Object name) {
-    return '$name ダウンロードに失敗しました';
-  }
 
   @override
   String get sync_preparing => '同期の準備中...';
@@ -9201,11 +9188,6 @@ class AppLocalizationsJa extends AppLocalizations {
   String get vibe_import_importFailed => 'インポートに失敗しました';
 
   @override
-  String vibe_import_failedWithError(String error) {
-    return 'インポートに失敗しました: $error';
-  }
-
-  @override
   String get vibe_import_bundleTitle => 'Vibe バンドルをインポート';
 
   @override
@@ -9300,10 +9282,6 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get vibe_maxReached => '最大 16 件の Vibe に達しました';
-
-  @override
-  String get vibe_maxReachedRemoveSome =>
-      '最大 16 件の Vibe に達しました。まずいくつかの Vibe を削除してください。';
 
   @override
   String vibe_addedNamed(String name) {
@@ -9464,9 +9442,6 @@ class AppLocalizationsJa extends AppLocalizations {
   @override
   String get settings_resetPathConfirm =>
       'データ ストレージ パスをリセットした後、反映するにはアプリの再起動が必要です。\\n\\nデフォルトのパスは次回起動時に有効になります。続行しますか？';
-
-  @override
-  String get settings_kritaBridgeTitle => 'Krita Bridge';
 
   @override
   String get settings_kritaBridgeEnable => 'Krita ローカル ブリッジを有効にする';

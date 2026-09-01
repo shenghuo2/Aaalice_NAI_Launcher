@@ -20,6 +20,7 @@ concurrency:
 
 env:
   FLUTTER_VERSION: "3.44.2"
+  PUB_HOSTED_URL: "https://pub.dev"
 
 jobs:
   build:

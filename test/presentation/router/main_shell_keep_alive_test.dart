@@ -9,7 +9,8 @@ import 'package:nai_launcher/presentation/providers/account_manager_provider.dar
 import 'package:nai_launcher/presentation/providers/auth_provider.dart';
 import 'package:nai_launcher/presentation/providers/character_position_canvas_provider.dart';
 import 'package:nai_launcher/presentation/providers/shortcuts_provider.dart';
-import 'package:nai_launcher/presentation/router/app_router.dart';
+import 'package:nai_launcher/presentation/router/app_branch.dart';
+import 'package:nai_launcher/presentation/router/app_shell.dart';
 
 void main() {
   testWidgets('MainShell keeps only the semantic keep-alive branches mounted', (
