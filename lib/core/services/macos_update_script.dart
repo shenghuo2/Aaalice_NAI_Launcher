@@ -75,6 +75,7 @@ ResultTemporaryPath="${ResultPath}.tmp.$$"
 Mounted=0
 Swapped=0
 UpdatedExecutablePath=''
+UpdatedExecutablePid=''
 
 write_log() {
   local timestamp
@@ -116,22 +117,24 @@ cleanup() {
 launch_app() {
   local executable_name="$1"
   UpdatedExecutablePath="$TargetApp/Contents/MacOS/$executable_name"
-  /usr/bin/open -n "$TargetApp"
-  local iteration new_pid
-  for iteration in {1..20}; do
-    if new_pid="$(/usr/bin/pgrep -f -- "$UpdatedExecutablePath" | /usr/bin/head -n 1)" && \
-        [[ -n "$new_pid" ]]; then
-      for iteration in {1..12}; do
-        sleep 0.25
-        if ! kill -0 "$new_pid" >/dev/null 2>&1; then
-          return 1
-        fi
-      done
-      return 0
-    fi
+  if [[ ! -x "$UpdatedExecutablePath" ]]; then
+    write_log "Updated application executable is not runnable: $UpdatedExecutablePath"
+    return 1
+  fi
+
+  # `open -n` hands process ownership to LaunchServices. Its helper process can
+  # exit before the app settles, which made a healthy update look failed.
+  "$UpdatedExecutablePath" >> "$LogPath" 2>&1 &
+  UpdatedExecutablePid=$!
+  local iteration
+  for iteration in {1..12}; do
     sleep 0.25
+    if ! kill -0 "$UpdatedExecutablePid" >/dev/null 2>&1; then
+      wait "$UpdatedExecutablePid" || true
+      return 1
+    fi
   done
-  return 1
+  return 0
 }
 
 handle_error() {
@@ -143,8 +146,8 @@ handle_error() {
   write_result false "$message"
 
   if [[ "$Swapped" -eq 1 && -d "$BackupApp" ]]; then
-    if [[ -n "$UpdatedExecutablePath" ]]; then
-      /usr/bin/pkill -f -- "$UpdatedExecutablePath" >> "$LogPath" 2>&1 || true
+    if [[ -n "$UpdatedExecutablePid" ]]; then
+      /bin/kill "$UpdatedExecutablePid" >> "$LogPath" 2>&1 || true
       sleep 0.25
     fi
     rm -rf -- "$TargetApp"
@@ -231,9 +234,9 @@ Swapped=1
 codesign --verify --deep --strict --verbose=2 "$TargetApp" \
   >> "$LogPath" 2>&1
 
-write_result true 'Update installed successfully.'
 write_log "Starting updated application: $TargetApp"
 launch_app "$CurrentExecutable"
+write_result true 'Update installed successfully.'
 
 Swapped=0
 rm -rf -- "$BackupApp" >> "$LogPath" 2>&1 || \

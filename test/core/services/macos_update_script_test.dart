@@ -32,23 +32,24 @@ void main() {
       expect(script, contains('codesign --verify --deep --strict'));
       expect(script, contains(r'mv -- "$TargetApp" "$BackupApp"'));
       expect(script, contains(r'/usr/bin/ditto "$CandidateApp" "$TargetApp"'));
-      expect(script, contains(r'/usr/bin/open -n "$TargetApp"'));
+      expect(script, contains(r'"$UpdatedExecutablePath" >> "$LogPath" 2>&1 &'));
+      expect(script, contains(r'UpdatedExecutablePid=$!'));
       expect(
         script,
-        contains(r'/usr/bin/pgrep -f -- "$UpdatedExecutablePath"'),
+        isNot(contains(r'/usr/bin/pgrep -f -- "$UpdatedExecutablePath"')),
       );
       expect(script, contains('for iteration in {1..12}'));
-      expect(script, contains(r'kill -0 "$new_pid"'));
+      expect(script, contains(r'kill -0 "$UpdatedExecutablePid"'));
       expect(
         script,
-        contains(r'/usr/bin/pkill -f -- "$UpdatedExecutablePath"'),
+        contains(r'/bin/kill "$UpdatedExecutablePid"'),
       );
       expect(script, contains('Previous application version restored.'));
       expect(script, contains('write_result true'));
       expect(script, contains('write_result false'));
     });
 
-    test('publishes update results atomically before restarting', () {
+    test('publishes update results atomically after a verified restart', () {
       final script = buildScript();
       final successResult = script.lastIndexOf(
         "write_result true 'Update installed successfully.'",
@@ -61,7 +62,7 @@ void main() {
         contains(r'mv -f -- "$ResultTemporaryPath" "$ResultPath"'),
       );
       expect(successResult, greaterThanOrEqualTo(0));
-      expect(launch, greaterThan(successResult));
+      expect(successResult, greaterThan(launch));
     });
 
     test('rejects execution from a mounted or translocated app', () {
