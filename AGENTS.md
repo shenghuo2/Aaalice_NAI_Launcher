@@ -174,14 +174,16 @@ Changelog 条目遵守以下格式：
 
 ## 发布流程
 
-Fork 应用内更新版本只从 `feature/fork-in-app-updater` 的已验证提交创建标签；先将上游和其他 Fork 功能合入该分支，再按 [`docs/fork-update-release.md`](docs/fork-update-release.md) 执行。首个修复更新源的桥接版本需要用户手动覆盖，后续版本才能连续应用内升级。
+所有应用 Release 必须从与目标 tag 一一对应的版本分支发布，分支命名为 `release/<tag>`。例如目标 tag 为 `v3.2.0-picmanager.1` 时，发布分支必须为 `release/v3.2.0-picmanager.1`。禁止直接从 `main`、`dev` 或任何 `feature/*` 分支创建发布标签；`feature/fork-in-app-updater` 只作为 Fork 更新能力的来源分支，不再直接承担发布。
 
-1. 切换到 `main`，拉取最新代码，确认所有待发布修改均已提交且工作区干净。
-2. 更新 `pubspec.yaml` 版本号；tag 必须等于去掉 `+build` 后的版本，如 `1.0.0+17` 对应 `v1.0.0`。
-3. 运行 `pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/prepare_changelog_review.ps1`，根据报告与完整 diff 重写版本日志并提交。
-4. 运行 `dart run tool/tag_catalog/verify_bundled_databases.dart`，确认 LFS 数据库是真实 SQLite 文件；按风险运行测试、分析和 release build。
-5. 创建并推送 `v*` tag。GitHub Actions `Release` workflow 会构建 Windows x64 Setup/Portable、macOS Apple Silicon/Intel DMG、三个签名 Android 单 ABI APK 与兼容 universal APK，并生成 `release_manifest.json`、`checksums.txt` 和 Release notes。
-6. Windows 本地打包使用 `scripts/package_windows_release.ps1`；签名使用 `scripts/sign_windows_binary.ps1`。Windows CI secrets 为 `WINDOWS_SIGNING_CERT_BASE64` 与 `WINDOWS_SIGNING_CERT_PASSWORD`。Android 正式发布必须配置 `ANDROID_SIGNING_KEYSTORE_BASE64`、`ANDROID_SIGNING_KEYSTORE_PASSWORD`、`ANDROID_SIGNING_KEY_ALIAS` 与 `ANDROID_SIGNING_KEY_PASSWORD`；缺少任一项时 Release workflow 必须失败，不得发布调试签名 APK。
+1. 确定目标版本和 tag，从已选定的集成基线创建 `release/<tag>`，确认所有来源分支均已提交且工作区干净。
+2. 将本次需要发布的上游同步分支、`dev`、`feature/*` 和修复分支逐一合并到 `release/<tag>`；冲突解决、版本调整、Changelog 和发布修复都在该分支完成。禁止在发布分支混入不属于该版本的新功能。
+3. 更新 `pubspec.yaml` 版本号；tag 和发布分支后缀必须等于去掉 `+build` 后的版本，如 `1.0.0+17` 对应 tag `v1.0.0` 和分支 `release/v1.0.0`。
+4. 运行 `pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/prepare_changelog_review.ps1`，根据报告与完整 diff 重写版本日志并提交。
+5. 运行 `dart run tool/tag_catalog/verify_bundled_databases.dart`，确认 LFS 数据库是真实 SQLite 文件；按风险运行测试、分析和 release build。
+6. 先推送并确认远端 `release/<tag>` 指向已验证提交，再在该分支头部创建并推送同名 `v*` tag；标签所指提交必须与远端发布分支头部完全一致。已发布版本不得移动 tag 或强制改写发布分支；后续修复使用新的版本号和新的 `release/<tag>` 分支。
+7. GitHub Actions `Release` workflow 会构建 Windows x64 Setup/Portable、macOS Apple Silicon/Intel DMG、三个签名 Android 单 ABI APK 与兼容 universal APK，并生成 `release_manifest.json`、`checksums.txt` 和 Release notes。发布完成后必须核对 Release 非草稿、预发布属性符合版本定位、产物完整且更新清单可被客户端识别。
+8. Windows 本地打包使用 `scripts/package_windows_release.ps1`；签名使用 `scripts/sign_windows_binary.ps1`。Windows CI secrets 为 `WINDOWS_SIGNING_CERT_BASE64` 与 `WINDOWS_SIGNING_CERT_PASSWORD`。Android 正式发布必须配置 `ANDROID_SIGNING_KEYSTORE_BASE64`、`ANDROID_SIGNING_KEYSTORE_PASSWORD`、`ANDROID_SIGNING_KEY_ALIAS` 与 `ANDROID_SIGNING_KEY_PASSWORD`；缺少任一项时 Release workflow 必须失败，不得发布调试签名 APK。
 
 ## README 双语同步规范
 
