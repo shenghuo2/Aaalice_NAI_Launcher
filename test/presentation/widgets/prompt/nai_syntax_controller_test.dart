@@ -229,6 +229,64 @@ void main() {
         isTrue,
       );
     });
+
+    testWidgets('highlights the complete tag under a collapsed caret', (
+      tester,
+    ) async {
+      final controller = NaiSyntaxController(
+        text: 'one, 1.20::two::, three',
+        highlightEnabled: false,
+        highlightActiveTag: true,
+      )..selection = const TextSelection.collapsed(offset: 11);
+      addTearDown(controller.dispose);
+
+      final children = await _buildTextSpanChildren(tester, controller);
+      final activeText = children
+          .where((span) => span.style?.backgroundColor != null)
+          .map((span) => span.text)
+          .join();
+
+      expect(activeText, contains('1.20::two::'));
+      expect(activeText, isNot(contains('one')));
+      expect(activeText, isNot(contains('three')));
+    });
+
+    testWidgets('moves the complete-tag highlight with the caret', (
+      tester,
+    ) async {
+      final controller = NaiSyntaxController(
+        text: 'one, two, three',
+        highlightEnabled: false,
+        highlightActiveTag: true,
+      )..selection = const TextSelection.collapsed(offset: 6);
+      addTearDown(controller.dispose);
+
+      var children = await _buildTextSpanChildren(tester, controller);
+      expect(_backgroundTexts(children), 'two');
+
+      controller.selection = const TextSelection.collapsed(offset: 11);
+      children = await _buildTextSpanChildren(tester, controller);
+
+      expect(_backgroundTexts(children), 'three');
+    });
+
+    testWidgets('does not highlight a selection crossing tag boundaries', (
+      tester,
+    ) async {
+      final controller = NaiSyntaxController(
+        text: 'one, two, three',
+        highlightEnabled: false,
+        highlightActiveTag: true,
+      )..selection = const TextSelection(baseOffset: 1, extentOffset: 7);
+      addTearDown(controller.dispose);
+
+      final children = await _buildTextSpanChildren(tester, controller);
+
+      expect(
+        children.every((span) => span.style?.backgroundColor == null),
+        isTrue,
+      );
+    });
   });
 }
 
@@ -259,6 +317,13 @@ List<String> _highlightedTexts(List<TextSpan> spans) {
       .where((span) => span.style?.backgroundColor != null)
       .map((span) => span.text!)
       .toList();
+}
+
+String _backgroundTexts(List<TextSpan> spans) {
+  return spans
+      .where((span) => span.style?.backgroundColor != null)
+      .map((span) => span.text)
+      .join();
 }
 
 String _plainText(List<TextSpan> spans) {

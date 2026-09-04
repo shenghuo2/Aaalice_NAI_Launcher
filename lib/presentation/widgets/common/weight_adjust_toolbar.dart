@@ -38,6 +38,9 @@ class WeightAdjustToolbarWrapper extends StatefulWidget {
   /// 是否允许通过鼠标滚轮调整权重
   final bool enableWheelAdjustment;
 
+  /// 是否在产生文本选区时显示旧式浮动工具条
+  final bool showToolbar;
+
   const WeightAdjustToolbarWrapper({
     super.key,
     required this.child,
@@ -45,6 +48,7 @@ class WeightAdjustToolbarWrapper extends StatefulWidget {
     this.focusNode,
     this.enabled = true,
     this.enableWheelAdjustment = true,
+    this.showToolbar = true,
   });
 
   @override
@@ -93,6 +97,13 @@ class _WeightAdjustToolbarWrapperState
       }
       _initFocusNode();
     }
+    if ((!widget.enabled && oldWidget.enabled) ||
+        (!widget.showToolbar && oldWidget.showToolbar)) {
+      _hideToolbar();
+    } else if ((widget.enabled && !oldWidget.enabled) ||
+        (widget.showToolbar && !oldWidget.showToolbar)) {
+      _scheduleControllerSelectionSync(widget.controller);
+    }
     if (oldWidget.enableWheelAdjustment != widget.enableWheelAdjustment) {
       final overlayEntry = _overlayEntry;
       if (overlayEntry != null) {
@@ -129,13 +140,16 @@ class _WeightAdjustToolbarWrapperState
   }
 
   void _onSelectionChanged() {
-    if (!widget.enabled || _isInteractingWithToolbar) return;
+    if (_isInteractingWithToolbar) return;
 
     _syncToolbarWithControllerSelection();
   }
 
   void _syncToolbarWithControllerSelection() {
-    if (!widget.enabled) return;
+    if (!widget.enabled || !widget.showToolbar) {
+      _hideToolbar();
+      return;
+    }
 
     final selection = widget.controller.selection;
     final hasSelection =
@@ -164,7 +178,7 @@ class _WeightAdjustToolbarWrapperState
   }
 
   void _showToolbar() {
-    if (_overlayEntry != null) return;
+    if (!widget.enabled || !widget.showToolbar || _overlayEntry != null) return;
 
     _overlayEntry = OverlayEntry(
       builder: (context) => _WeightAdjustToolbar(
@@ -189,11 +203,15 @@ class _WeightAdjustToolbarWrapperState
   }
 
   void _adjustWeightByStep(double step) {
-    if (!_WeightSelectionEditor.protectNegativeBlockSyntax(widget.controller)) {
+    if (!PromptWeightSelectionEditor.protectNegativeBlockSyntax(
+      widget.controller,
+    )) {
       return;
     }
-    final result = _WeightSelectionEditor.parseSelection(widget.controller);
-    _WeightSelectionEditor.applyWeight(
+    final result = PromptWeightSelectionEditor.parseSelection(
+      widget.controller,
+    );
+    PromptWeightSelectionEditor.applyWeight(
       widget.controller,
       (result.weight + step).clamp(0.1, 3.0),
     );
@@ -205,8 +223,10 @@ class _WeightAdjustToolbarWrapperState
         event.scrollDelta.dy == 0 ||
         !widget.enabled ||
         !widget.enableWheelAdjustment ||
-        !_WeightSelectionEditor.hasSelection(widget.controller) ||
-        !_WeightSelectionEditor.protectNegativeBlockSyntax(widget.controller)) {
+        !PromptWeightSelectionEditor.hasSelection(widget.controller) ||
+        !PromptWeightSelectionEditor.protectNegativeBlockSyntax(
+          widget.controller,
+        )) {
       return;
     }
 
@@ -232,14 +252,17 @@ class _WeightAdjustToolbarWrapperState
 }
 
 /// 权重解析结果
-class _WeightParseResult {
+class PromptWeightParseResult {
   final String baseText;
   final double weight;
 
-  const _WeightParseResult({required this.baseText, required this.weight});
+  const PromptWeightParseResult({
+    required this.baseText,
+    required this.weight,
+  });
 }
 
-class _WeightSelectionEditor {
+abstract final class PromptWeightSelectionEditor {
   static bool protectNegativeBlockSyntax(TextEditingController controller) {
     final selection = controller.selection;
     if (!selection.isValid || selection.isCollapsed) return false;
@@ -287,21 +310,23 @@ class _WeightSelectionEditor {
         selection.end <= controller.text.length;
   }
 
-  static _WeightParseResult parseSelection(TextEditingController controller) {
+  static PromptWeightParseResult parseSelection(
+    TextEditingController controller,
+  ) {
     final text = controller.text;
     final selection = controller.selection;
     final start = selection.start;
     final end = selection.end;
 
     if (start < 0 || end > text.length || start >= end) {
-      return const _WeightParseResult(baseText: '', weight: 1.0);
+      return const PromptWeightParseResult(baseText: '', weight: 1.0);
     }
 
     final selectedText = text.substring(start, end);
     return parseWeightSyntax(selectedText);
   }
 
-  static _WeightParseResult parseWeightSyntax(String text) {
+  static PromptWeightParseResult parseWeightSyntax(String text) {
     var baseText = text;
     var weight = 1.0;
 
@@ -317,7 +342,7 @@ class _WeightSelectionEditor {
       if (weightValue != null) {
         weight = weightValue;
         baseText = naiWeightMatch.group(2)!.trim();
-        return _WeightParseResult(baseText: baseText, weight: weight);
+        return PromptWeightParseResult(baseText: baseText, weight: weight);
       }
     }
 
@@ -372,40 +397,55 @@ class _WeightSelectionEditor {
           .trim();
     }
 
-    return _WeightParseResult(
+    return PromptWeightParseResult(
       baseText: baseText.trim(),
       weight: weight.clamp(0.1, 3.0),
     );
   }
 
-  static bool applyWeight(TextEditingController controller, double newWeight) {
-    final result = parseSelection(controller);
-    final baseText = result.baseText;
-
-    if (baseText.isEmpty) return false;
-
-    String newText;
-    if (newWeight == 1.0) {
-      newText = baseText;
-    } else {
-      newText = '${newWeight.toStringAsFixed(2)}::$baseText::';
+  static TextEditingValue? weightedValueForRange(
+    TextEditingValue value,
+    TextRange range,
+    double newWeight,
+  ) {
+    if (!range.isValid ||
+        range.isCollapsed ||
+        range.start < 0 ||
+        range.end > value.text.length) {
+      return null;
     }
 
-    final text = controller.text;
-    final selection = controller.selection;
-    final newTextValue =
-        text.substring(0, selection.start) +
-        newText +
-        text.substring(selection.end);
-
-    controller.text = newTextValue;
-
-    final newSelectionEnd = selection.start + newText.length;
-    controller.selection = TextSelection(
-      baseOffset: selection.start,
-      extentOffset: newSelectionEnd,
+    final result = parseWeightSyntax(
+      value.text.substring(range.start, range.end),
     );
+    if (result.baseText.isEmpty) return null;
 
+    final normalizedWeight = newWeight.clamp(0.1, 3.0);
+    final replacement = normalizedWeight == 1.0
+        ? result.baseText
+        : '${normalizedWeight.toStringAsFixed(2)}::${result.baseText}::';
+    final nextText = value.text.replaceRange(range.start, range.end, replacement);
+
+    return value.copyWith(
+      text: nextText,
+      selection: TextSelection(
+        baseOffset: range.start,
+        extentOffset: range.start + replacement.length,
+      ),
+      composing: TextRange.empty,
+    );
+  }
+
+  static bool applyWeight(TextEditingController controller, double newWeight) {
+    final selection = controller.selection;
+    final nextValue = weightedValueForRange(
+      controller.value,
+      TextRange(start: selection.start, end: selection.end),
+      newWeight,
+    );
+    if (nextValue == null) return false;
+
+    controller.value = nextValue;
     return true;
   }
 }
@@ -429,7 +469,7 @@ class WeightAdjustScrollPhysics extends ScrollPhysics {
 
   @override
   bool shouldAcceptUserOffset(ScrollMetrics position) {
-    if (_WeightSelectionEditor.hasSelection(controllerProvider())) {
+    if (PromptWeightSelectionEditor.hasSelection(controllerProvider())) {
       return false;
     }
     return super.shouldAcceptUserOffset(position);
@@ -485,12 +525,17 @@ class _WeightAdjustToolbarState extends State<_WeightAdjustToolbar> {
   }
 
   void _updateWeightDisplay() {
-    final result = _WeightSelectionEditor.parseSelection(widget.controller);
+    final result = PromptWeightSelectionEditor.parseSelection(
+      widget.controller,
+    );
     _weightController.text = result.weight.toStringAsFixed(2);
   }
 
   void _applyWeight(double newWeight) {
-    if (!_WeightSelectionEditor.applyWeight(widget.controller, newWeight)) {
+    if (!PromptWeightSelectionEditor.applyWeight(
+      widget.controller,
+      newWeight,
+    )) {
       return;
     }
 

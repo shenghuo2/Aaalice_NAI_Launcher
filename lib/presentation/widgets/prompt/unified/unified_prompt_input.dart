@@ -281,6 +281,7 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
       text: initialText,
       highlightEnabled: widget.config.enableSyntaxHighlight,
       numericEmphasisEnabled: widget.config.numericEmphasisEnabled,
+      highlightActiveTag: !widget.config.readOnly,
     );
     if (widget.controller != null) {
       _syntaxController!.value = widget.controller!.value;
@@ -337,6 +338,7 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     _syntaxController?.highlightEnabled = widget.config.enableSyntaxHighlight;
     _syntaxController?.numericEmphasisEnabled =
         widget.config.numericEmphasisEnabled;
+    _syntaxController?.highlightActiveTag = !widget.config.readOnly;
   }
 
   @override
@@ -461,6 +463,56 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
           _sessionId,
           before: currentValue.text,
           after: edit.text,
+        );
+    _effectiveFocusNode.requestFocus();
+  }
+
+  DisabledPromptTagSegment? _activeTagSegment() {
+    final value = _effectiveController.value;
+    if (!value.selection.isValid) return null;
+    return DisabledPromptTagSyntax.segmentForSelection(
+      value.text,
+      selectionStart: value.selection.start,
+      selectionEnd: value.selection.end,
+    );
+  }
+
+  void _adjustActiveTagWeight(double step) {
+    final segment = _activeTagSegment();
+    if (segment == null) return;
+    final parsed = PromptWeightSelectionEditor.parseWeightSyntax(
+      segment.contentText(_effectiveController.text),
+    );
+    _setActiveTagWeight(segment, parsed.weight + step);
+  }
+
+  void _resetActiveTagWeight() {
+    final segment = _activeTagSegment();
+    if (segment == null) return;
+    _setActiveTagWeight(segment, 1.0);
+  }
+
+  void _setActiveTagWeight(
+    DisabledPromptTagSegment segment,
+    double weight,
+  ) {
+    final controller = _effectiveController;
+    final currentValue = controller.value;
+    final nextValue = PromptWeightSelectionEditor.weightedValueForRange(
+      currentValue,
+      TextRange(start: segment.contentStart, end: segment.contentEnd),
+      weight,
+    );
+    if (nextValue == null || nextValue.text == currentValue.text) return;
+
+    controller.value = nextValue;
+    _handleTextChanged(nextValue.text);
+    ref
+        .read(promptAssistantHistoryProvider.notifier)
+        .recordExternalChange(
+          _sessionId,
+          before: currentValue.text,
+          after: nextValue.text,
         );
     _effectiveFocusNode.requestFocus();
   }
@@ -1193,6 +1245,9 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     final actionLabel = segment.disabled
         ? context.l10n.prompt_enableTag
         : context.l10n.prompt_disableTag;
+    final parsedWeight = PromptWeightSelectionEditor.parseWeightSyntax(
+      segment.contentText(prompt),
+    );
     final tagStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
       color: segment.disabled
           ? colorScheme.outline
@@ -1218,11 +1273,53 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
           const SizedBox(width: 7),
           Expanded(
             child: Text(
-              segment.contentText(prompt).trim(),
+              parsedWeight.baseText,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: tagStyle,
             ),
+          ),
+          _TagActionIconButton(
+            key: const ValueKey('prompt_tag_weight_decrease_button'),
+            icon: Icons.remove,
+            tooltip: context.l10n.tooltip_decreaseWeight,
+            onPressed: () => _adjustActiveTagWeight(-0.05),
+          ),
+          SizedBox(
+            key: const ValueKey('prompt_tag_weight_value'),
+            width: 42,
+            child: Tooltip(
+              message: context.l10n.weight_title,
+              child: Text(
+                parsedWeight.weight.toStringAsFixed(2),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: colorScheme.onSurface,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+          ),
+          _TagActionIconButton(
+            key: const ValueKey('prompt_tag_weight_reset_button'),
+            icon: Icons.refresh,
+            tooltip: context.l10n.tooltip_resetWeight,
+            onPressed: parsedWeight.weight == 1.0
+                ? null
+                : _resetActiveTagWeight,
+          ),
+          _TagActionIconButton(
+            key: const ValueKey('prompt_tag_weight_increase_button'),
+            icon: Icons.add,
+            tooltip: context.l10n.tooltip_increaseWeight,
+            onPressed: () => _adjustActiveTagWeight(0.05),
+          ),
+          Container(
+            width: 1,
+            height: 18,
+            margin: const EdgeInsets.symmetric(horizontal: 2),
+            color: colorScheme.outlineVariant,
           ),
           SizedBox(
             width: 32,
@@ -1529,6 +1626,7 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
       controller: _effectiveController,
       focusNode: _effectiveFocusNode,
       enableWheelAdjustment: enableWheelAdjustment,
+      showToolbar: false,
       child: clipboardAwareInput,
     );
 
@@ -1620,6 +1718,34 @@ class _PromptSearchIconButton extends StatelessWidget {
       onPressed: onPressed,
       visualDensity: VisualDensity.compact,
       padding: EdgeInsets.zero,
+    );
+  }
+}
+
+class _TagActionIconButton extends StatelessWidget {
+  const _TagActionIconButton({
+    super.key,
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 30,
+      height: 32,
+      child: IconButton(
+        icon: Icon(icon, size: 17),
+        tooltip: tooltip,
+        onPressed: onPressed,
+        visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+      ),
     );
   }
 }

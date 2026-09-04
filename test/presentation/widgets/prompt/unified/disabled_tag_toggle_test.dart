@@ -89,4 +89,114 @@ void main() {
 
     expect(find.byKey(const ValueKey('prompt_tag_action_bar')), findsNothing);
   });
+
+  testWidgets('adjusts the tag under a collapsed caret without legacy overlay', (
+    tester,
+  ) async {
+    final controller = TextEditingController.fromValue(
+      const TextEditingValue(
+        text: 'one, two, three',
+        selection: TextSelection.collapsed(offset: 6),
+      ),
+    );
+    final focusNode = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          home: Scaffold(
+            body: SizedBox(
+              width: 500,
+              height: 180,
+              child: UnifiedPromptInput(
+                controller: controller,
+                focusNode: focusNode,
+                enableAssistant: false,
+                config: const UnifiedPromptConfig(
+                  enableAutocomplete: false,
+                  enableAutoFormat: false,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('prompt_tag_weight_value')), findsOneWidget);
+    expect(find.text('1.00'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('weight_adjust_toolbar_surface')),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('prompt_tag_weight_increase_button')),
+    );
+    await tester.pump();
+
+    expect(controller.text, 'one, 1.05::two::, three');
+    expect(controller.selection.textInside(controller.text), '1.05::two::');
+    expect(find.text('1.05'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('weight_adjust_toolbar_surface')),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('prompt_tag_weight_reset_button')),
+    );
+    await tester.pump();
+
+    expect(controller.text, 'one, two, three');
+    expect(controller.selection.textInside(controller.text), 'two');
+    expect(find.text('1.00'), findsOneWidget);
+  });
+
+  testWidgets('keeps weight changes inside a disabled tag wrapper', (
+    tester,
+  ) async {
+    final controller = TextEditingController.fromValue(
+      const TextEditingValue(
+        text: 'one, ~two~, three',
+        selection: TextSelection.collapsed(offset: 7),
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          home: Scaffold(
+            body: SizedBox(
+              width: 500,
+              height: 180,
+              child: UnifiedPromptInput(
+                controller: controller,
+                enableAssistant: false,
+                config: const UnifiedPromptConfig(
+                  enableAutocomplete: false,
+                  enableAutoFormat: false,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('prompt_tag_weight_decrease_button')),
+    );
+    await tester.pump();
+
+    expect(controller.text, 'one, ~0.95::two::~, three');
+    expect(find.byIcon(Icons.visibility), findsOneWidget);
+  });
 }
