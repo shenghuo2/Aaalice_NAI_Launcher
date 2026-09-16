@@ -77,8 +77,8 @@ class CharacterConversionService {
         .where(
           (character) =>
               character.enabled &&
-              (DisabledPromptTagSyntax.outputOf(character.prompt).isNotEmpty ||
-                  DisabledPromptTagSyntax.outputOf(
+              (PromptEditDocument.effectiveText(character.prompt).isNotEmpty ||
+                  PromptEditDocument.effectiveText(
                     character.negativePrompt,
                   ).isNotEmpty),
         )
@@ -177,8 +177,8 @@ class CharacterConversionService {
     return config.characters.any(
       (character) =>
           character.enabled &&
-          (DisabledPromptTagSyntax.outputOf(character.prompt).isNotEmpty ||
-              DisabledPromptTagSyntax.outputOf(
+          (PromptEditDocument.effectiveText(character.prompt).isNotEmpty ||
+              PromptEditDocument.effectiveText(
                 character.negativePrompt,
               ).isNotEmpty),
     );
@@ -192,8 +192,8 @@ class CharacterConversionService {
         .where(
           (character) =>
               character.enabled &&
-              (DisabledPromptTagSyntax.outputOf(character.prompt).isNotEmpty ||
-                  DisabledPromptTagSyntax.outputOf(
+              (PromptEditDocument.effectiveText(character.prompt).isNotEmpty ||
+                  PromptEditDocument.effectiveText(
                     character.negativePrompt,
                   ).isNotEmpty),
         )

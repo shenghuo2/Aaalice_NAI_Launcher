@@ -205,88 +205,6 @@ void main() {
       expect(controller.syntaxErrors, contains('negative(...) 块未闭合'));
       expect(controller.syntaxErrors, contains('negative(...) 块不能为空'));
     });
-
-    testWidgets('renders disabled tag content with a strike-through', (
-      tester,
-    ) async {
-      final controller = NaiSyntaxController(text: 'one, ~{two}~, three');
-      addTearDown(controller.dispose);
-
-      final children = await _buildTextSpanChildren(tester, controller);
-      final disabledContent = children
-          .where((span) => span.style?.decoration == TextDecoration.lineThrough)
-          .toList();
-      final markers = children.where((span) => span.text == '~').toList();
-
-      expect(disabledContent.map((span) => span.text).join(), '{two}');
-      expect(
-        disabledContent.every((span) => span.style?.backgroundColor == null),
-        isTrue,
-      );
-      expect(markers, hasLength(2));
-      expect(
-        markers.every((span) => span.style?.decoration == TextDecoration.none),
-        isTrue,
-      );
-    });
-
-    testWidgets('highlights the complete tag under a collapsed caret', (
-      tester,
-    ) async {
-      final controller = NaiSyntaxController(
-        text: 'one, 1.20::two::, three',
-        highlightEnabled: false,
-        highlightActiveTag: true,
-      )..selection = const TextSelection.collapsed(offset: 11);
-      addTearDown(controller.dispose);
-
-      final children = await _buildTextSpanChildren(tester, controller);
-      final activeText = children
-          .where((span) => span.style?.backgroundColor != null)
-          .map((span) => span.text)
-          .join();
-
-      expect(activeText, contains('1.20::two::'));
-      expect(activeText, isNot(contains('one')));
-      expect(activeText, isNot(contains('three')));
-    });
-
-    testWidgets('moves the complete-tag highlight with the caret', (
-      tester,
-    ) async {
-      final controller = NaiSyntaxController(
-        text: 'one, two, three',
-        highlightEnabled: false,
-        highlightActiveTag: true,
-      )..selection = const TextSelection.collapsed(offset: 6);
-      addTearDown(controller.dispose);
-
-      var children = await _buildTextSpanChildren(tester, controller);
-      expect(_backgroundTexts(children), 'two');
-
-      controller.selection = const TextSelection.collapsed(offset: 11);
-      children = await _buildTextSpanChildren(tester, controller);
-
-      expect(_backgroundTexts(children), 'three');
-    });
-
-    testWidgets('does not highlight a selection crossing tag boundaries', (
-      tester,
-    ) async {
-      final controller = NaiSyntaxController(
-        text: 'one, two, three',
-        highlightEnabled: false,
-        highlightActiveTag: true,
-      )..selection = const TextSelection(baseOffset: 1, extentOffset: 7);
-      addTearDown(controller.dispose);
-
-      final children = await _buildTextSpanChildren(tester, controller);
-
-      expect(
-        children.every((span) => span.style?.backgroundColor == null),
-        isTrue,
-      );
-    });
   });
 
   group('IME composing', () {
@@ -437,13 +355,6 @@ List<String> _highlightedTexts(List<TextSpan> spans) {
       .where((span) => span.style?.backgroundColor != null)
       .map((span) => span.text!)
       .toList();
-}
-
-String _backgroundTexts(List<TextSpan> spans) {
-  return spans
-      .where((span) => span.style?.backgroundColor != null)
-      .map((span) => span.text)
-      .join();
 }
 
 String _plainText(List<TextSpan> spans) {

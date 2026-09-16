@@ -137,9 +137,7 @@ class GenerationRequestPreparationService {
     );
     final negativePromptWithFixedTags = promptPreparation
         .applyFixedNegativeTags(
-          promptPreparation.resolveAliases(
-            DisabledPromptTagSyntax.outputOf(effective.negativePrompt),
-          ),
+          promptPreparation.resolveAliases(effective.negativePrompt),
         );
     effective = effective.copyWith(
       prompt: promptWithFixedTags,

@@ -69,7 +69,7 @@ void main() {
     var actions = tester.widget<CardActionButtons>(
       find.byType(CardActionButtons),
     );
-    var labels = actions.buttons.map((button) => button.tooltip).toList();
+    var labels = actions.buttons.map((button) => button.label).toList();
     expect(labels.indexOf('Push to Pic Manager') + 1, labels.indexOf('Favorite'));
 
     const post = GalleryItem(
@@ -95,7 +95,7 @@ void main() {
     );
     await tester.pump();
     actions = tester.widget<CardActionButtons>(find.byType(CardActionButtons));
-    labels = actions.buttons.map((button) => button.tooltip).toList();
+    labels = actions.buttons.map((button) => button.label).toList();
     expect(labels.indexOf('Push to Pic Manager') + 1, labels.indexOf('Favorite'));
   });
 
@@ -141,12 +141,12 @@ void main() {
     );
     expect(
       actions.buttons.where(
-        (button) => button.tooltip == 'Push to Pic Manager',
+        (button) => button.label == 'Push to Pic Manager',
       ),
       isEmpty,
     );
     var favoriteAction = actions.buttons.singleWhere(
-      (button) => button.tooltip == 'Favorite',
+      (button) => button.label == 'Favorite',
     );
     expect(favoriteAction.isLoading, isFalse);
 
@@ -164,7 +164,7 @@ void main() {
     await tester.pump();
     actions = tester.widget<CardActionButtons>(find.byType(CardActionButtons));
     favoriteAction = actions.buttons.singleWhere(
-      (button) => button.tooltip == 'Favorite',
+      (button) => button.label == 'Favorite',
     );
     expect(favoriteAction.isLoading, isTrue);
 

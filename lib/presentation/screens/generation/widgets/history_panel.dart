@@ -1373,6 +1373,7 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
       if (isFavorite &&
           picManagerConfig?.isConfigured == true &&
           picManagerConfig!.autoPushOnFavorite) {
+        if (!context.mounted) return;
         await _pushToPicManager(context, image);
       }
     } catch (e) {
