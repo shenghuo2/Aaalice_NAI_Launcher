@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:io';
+import 'package:flutter/gestures.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -7,10 +10,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:nai_launcher/core/utils/drag_drop_utils.dart';
 import 'package:nai_launcher/core/utils/image_share_sanitizer.dart';
+import 'package:nai_launcher/core/database/database_providers.dart';
+import 'package:nai_launcher/presentation/providers/copy_drag_watermark_provider.dart';
 import 'package:nai_launcher/data/models/gallery/local_image_record.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:nai_launcher/presentation/providers/share_image_settings_provider.dart';
 import 'package:nai_launcher/presentation/widgets/common/draggable_memory_image.dart';
+import 'package:nai_launcher/presentation/widgets/common/card_drag_source.dart';
+import 'package:nai_launcher/presentation/utils/card_image_drag_factory.dart';
 import 'package:nai_launcher/presentation/widgets/gallery/draggable_image_card.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 
@@ -126,6 +133,41 @@ void main() {
     expect(_feedbackKey(tester), protectedDragFeedbackMarkerKey);
   });
 
+  testWidgets('memory drag rejects a prepared file from an old watermark', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        settings: const ShareImageSettings(),
+        transform: ShareImageTransform(
+          cacheKey: 'new-default',
+          apply: (image, {required stripMetadata}) async => image,
+        ),
+        child: DraggableMemoryImage(
+          imageBytes: _validPreviewBytes,
+          requirePreparedDragFile: true,
+          preparedDragFile: File('tool/.tmp/not-exported.png'),
+          preparedDragStripMetadata: false,
+          preparedDragTransformKey: 'old-default',
+          child: const SizedBox(width: 100, height: 100),
+        ),
+      ),
+    );
+    final session = _FakeDragSession();
+    addTearDown(session.dispose);
+    final dragWidget = tester.widget<DragItemWidget>(
+      find.byType(DragItemWidget),
+    );
+    await expectLater(
+      dragWidget.dragItemProvider(
+        DragItemRequest(location: Offset.zero, session: session),
+      ),
+      completion(isNull),
+    );
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+  });
+
   for (final entry in <String, Widget Function(LocalImageRecord, Uint8List)>{
     'public gallery card': (record, bytes) => DraggableImageCard(
       record: record,
@@ -138,49 +180,133 @@ void main() {
           previewBytes: bytes,
         )(const SizedBox(width: 100, height: 100)),
   }.entries) {
-    testWidgets('${entry.key} fails closed for malformed protected bytes', (
+    testWidgets(
+      '${entry.key} invokes watermark even when metadata stripping is off',
+      (tester) async {
+        var invoked = false;
+        final transform = ShareImageTransform(
+          cacheKey: 'missing-logo',
+          apply: (image, {required stripMetadata}) async {
+            invoked = true;
+            expect(stripMetadata, isFalse);
+            expect(image.bytes, orderedEquals(_validPreviewBytes));
+            throw StateError('missing logo');
+          },
+        );
+        final record = LocalImageRecord(
+          path: '',
+          size: _validPreviewBytes.length,
+          modifiedAt: DateTime(2026),
+        );
+        await tester.pumpWidget(
+          _app(
+            settings: const ShareImageSettings(),
+            transform: transform,
+            child: entry.value(record, _validPreviewBytes),
+          ),
+        );
+        final resource = tester
+            .widget<CardDragSource>(find.byType(CardDragSource))
+            .resource();
+        expect(invoked, isFalse);
+        await expectLater(resource.prepare!(), throwsStateError);
+        expect(invoked, isTrue);
+      },
+    );
+
+    testWidgets('${entry.key} hover preparation never writes temporary files', (
       tester,
     ) async {
-      final directory = Directory.systemTemp.createTempSync(
-        'protected_gallery_drag_',
-      );
-      addTearDown(() {
-        if (directory.existsSync()) directory.deleteSync(recursive: true);
-      });
-      final source = File('${directory.path}${Platform.pathSeparator}bad.png')
-        ..writeAsBytesSync(const [1, 2, 3], flush: true);
-      final record = LocalImageRecord(
-        path: source.path,
-        size: 3,
-        modifiedAt: DateTime(2026),
-      );
-      final session = _FakeDragSession();
-      addTearDown(session.dispose);
-
+      final previous = PathProviderPlatform.instance;
+      final paths = _NoHoverTemporaryDirectory();
+      PathProviderPlatform.instance = paths;
+      addTearDown(() => PathProviderPlatform.instance = previous);
+      var renders = 0;
       await tester.pumpWidget(
         _app(
-          settings: const ShareImageSettings(protectionMode: true),
+          settings: const ShareImageSettings(),
+          transform: ShareImageTransform(
+            cacheKey: 'hover',
+            apply: (image, {required stripMetadata}) async {
+              renders++;
+              return image;
+            },
+          ),
+          child: entry.value(
+            LocalImageRecord(
+              path: '',
+              size: _validPreviewBytes.length,
+              modifiedAt: DateTime(2026),
+            ),
+            _validPreviewBytes,
+          ),
+        ),
+      );
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      addTearDown(mouse.removePointer);
+      await mouse.addPointer(location: const Offset(300, 300));
+      for (var i = 0; i < 2; i++) {
+        await mouse.moveTo(const Offset(50, 50));
+        await tester.pump(const Duration(milliseconds: 300));
+        await mouse.moveTo(const Offset(300, 300));
+        await tester.pump();
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(renders, 0);
+      expect(paths.requests, 0);
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets('${entry.key} shares concurrent preparation work', (
+      tester,
+    ) async {
+      var calls = 0;
+      final pending = Completer<SanitizedShareImage>();
+      final transform = ShareImageTransform(
+        cacheKey: 'same-preset',
+        apply: (image, {required stripMetadata}) {
+          calls++;
+          return pending.future;
+        },
+      );
+      final record = LocalImageRecord(
+        path: '',
+        size: _validPreviewBytes.length,
+        modifiedAt: DateTime(2026),
+      );
+      await tester.pumpWidget(
+        _app(
+          settings: const ShareImageSettings(),
+          transform: transform,
           child: entry.value(record, _validPreviewBytes),
         ),
       );
-      final dragWidget = tester.widget<DragItemWidget>(
-        find.byType(DragItemWidget),
-      );
-
-      Object? dragError;
-      await tester.runAsync(() async {
-        try {
-          await dragWidget.dragItemProvider(
-            DragItemRequest(location: Offset.zero, session: session),
-          );
-        } catch (error) {
-          dragError = error;
-        }
-      });
-      expect(dragError, isA<ImageSanitizeException>());
-      expect(_feedbackKey(tester), protectedDragFeedbackMarkerKey);
+      final resource = tester
+          .widget<CardDragSource>(find.byType(CardDragSource))
+          .resource();
+      final preparation = CardDragPreparation([resource]);
+      final first = expectLater(preparation.bytesAt(0), throwsStateError);
+      final second = expectLater(preparation.bytesAt(0), throwsStateError);
+      await tester.pump();
+      expect(calls, 1);
+      pending.completeError(StateError('synthetic render failure'));
+      await Future.wait([first, second]);
     });
   }
+  test(
+    'malformed original fails closed in the shared protected export factory',
+    () async {
+      final resource = imageCardDragResource(
+        id: 'bad',
+        fileName: 'bad.png',
+        stripMetadata: true,
+        bytes: Uint8List.fromList([1, 2, 3]),
+      );
+      await expectLater(
+        resource.prepare!(),
+        throwsA(isA<ImageSanitizeException>()),
+      );
+    },
+  );
 }
 
 Key? _feedbackKey(WidgetTester tester) {
@@ -197,9 +323,14 @@ Widget _app({
   required ShareImageSettings settings,
   required Widget child,
   ValueChanged<_TestShareImageSettingsNotifier>? onNotifier,
+  ShareImageTransform? transform,
 }) {
   return ProviderScope(
     overrides: [
+      databaseManagerProvider.overrideWith(
+        (ref) => throw StateError('No database in drag tests'),
+      ),
+      copyDragWatermarkProvider.overrideWithValue(transform),
       shareImageSettingsProvider.overrideWith(() {
         final notifier = _TestShareImageSettingsNotifier(settings);
         onNotifier?.call(notifier);
@@ -245,5 +376,16 @@ final class _FakeDragSession extends DragSession {
     _dragging.dispose();
     _completed.dispose();
     _location.dispose();
+  }
+}
+
+class _NoHoverTemporaryDirectory extends PathProviderPlatform {
+  int requests = 0;
+  @override
+  Future<String?> getTemporaryPath() async {
+    requests++;
+    throw StateError(
+      'Hover preparation must not request a temporary directory',
+    );
   }
 }

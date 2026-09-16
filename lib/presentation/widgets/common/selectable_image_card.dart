@@ -1,15 +1,21 @@
+import 'package:nai_launcher/data/models/image/image_postprocess_phase.dart';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/image/image_stream_chunk.dart';
+import '../../providers/mosaic_settings_provider.dart';
+import '../../providers/watermark_settings_provider.dart';
 import 'image_card_actions.dart';
 import 'image_card_context_menu.dart';
 import 'image_card_controller.dart';
 import 'image_card_generating.dart';
 import 'image_card_models.dart';
 import 'image_card_surface.dart';
+import 'image_card_action_region.dart';
+import 'image_card_batch_scope.dart';
+import '../../selection/card_selection_scope.dart';
 
 export 'image_card_actions.dart'
     show ImageClipboardWriter, imageClipboardWriterProvider;
@@ -40,9 +46,10 @@ class SelectableImageCard extends ConsumerStatefulWidget {
     this.statusBadgeLabel,
     this.statusBadgeTooltip,
     this.dragPreparationReady = true,
-    this.completionPlaceholderBytes,
-    this.onCompletionPlaceholderSettled,
+    this.completionPreview,
     this.enableSelection = true,
+    this.selectionMode = false,
+    this.showSelectionOnHover = true,
     this.onUpscale,
     this.onReversePrompt,
     this.onImageToImage,
@@ -67,6 +74,7 @@ class SelectableImageCard extends ConsumerStatefulWidget {
     this.imageContent,
     this.isGenerating = false,
     this.progress,
+    this.postprocessPhase,
     this.currentImage,
     this.totalImages,
     this.streamPreview,
@@ -86,7 +94,7 @@ class SelectableImageCard extends ConsumerStatefulWidget {
   final VoidCallback? onDoubleTap;
   final VoidCallback? onLongPress;
   final ValueChanged<bool>? onSelectionChanged;
-  final VoidCallback? onFullscreen;
+  final ImageCardCallback? onFullscreen;
   final bool isPreviewActive;
   final Object? imageIdentity;
   final bool allowRepeatedModifierTaps;
@@ -100,33 +108,35 @@ class SelectableImageCard extends ConsumerStatefulWidget {
   final String? statusBadgeLabel;
   final String? statusBadgeTooltip;
   final bool dragPreparationReady;
-  final Uint8List? completionPlaceholderBytes;
-  final VoidCallback? onCompletionPlaceholderSettled;
+  final StreamPreviewFrame? completionPreview;
   final bool enableSelection;
-  final VoidCallback? onUpscale;
-  final VoidCallback? onReversePrompt;
-  final VoidCallback? onImageToImage;
-  final VoidCallback? onVibeTransfer;
-  final VoidCallback? onPreciseReference;
-  final VoidCallback? onSaveToPreciseRefLibrary;
-  final VoidCallback? onEditImage;
-  final VoidCallback? onInpaint;
-  final VoidCallback? onGenerateVariations;
-  final VoidCallback? onDirectorTools;
-  final VoidCallback? onEnhance;
-  final VoidCallback? onSendToKrita;
-  final VoidCallback? onShareToDiscord;
-  final VoidCallback? onOpenInExplorer;
+  final bool selectionMode;
+  final bool showSelectionOnHover;
+  final ImageCardCallback? onUpscale;
+  final ImageCardCallback? onReversePrompt;
+  final ImageCardCallback? onImageToImage;
+  final ImageCardCallback? onVibeTransfer;
+  final ImageCardCallback? onPreciseReference;
+  final ImageCardCallback? onSaveToPreciseRefLibrary;
+  final ImageCardCallback? onEditImage;
+  final ImageCardCallback? onInpaint;
+  final ImageCardCallback? onGenerateVariations;
+  final ImageCardCallback? onDirectorTools;
+  final ImageCardCallback? onEnhance;
+  final ImageCardCallback? onSendToKrita;
+  final ImageCardCallback? onShareToDiscord;
+  final ImageCardCallback? onOpenInExplorer;
   final String? sourceFilePath;
   final void Function(Uint8List imageBytes, String prompt)? onSaveToLibrary;
   final bool isFavorite;
-  final VoidCallback? onFavoriteToggle;
-  final VoidCallback? onPushToPicManager;
+  final ImageCardCallback? onFavoriteToggle;
+  final ImageCardCallback? onPushToPicManager;
   final bool isPushingToPicManager;
   final Widget? underlay;
   final Widget? imageContent;
   final bool isGenerating;
   final double? progress;
+  final ImagePostprocessPhase? postprocessPhase;
   final int? currentImage;
   final int? totalImages;
   final Uint8List? streamPreview;
@@ -153,13 +163,14 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
     statusBadgeLabel: widget.statusBadgeLabel,
     statusBadgeTooltip: widget.statusBadgeTooltip,
     dragPreparationReady: widget.dragPreparationReady,
-    completionPlaceholderBytes: widget.completionPlaceholderBytes,
+    completionPreview: widget.completionPreview,
     isFavorite: widget.isFavorite,
     isPushingToPicManager: widget.isPushingToPicManager,
     underlay: widget.underlay,
     imageContent: widget.imageContent,
     isGenerating: widget.isGenerating,
     progress: widget.progress,
+    postprocessPhase: widget.postprocessPhase,
     currentImage: widget.currentImage,
     totalImages: widget.totalImages,
     streamPreview: widget.streamPreview,
@@ -179,7 +190,9 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
     enableSaveAction: widget.enableSaveAction,
     enableCopyAction: widget.enableCopyAction,
     enableSelection: widget.enableSelection,
-    onTap: widget.onTap,
+    selectionMode: widget.selectionMode,
+    showSelectionOnHover: widget.showSelectionOnHover,
+    onTap: _handleTap,
     onDoubleTap: widget.onDoubleTap,
     onLongPress: widget.onLongPress,
     onSelectionChanged: widget.onSelectionChanged,
@@ -201,7 +214,6 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
     onSaveToLibrary: widget.onSaveToLibrary,
     onFavoriteToggle: widget.onFavoriteToggle,
     onPushToPicManager: widget.onPushToPicManager,
-    onCompletionPlaceholderSettled: widget.onCompletionPlaceholderSettled,
   );
 
   @override
@@ -214,21 +226,26 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
     );
   }
 
+  void _handleTap() {
+    final identity = widget.imageIdentity;
+    if (widget.enableSelection &&
+        identity is String &&
+        CardSelectionScope.handleTap(context, identity)) {
+      return;
+    }
+    (widget.onTap ?? widget.onFullscreen)?.call();
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _controller.scheduleCompletedImagePrecache(context);
+    _controller.setReducedMotion(MediaQuery.disableAnimationsOf(context));
   }
 
   @override
   void didUpdateWidget(covariant SelectableImageCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _controller.update(
-      vsync: this,
-      data: _data,
-      capabilities: _capabilities,
-      context: context,
-    );
+    _controller.update(vsync: this, data: _data, capabilities: _capabilities);
   }
 
   @override
@@ -244,6 +261,12 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
       return ImageCardGenerating(data: data, controller: _controller);
     }
     final capabilities = _capabilities;
+    ref.watch(
+      watermarkSettingsProvider.select((state) => state.configuration.enabled),
+    );
+    ref.watch(
+      mosaicSettingsProvider.select((state) => state.configuration.enabled),
+    );
     final coordinator = ImageCardActionCoordinator(
       context: context,
       ref: ref,
@@ -256,18 +279,33 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
             data: data,
             capabilities: capabilities,
             coordinator: coordinator,
+            onAddToAgent: ImageCardActionScope.maybeOf(context)?.onAddToAgent,
           )
         : const <ImageCardAction>[];
-    return ImageCardSurface(
-      data: data,
-      capabilities: capabilities,
-      controller: _controller,
+    return ImageCardActionRegion(
+      resourceId: widget.imageIdentity is String
+          ? widget.imageIdentity as String
+          : null,
       actions: actions,
-      onWarmShareCache: coordinator.warmShareTransferCache,
-      onShowContextMenu: (position) => ImageCardContextMenu.show(
-        context: context,
-        position: position,
-        actions: actions,
+      enabled: false,
+      builder: (context, boundActions) => ImageCardSurface(
+        data: data,
+        capabilities: capabilities,
+        controller: _controller,
+        actions: boundActions,
+        onWarmShareCache: coordinator.warmShareTransferCache,
+        onShowContextMenu: (position) {
+          final batch = ImageCardBatchScope.maybeOf(context);
+          final useBatch =
+              batch?.targetIds.contains(widget.imageIdentity) ?? false;
+          return ImageCardContextMenu.show(
+            context: context,
+            position: position,
+            actions: useBatch ? batch!.actions : boundActions,
+            title: useBatch ? batch!.title(context) : null,
+            listenable: useBatch ? batch!.runner : null,
+          );
+        },
       ),
     );
   }

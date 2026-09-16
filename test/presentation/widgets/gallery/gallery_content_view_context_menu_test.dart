@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_launcher/core/platform/platform_capabilities.dart';
 import 'package:nai_launcher/data/models/gallery/local_image_record.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
+import 'package:nai_launcher/presentation/adaptive/interaction_policy.dart';
 import 'package:nai_launcher/presentation/widgets/common/card_action_buttons.dart';
 import 'package:nai_launcher/presentation/widgets/gallery/gallery_content_view.dart';
 import 'package:nai_launcher/presentation/widgets/gallery/local_image_card_3d.dart';
@@ -176,6 +177,71 @@ void main() {
     },
   );
 
+  testWidgets('touch cards expose favorite and context actions without hover', (
+    tester,
+  ) async {
+    PlatformCapabilities.debugOverride = PlatformCapabilities.forPlatform(
+      TargetPlatform.android,
+    );
+    final record = LocalImageRecord(
+      path: 'G:/gallery/touch-actions.png',
+      size: 42,
+      modifiedAt: DateTime(2026, 8, 2),
+    );
+    var cardTapCount = 0;
+    var favoriteCount = 0;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: InteractionPolicyScope(
+          child: MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.topLeft,
+                child: LocalImageCard3D(
+                  record: record,
+                  width: 160,
+                  height: 220,
+                  onTap: () => cardTapCount++,
+                  onFavoriteToggle: () => favoriteCount++,
+                  onSendAction: (_) async {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await _observeTouch(tester);
+
+    expect(find.byTooltip('More actions'), findsOneWidget);
+    expect(find.byTooltip('Copy Prompt'), findsNothing);
+    await tester.tap(find.byTooltip('More actions'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Copy Prompt'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Delete'),
+      180,
+      scrollable: find.byType(Scrollable).last,
+    );
+    expect(find.text('Delete'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Favorite'),
+      -120,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text('Favorite'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(favoriteCount, 1);
+    expect(cardTapCount, 0);
+  });
+
   testWidgets('grouped gallery send button dispatches the shared send action', (
     tester,
   ) async {
@@ -227,6 +293,7 @@ void main() {
     await tester.tap(find.byIcon(Icons.send));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Send to Reverse Prompt'), findsOneWidget);
     expect(find.text('Import Image Metadata'), findsNothing);
 
@@ -245,11 +312,24 @@ void main() {
     selectedAction = null;
     await tester.tap(find.byIcon(Icons.delete_outline));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
     expect(selectedAction, LocalImageContextAction.delete);
 
     await mouse.removePointer();
     await tester.pump();
   });
+}
+
+Future<void> _observeTouch(WidgetTester tester) async {
+  final position =
+      tester.getBottomRight(find.byType(Scaffold)) - const Offset(1, 1);
+  final touch = await tester.createGesture(kind: PointerDeviceKind.touch);
+  await touch.addPointer(location: position);
+  await touch.down(position);
+  await tester.pump();
+  await touch.up();
+  await tester.pump();
 }
 
 class _GroupedGalleryState implements GalleryState<LocalImageRecord> {

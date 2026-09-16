@@ -1,58 +1,58 @@
+import 'package:nai_launcher/presentation/widgets/common/horizontal_action_strip.dart';
 import 'package:flutter/material.dart';
 
 import '../../../core/utils/localization_extension.dart';
 import '../../themes/theme_extension.dart';
+import '../../widgets/common/keyboard_dismiss_region.dart';
 import 'mobile_generation_controller.dart';
 import 'mobile_generation_gestures.dart';
 import 'mobile_generation_view_data.dart';
 import 'widgets/image_preview.dart';
 import 'widgets/prompt_input.dart';
+import 'widgets/prompt_input_controller.dart';
 
-class MobileGenerationWorkspace extends StatelessWidget {
+class MobileGenerationWorkspace extends StatefulWidget {
   const MobileGenerationWorkspace({
     super.key,
     required this.controller,
     required this.data,
+    required this.promptInputController,
+    required this.promptInputKey,
   });
 
   static const double _minimumHorizontalWorkspaceHeight = 320;
 
   final MobileGenerationController controller;
   final MobileGenerationViewData data;
+  final PromptInputController promptInputController;
+  final GlobalKey promptInputKey;
+
+  @override
+  State<MobileGenerationWorkspace> createState() =>
+      _MobileGenerationWorkspaceState();
+}
+
+class _MobileGenerationWorkspaceState extends State<MobileGenerationWorkspace> {
+  final GlobalKey _collapsedPromptLauncherKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return MobileWorkspaceMotion(
-      active: !controller.agentFullScreen,
-      hiddenOffset: const Offset(0, -0.08),
-      child: TickerMode(
-        enabled: !controller.agentFullScreen,
-        child: AnimatedSwitcher(
-          duration: MediaQuery.disableAnimationsOf(context)
-              ? Duration.zero
-              : theme.appTheme.normalDuration,
-          switchInCurve: theme.appTheme.enterCurve,
-          switchOutCurve: theme.appTheme.exitCurve,
-          transitionBuilder: (child, animation) {
-            final enteringPrompt =
-                child.key == const ValueKey('maximized-prompt');
-            return FadeTransition(
-              opacity: animation,
-              child: SlideTransition(
-                position: Tween<Offset>(
-                  begin: Offset(0, enteringPrompt ? -0.08 : 0.08),
-                  end: Offset.zero,
-                ).animate(animation),
-                child: child,
-              ),
-            );
-          },
+    final controller = widget.controller;
+    final data = widget.data;
+    return KeyboardDismissRegion(
+      child: MobileWorkspaceMotion(
+        active: !controller.agentFullScreen,
+        hiddenOffset: const Offset(0, -0.08),
+        child: TickerMode(
+          enabled: !controller.agentFullScreen,
           child: data.isPromptMaximized
-              ? const Padding(
-                  key: ValueKey('maximized-prompt'),
-                  padding: EdgeInsets.all(12),
+              ? Padding(
+                  key: const ValueKey('maximized-prompt'),
+                  padding: const EdgeInsets.all(12),
                   child: PromptInputWidget(
+                    key: widget.promptInputKey,
+                    controller: widget.promptInputController,
                     isMaximized: true,
                     showMaximizeButton: false,
                     autofocus: true,
@@ -66,6 +66,7 @@ class MobileGenerationWorkspace extends StatelessWidget {
                   onPointerCancel: controller.handleWorkspacePointerCancel,
                   onScrollNotification:
                       controller.handleWorkspaceScrollNotification,
+                  pointerExclusionKeys: [_collapsedPromptLauncherKey],
                   pointerActive: controller.workspacePointerActive,
                   dragOffset: controller.workspaceDragFeedback,
                   showHint: controller.showGestureHint,
@@ -79,7 +80,8 @@ class MobileGenerationWorkspace extends StatelessWidget {
                       final useHorizontalLayout =
                           constraints.maxWidth >= minimumHorizontalWidth &&
                           constraints.maxHeight >=
-                              _minimumHorizontalWorkspaceHeight &&
+                              MobileGenerationWorkspace
+                                  ._minimumHorizontalWorkspaceHeight &&
                           constraints.maxWidth > constraints.maxHeight * 1.15;
                       if (useHorizontalLayout) {
                         return Row(
@@ -100,7 +102,10 @@ class MobileGenerationWorkspace extends StatelessWidget {
                                     child: Padding(
                                       key: controller.embeddedPromptKey,
                                       padding: const EdgeInsets.all(12),
-                                      child: const PromptInputWidget(
+                                      child: PromptInputWidget(
+                                        key: widget.promptInputKey,
+                                        controller:
+                                            widget.promptInputController,
                                         compact: true,
                                       ),
                                     ),
@@ -117,6 +122,20 @@ class MobileGenerationWorkspace extends StatelessWidget {
                       }
                       return Column(
                         children: [
+                          Offstage(
+                            offstage: true,
+                            child: SizedBox(
+                              width: constraints.maxWidth,
+                              height:
+                                  160 * textScale.clamp(1.0, 3.0).toDouble(),
+                              child: PromptInputWidget(
+                                key: widget.promptInputKey,
+                                controller: widget.promptInputController,
+                                compact: true,
+                                active: false,
+                              ),
+                            ),
+                          ),
                           const Expanded(child: ImagePreviewWidget()),
                           if (data.generationState.isGenerating)
                             MobileGenerationProgress(
@@ -125,6 +144,7 @@ class MobileGenerationWorkspace extends StatelessWidget {
                           Padding(
                             padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
                             child: MobileCollapsedPromptLauncher(
+                              key: _collapsedPromptLauncherKey,
                               prompt: data.promptSummary,
                               characterCount: data.enabledCharacterCount,
                               qualityEnabled: data.qualityEnabled,
@@ -206,6 +226,7 @@ class MobileCollapsedPromptLauncher extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final hasPrompt = prompt.isNotEmpty;
+    final largeText = MediaQuery.textScalerOf(context).scale(14) > 21;
     final statusItems = <Widget>[
       if (characterCount > 0)
         _PromptOverviewItem(
@@ -269,76 +290,99 @@ class MobileCollapsedPromptLauncher extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
+                          key: const ValueKey(
+                            'generation-prompt-overview-primary-row',
+                          ),
                           children: [
                             Text(
                               context.l10n.promptToken_prompt,
                               maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.labelMedium?.copyWith(
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                hasPrompt
-                                    ? prompt.replaceAll(RegExp(r'\s+'), ' ')
-                                    : context.l10n.prompt_describeImage,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: colors.onSurfaceVariant.withValues(
-                                    alpha: hasPrompt ? 0.8 : 0.56,
+                            if (!largeText) ...[
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  key: const ValueKey(
+                                    'generation-prompt-overview-summary',
+                                  ),
+                                  hasPrompt
+                                      ? prompt.replaceAll(RegExp(r'\s+'), ' ')
+                                      : context.l10n.prompt_describeImage,
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: colors.onSurfaceVariant.withValues(
+                                      alpha: hasPrompt ? 0.8 : 0.56,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                            if (hasPrompt) ...[
-                              const SizedBox(width: 8),
-                              Text(
-                                context.l10n
-                                    .generation_promptOverviewCharacters(
-                                      prompt.runes.length,
-                                    ),
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: colors.onSurfaceVariant,
-                                  fontFeatures: const [
-                                    FontFeature.tabularFigures(),
-                                  ],
-                                ),
-                              ),
                             ],
-                            const SizedBox(width: 6),
-                            Icon(
-                              Icons.open_in_full_rounded,
-                              size: 15,
-                              color: colors.onSurfaceVariant.withValues(
-                                alpha: 0.68,
-                              ),
-                            ),
                           ],
                         ),
-                        if (statusItems.isNotEmpty) ...[
+                        if ((!largeText && statusItems.isNotEmpty) ||
+                            hasPrompt) ...[
                           const SizedBox(height: 3),
-                          SizedBox(
-                            height: 17,
-                            child: SingleChildScrollView(
-                              key: const ValueKey(
-                                'generation-prompt-overview-statuses',
-                              ),
-                              scrollDirection: Axis.horizontal,
-                              child: Row(
-                                children: [
-                                  for (
-                                    var index = 0;
-                                    index < statusItems.length;
-                                    index++
-                                  ) ...[
-                                    if (index > 0) const SizedBox(width: 11),
-                                    statusItems[index],
-                                  ],
-                                ],
-                              ),
+                          Row(
+                            key: const ValueKey(
+                              'generation-prompt-overview-secondary-row',
                             ),
+                            children: [
+                              if (!largeText && statusItems.isNotEmpty)
+                                Expanded(
+                                  child: Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: SizedBox(
+                                      height: 17,
+                                      child: HorizontalActionStrip(
+                                        scrollKey: const ValueKey(
+                                          'generation-prompt-overview-statuses',
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            for (
+                                              var index = 0;
+                                              index < statusItems.length;
+                                              index++
+                                            ) ...[
+                                              if (index > 0)
+                                                const SizedBox(width: 11),
+                                              statusItems[index],
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                )
+                              else
+                                const Spacer(),
+                              if (hasPrompt) ...[
+                                if (!largeText && statusItems.isNotEmpty)
+                                  const SizedBox(width: 8),
+                                Text(
+                                  key: const ValueKey(
+                                    'generation-prompt-overview-characters',
+                                  ),
+                                  context.l10n
+                                      .generation_promptOverviewCharacters(
+                                        prompt.runes.length,
+                                      ),
+                                  maxLines: 1,
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: colors.onSurfaceVariant,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ],
                       ],

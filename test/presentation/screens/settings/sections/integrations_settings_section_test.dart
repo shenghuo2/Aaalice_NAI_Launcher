@@ -46,7 +46,13 @@ void main() {
     List<String> disposedPanels, {
     Locale locale = const Locale('zh'),
     TargetPlatform targetPlatform = TargetPlatform.windows,
+    Size size = const Size(800, 600),
+    double textScale = 1,
   }) async {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     debugDefaultTargetPlatformOverride = targetPlatform;
     try {
       await tester.pumpWidget(
@@ -54,30 +60,38 @@ void main() {
           locale: locale,
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
           home: Scaffold(
-            body: IntegrationsSettingsSection(
-              panelBuilders: [
-                (_) => _PanelProbe(
-                  key: _promptAssistantPanelKey,
-                  label: 'panel-prompt-assistant',
-                  onDispose: () => disposedPanels.add('prompt-assistant'),
-                ),
-                (_) => _PanelProbe(
-                  key: _comfyUiPanelKey,
-                  label: 'panel-comfyui',
-                  onDispose: () => disposedPanels.add('comfyui'),
-                ),
-                (_) => _PanelProbe(
-                  key: _kritaPanelKey,
-                  label: 'panel-krita',
-                  onDispose: () => disposedPanels.add('krita'),
-                ),
-                (_) => _PanelProbe(
-                  key: _picManagerPanelKey,
-                  label: 'panel-pic-manager',
-                  onDispose: () => disposedPanels.add('pic-manager'),
-                ),
-              ],
+            body: SingleChildScrollView(
+              child: IntegrationsSettingsSection(
+                panelBuilders: [
+                  (_) => _PanelProbe(
+                    key: _promptAssistantPanelKey,
+                    label: 'panel-prompt-assistant',
+                    onDispose: () => disposedPanels.add('prompt-assistant'),
+                  ),
+                  (_) => _PanelProbe(
+                    key: _comfyUiPanelKey,
+                    label: 'panel-comfyui',
+                    onDispose: () => disposedPanels.add('comfyui'),
+                  ),
+                  (_) => _PanelProbe(
+                    key: _kritaPanelKey,
+                    label: 'panel-krita',
+                    onDispose: () => disposedPanels.add('krita'),
+                  ),
+                  (_) => _PanelProbe(
+                    key: _picManagerPanelKey,
+                    label: 'panel-pic-manager',
+                    onDispose: () => disposedPanels.add('pic-manager'),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -123,7 +137,7 @@ void main() {
     final disposedPanels = <String>[];
     await pumpSection(tester, disposedPanels);
 
-    // 四段子导航
+    // 三段子导航
     expect(find.text('提示词助手'), findsOneWidget);
     expect(find.text('ComfyUI'), findsOneWidget);
     expect(find.text('Krita'), findsOneWidget);
@@ -143,7 +157,6 @@ void main() {
     expectOnlyPanel(_kritaPanelKey);
     expect(disposedPanels, ['prompt-assistant', 'comfyui']);
 
-    await tester.ensureVisible(find.text('Pic Manager'));
     await tester.tap(find.text('Pic Manager'));
     await tester.pumpAndSettle();
     expectOnlyPanel(_picManagerPanelKey);
@@ -165,7 +178,6 @@ void main() {
     await tester.pumpAndSettle();
     final kritaWidth = tester.getSize(segmentedButton).width;
 
-    await tester.ensureVisible(find.text('Pic Manager'));
     await tester.tap(find.text('Pic Manager'));
     await tester.pumpAndSettle();
     final picManagerWidth = tester.getSize(segmentedButton).width;
@@ -199,6 +211,21 @@ void main() {
     expectOnlyPanel(_promptAssistantPanelKey);
     expect(disposedPanels, isEmpty);
   });
+
+  for (final width in [320.0, 600.0, 840.0, 1600.0]) {
+    testWidgets('集成分段导航在 ${width.toInt()} 宽度可滚动且无溢出', (tester) async {
+      await pumpSection(
+        tester,
+        <String>[],
+        size: Size(width, 420),
+        textScale: width == 320 ? 3 : 1,
+      );
+
+      expect(find.byType(SegmentedButton<int>), findsOneWidget);
+      expect(find.byType(SingleChildScrollView), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   const expectedLabels = <String, List<String>>{
     'en': ['Prompt Assistant', 'ComfyUI', 'Krita', 'Pic Manager'],

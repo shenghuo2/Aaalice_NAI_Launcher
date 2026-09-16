@@ -28,6 +28,9 @@ class VibeLibraryCategoryRepository {
     }
   }
 
+  Future<void> saveAll(List<VibeLibraryCategory> categories) =>
+      _repository.putCategories(categories);
+
   Future<VibeLibraryCategory?> get(String id) =>
       _withFallback(() => _repository.readCategory(id), null, 'get category');
 

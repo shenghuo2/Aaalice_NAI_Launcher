@@ -9,6 +9,7 @@ import '../providers/mobile_shell_overlay_provider.dart';
 import '../providers/replication_queue_provider.dart';
 import '../providers/update_provider.dart';
 import '../widgets/common/app_toast.dart';
+import '../widgets/common/update_notice_banner.dart';
 import 'android_root_back_guard.dart';
 import 'app_branch.dart';
 import 'global_status_banners.dart';
@@ -18,6 +19,9 @@ import 'shell_panels_overlay.dart';
 /// Compact touch-first shell. Secondary destinations remain explicit in the
 /// labelled “more” panel instead of disappearing behind desktop-only routes.
 class MobileShell extends ConsumerWidget {
+  static const double compactNavigationBarHeight = 64;
+  static const double maximumNavigationBarHeight = 84;
+
   final StatefulNavigationShell navigationShell;
   final bool branchCanHandlePop;
   final Widget content;
@@ -27,7 +31,10 @@ class MobileShell extends ConsumerWidget {
     required this.navigationShell,
     required this.branchCanHandlePop,
     required this.content,
+    this.panelOverlayKey,
   });
+
+  final Key? panelOverlayKey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -52,79 +59,100 @@ class MobileShell extends ConsumerWidget {
     final scaffold = Scaffold(
       body: SafeArea(
         bottom: false,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            content,
-            const Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: GlobalStatusBanners(),
-            ),
-            ShellPanelsOverlay(
-              activePanel: activePanel,
-              desktop: false,
-              onClose: closePanel,
-              onQueueStarted: () =>
-                  navigationShell.goBranch(AppBranch.generation.index),
-              onOpenAgentSettings: () =>
-                  navigationShell.goBranch(AppBranch.settings.index),
-            ),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) => Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Column(
+                children: [
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: (constraints.maxHeight * 0.45).clamp(
+                        0.0,
+                        300.0,
+                      ),
+                    ),
+                    child: const SingleChildScrollView(
+                      child: GlobalStatusBanners(),
+                    ),
+                  ),
+                  Expanded(child: content),
+                ],
+              ),
+              const UpdateNoticeOverlay(),
+              ShellPanelsOverlay(
+                key: panelOverlayKey,
+                activePanel: activePanel,
+                desktop: false,
+                onClose: closePanel,
+                onQueueStarted: () =>
+                    navigationShell.goBranch(AppBranch.generation.index),
+                onOpenAgentSettings: () =>
+                    navigationShell.goBranch(AppBranch.settings.index),
+              ),
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: keyboardVisible || shellOverlayActive
           ? null
-          : NavigationBar(
-              selectedIndex: activePanel != null
-                  ? mobileMoreNavigationIndex
-                  : mobileNavigationIndexForBranch(
-                      navigationShell.currentIndex,
+          : SafeArea(
+              top: false,
+              child: NavigationBar(
+                height: _navigationBarHeight(context),
+                selectedIndex: activePanel != null
+                    ? mobileMoreNavigationIndex
+                    : mobileNavigationIndexForBranch(
+                        navigationShell.currentIndex,
+                      ),
+                onDestinationSelected: (index) =>
+                    _onNavigate(context, index, ref),
+                destinations: [
+                  NavigationDestination(
+                    icon: const Icon(Icons.auto_awesome_outlined),
+                    selectedIcon: const Icon(Icons.auto_awesome),
+                    label: context.l10n.nav_generate,
+                  ),
+                  NavigationDestination(
+                    icon: const Icon(Icons.photo_library_outlined),
+                    selectedIcon: const Icon(Icons.photo_library),
+                    label: context.l10n.nav_gallery,
+                  ),
+                  NavigationDestination(
+                    icon: const Icon(Icons.travel_explore_outlined),
+                    selectedIcon: const Icon(Icons.travel_explore),
+                    label: context.l10n.nav_explore,
+                  ),
+                  NavigationDestination(
+                    icon: const Icon(Icons.library_books_outlined),
+                    selectedIcon: const Icon(Icons.library_books),
+                    label: context.l10n.nav_dictionary,
+                  ),
+                  NavigationDestination(
+                    icon: Badge(
+                      isLabelVisible: queueCount > 0 || showUpdateBadge,
+                      label: queueCount > 0
+                          ? Text(
+                              queueCount > 99 ? '99+' : queueCount.toString(),
+                            )
+                          : null,
+                      smallSize: 7,
+                      child: const Icon(Icons.apps_outlined),
                     ),
-              onDestinationSelected: (index) =>
-                  _onNavigate(context, index, ref),
-              destinations: [
-                NavigationDestination(
-                  icon: const Icon(Icons.auto_awesome_outlined),
-                  selectedIcon: const Icon(Icons.auto_awesome),
-                  label: context.l10n.nav_generate,
-                ),
-                NavigationDestination(
-                  icon: const Icon(Icons.photo_library_outlined),
-                  selectedIcon: const Icon(Icons.photo_library),
-                  label: context.l10n.nav_gallery,
-                ),
-                NavigationDestination(
-                  icon: const Icon(Icons.travel_explore_outlined),
-                  selectedIcon: const Icon(Icons.travel_explore),
-                  label: context.l10n.nav_explore,
-                ),
-                NavigationDestination(
-                  icon: const Icon(Icons.library_books_outlined),
-                  selectedIcon: const Icon(Icons.library_books),
-                  label: context.l10n.nav_dictionary,
-                ),
-                NavigationDestination(
-                  icon: Badge(
-                    isLabelVisible: queueCount > 0 || showUpdateBadge,
-                    label: queueCount > 0
-                        ? Text(queueCount > 99 ? '99+' : queueCount.toString())
-                        : null,
-                    smallSize: 7,
-                    child: const Icon(Icons.apps_outlined),
+                    selectedIcon: Badge(
+                      isLabelVisible: queueCount > 0 || showUpdateBadge,
+                      label: queueCount > 0
+                          ? Text(
+                              queueCount > 99 ? '99+' : queueCount.toString(),
+                            )
+                          : null,
+                      smallSize: 7,
+                      child: const Icon(Icons.apps),
+                    ),
+                    label: context.l10n.nav_more,
                   ),
-                  selectedIcon: Badge(
-                    isLabelVisible: queueCount > 0 || showUpdateBadge,
-                    label: queueCount > 0
-                        ? Text(queueCount > 99 ? '99+' : queueCount.toString())
-                        : null,
-                    smallSize: 7,
-                    child: const Icon(Icons.apps),
-                  ),
-                  label: context.l10n.nav_more,
-                ),
-              ],
+                ],
+              ),
             ),
     );
 
@@ -149,6 +177,14 @@ class MobileShell extends ConsumerWidget {
           child: scaffold,
         ),
       ),
+    );
+  }
+
+  double _navigationBarHeight(BuildContext context) {
+    final scaledLabelHeight = MediaQuery.textScalerOf(context).scale(12);
+    return (48 + scaledLabelHeight).clamp(
+      compactNavigationBarHeight,
+      maximumNavigationBarHeight,
     );
   }
 

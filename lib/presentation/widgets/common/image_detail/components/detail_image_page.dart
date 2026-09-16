@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../image_viewport_surface.dart';
 import '../../../../../core/utils/localization_extension.dart';
 import '../image_detail_data.dart';
 
@@ -32,6 +33,8 @@ class _DetailImagePageState extends State<DetailImagePage>
   late TransformationController _internalTransformController;
   late AnimationController _animationController;
   Animation<Matrix4>? _animation;
+  Matrix4? _animationEnd;
+  bool _disableAnimations = false;
   TapDownDetails? _doubleTapDetails;
 
   /// 加载状态
@@ -54,6 +57,19 @@ class _DetailImagePageState extends State<DetailImagePage>
         _transformController.value = _animation!.value;
       }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    if (_disableAnimations == disableAnimations) return;
+    _disableAnimations = disableAnimations;
+    if (disableAnimations && _animationController.isAnimating) {
+      _animationController.stop();
+      final endMatrix = _animationEnd;
+      if (endMatrix != null) _transformController.value = endMatrix;
+    }
   }
 
   @override
@@ -81,23 +97,21 @@ class _DetailImagePageState extends State<DetailImagePage>
       final y = -position.dy * (_doubleTapScale - 1);
       endMatrix = Matrix4.identity()
         ..translateByDouble(x, y, 0, 1)
-        ..scaleByDouble(
-          _doubleTapScale,
-          _doubleTapScale,
-          _doubleTapScale,
-          1,
-        );
+        ..scaleByDouble(_doubleTapScale, _doubleTapScale, _doubleTapScale, 1);
     }
 
-    _animation = Matrix4Tween(
-      begin: _transformController.value,
-      end: endMatrix,
-    ).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: Curves.easeOut,
-      ),
-    );
+    _animationEnd = endMatrix;
+    if (_disableAnimations) {
+      _animationController.stop();
+      _animation = null;
+      _transformController.value = endMatrix;
+      return;
+    }
+
+    _animation = Matrix4Tween(begin: _transformController.value, end: endMatrix)
+        .animate(
+          CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
+        );
 
     _animationController.forward(from: 0);
   }
@@ -105,7 +119,7 @@ class _DetailImagePageState extends State<DetailImagePage>
   /// 构建加载指示器
   Widget _buildLoadingIndicator(BuildContext context) {
     return Container(
-      color: Colors.black,
+      color: ImageViewportSurface.background,
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -115,6 +129,7 @@ class _DetailImagePageState extends State<DetailImagePage>
               height: 32,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
+                value: MediaQuery.disableAnimationsOf(context) ? 0.72 : null,
                 valueColor: AlwaysStoppedAnimation<Color>(
                   Colors.white.withValues(alpha: 0.6),
                 ),
@@ -165,7 +180,9 @@ class _DetailImagePageState extends State<DetailImagePage>
         // 渐进式淡入动画
         return AnimatedOpacity(
           opacity: frame == null ? 0 : 1,
-          duration: const Duration(milliseconds: 300),
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 300),
           curve: Curves.easeOut,
           child: child,
         );
@@ -190,10 +207,7 @@ class _DetailImagePageState extends State<DetailImagePage>
     );
 
     if (widget.heroTag != null) {
-      imageWidget = Hero(
-        tag: widget.heroTag!,
-        child: imageWidget,
-      );
+      imageWidget = Hero(tag: widget.heroTag!, child: imageWidget);
     }
 
     return Stack(
@@ -211,10 +225,7 @@ class _DetailImagePageState extends State<DetailImagePage>
         ),
 
         // 加载指示器
-        if (_isLoading)
-          Positioned.fill(
-            child: _buildLoadingIndicator(context),
-          ),
+        if (_isLoading) Positioned.fill(child: _buildLoadingIndicator(context)),
       ],
     );
   }

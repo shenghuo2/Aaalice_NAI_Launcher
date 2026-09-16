@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../../utils/card_drop_reader.dart';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -165,12 +166,11 @@ class _UnifiedReferencePanelState extends ConsumerState<UnifiedReferencePanel> {
   }
 
   /// 添加 Vibe（从局部拖拽区域）
-  Future<int> _importDroppedVibeFile(String fileName, Uint8List bytes) async {
+  Future<int> _importDroppedVibeResources(
+    List<CardDroppedResource> resources,
+  ) async {
     final handler = VibeImportHandler(ref: ref, context: context);
-    final addedCount = await handler.importDroppedFile(
-      fileName: fileName,
-      bytes: bytes,
-    );
+    final addedCount = await handler.importDroppedResources(resources);
     if (addedCount > 0) {
       await _loadRecentEntries();
     }
@@ -396,7 +396,7 @@ class _UnifiedReferencePanelState extends ConsumerState<UnifiedReferencePanel> {
               onClearAll: _clearAllVibes,
               onSaveToLibrary: _saveToLibrary,
               onImportFromLibrary: _importFromLibrary,
-              onImportDroppedFile: _importDroppedVibeFile,
+              onImportDroppedResources: _importDroppedVibeResources,
               onEncode: _encodeVibe,
               recentEntries: _recentEntries,
               isRecentCollapsed: _isRecentCollapsed,

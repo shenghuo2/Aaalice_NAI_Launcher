@@ -8,7 +8,9 @@ import '../../../core/utils/app_logger.dart';
 import '../../../data/datasources/remote/nai_generation_transport.dart';
 import '../../../data/datasources/remote/nai_image_generation_api_service.dart';
 import '../../../data/models/image/image_params.dart';
+import '../../../data/models/image/image_postprocess_phase.dart';
 import 'generation_command.dart';
+import 'generation_error_classifier.dart';
 
 /// Owns the single generation algorithm. It has no Riverpod dependency and
 /// reports effects as immutable events for the notifier to reduce.
@@ -24,6 +26,8 @@ class ImageGenerationCoordinator {
     this.concurrencyRetryBudget = const Duration(seconds: 90),
     Future<void> Function(Duration) delay = Future<void>.delayed,
     Random? random,
+    this.postprocess,
+    this.onPostprocessError,
   }) : _apiService = apiService,
        _retryDelays = retryDelays,
        _delay = delay,
@@ -37,10 +41,14 @@ class ImageGenerationCoordinator {
   final Duration concurrencyRetryInterval;
   final Duration concurrencyRetryBudget;
   final Random _random;
+  final ImagePostprocessor? postprocess;
+  final void Function(Object)? onPostprocessError;
 
   GenerationRunHandle? _activeRun;
   bool _skipCurrentRequest = false;
   bool _hasRemainingImages = false;
+  bool _postprocessing = false;
+  bool get isPostprocessing => _postprocessing;
 
   GenerationRunHandle start(GenerationCommand command) {
     final handle = GenerationRunHandle(
@@ -81,6 +89,7 @@ class ImageGenerationCoordinator {
       final allImages = <Uint8List>[];
       Object? lastError;
       var consumedImages = 0;
+      var reportedPostprocessError = false;
 
       yield GenerationStarted(
         runId: command.runId,
@@ -123,6 +132,7 @@ class ImageGenerationCoordinator {
 
         try {
           final batchImages = <Uint8List>[];
+          final postprocessErrors = <int, String>{};
           final batchEncodings = <int, String>{};
           final batchIndexedEncodings = <GenerationVibeEncoding>[];
           Object? batchError;
@@ -143,7 +153,7 @@ class ImageGenerationCoordinator {
                 nonStreamOnly: false,
                 retryStreamFailures: command.totalImages > 1,
               )) {
-                if (signal.preview != null) yield signal.preview!;
+                if (signal.event != null) yield signal.event!;
                 if (signal.result != null) result = signal.result!;
               }
               batchImages.addAll(result.images);
@@ -177,7 +187,7 @@ class ImageGenerationCoordinator {
                   nonStreamOnly: nonStreamOnly,
                   retryStreamFailures: command.totalImages > 1,
                 )) {
-                  if (signal.preview != null) yield signal.preview!;
+                  if (signal.event != null) yield signal.event!;
                   if (signal.result != null) result = signal.result!;
                   if (signal.nonStreamOnly) nonStreamOnly = true;
                 }
@@ -216,6 +226,50 @@ class ImageGenerationCoordinator {
             continue;
           }
           if (batchImages.isNotEmpty) {
+            final processor = postprocess;
+            if (processor != null && !_aborted(handle)) {
+              _postprocessing = true;
+              try {
+                for (var index = 0; index < batchImages.length; index++) {
+                  if (_aborted(handle)) break;
+                  try {
+                    await for (final update in _processImage(
+                      processor,
+                      batchImages[index],
+                      handle.cancellation.whenCancelled,
+                    )) {
+                      if (update.bytes != null) {
+                        batchImages[index] = update.bytes!;
+                      }
+                      if (update.phase != null && !_aborted(handle)) {
+                        yield GenerationPostprocessChanged(
+                          runId: command.runId,
+                          imageNumber: startImage + index,
+                          totalImages: command.totalImages,
+                          phase: update.phase!,
+                        );
+                      }
+                    }
+                  } catch (error, stack) {
+                    if (!_aborted(handle)) {
+                      postprocessErrors[index] = error.toString();
+                    }
+                    AppLogger.e(
+                      'Image postprocessing failed; retaining original',
+                      error,
+                      stack,
+                      'Generation',
+                    );
+                    if (!reportedPostprocessError) {
+                      onPostprocessError?.call(error);
+                      reportedPostprocessError = true;
+                    }
+                  }
+                }
+              } finally {
+                _postprocessing = false;
+              }
+            }
             allImages.addAll(batchImages);
             yield GenerationRequestCompleted(
               runId: command.runId,
@@ -223,6 +277,7 @@ class ImageGenerationCoordinator {
               startImage: startImage,
               totalImages: command.totalImages,
               images: batchImages,
+              postprocessErrors: postprocessErrors,
               vibeEncodings: batchEncodings,
               indexedVibeEncodings: batchIndexedEncodings,
             );
@@ -244,6 +299,13 @@ class ImageGenerationCoordinator {
       }
 
       if (_aborted(handle)) {
+        if (allImages.isNotEmpty) {
+          yield GenerationCompleted(
+            runId: command.runId,
+            params: currentParams,
+            images: List<Uint8List>.unmodifiable(allImages),
+          );
+        }
         yield GenerationCancelled(command.runId);
       } else if (allImages.isEmpty) {
         yield GenerationFailed(
@@ -262,6 +324,32 @@ class ImageGenerationCoordinator {
     } finally {
       _apiService.releaseCancellationLease(handle.requestLease);
     }
+  }
+
+  Stream<({Uint8List? bytes, ImagePostprocessPhase? phase})> _processImage(
+    ImagePostprocessor processor,
+    Uint8List source,
+    Future<void> cancelled,
+  ) {
+    final updates =
+        StreamController<({Uint8List? bytes, ImagePostprocessPhase? phase})>();
+    updates.add((bytes: null, phase: ImagePostprocessPhase.preparing));
+    unawaited(
+      Future.sync(
+            () => processor(
+              source,
+              cancelled,
+              (phase) => updates.add((bytes: null, phase: phase)),
+            ),
+          )
+          .then<void>(
+            (bytes) => updates.add((bytes: bytes, phase: null)),
+            onError: (Object error, StackTrace stack) =>
+                updates.addError(error, stack),
+          )
+          .whenComplete(updates.close),
+    );
+    return updates.stream;
   }
 
   Stream<_RequestSignal> _runRequest({
@@ -304,7 +392,7 @@ class ImageGenerationCoordinator {
           if (_aborted(handle) || _skipCurrentRequest) return;
           if (chunk.hasError) {
             final error = chunk.error ?? 'Unknown stream error';
-            if (_isStreamingNotAllowed(error)) {
+            if (isStreamingGenerationUnsupportedError(error)) {
               mode = _RequestMode.fallback;
               persistFallbackMode = true;
               break;
@@ -314,7 +402,7 @@ class ImageGenerationCoordinator {
           final sample = chunk.sampleIndex.clamp(0, params.nSamples - 1);
           final imageNumber = startImage + sample;
           if (chunk.hasPreview) {
-            yield _RequestSignal.preview(
+            yield _RequestSignal.event(
               GenerationPreviewReceived(
                 runId: command.runId,
                 params: params,
@@ -330,14 +418,11 @@ class ImageGenerationCoordinator {
           }
           if (chunk.isComplete && chunk.hasFinalImage) {
             images[chunk.sampleIndex] = chunk.finalImage!;
-            yield _RequestSignal.preview(
-              GenerationPreviewReceived(
+            yield _RequestSignal.event(
+              GenerationImageFinalizing(
                 runId: command.runId,
-                params: params,
                 imageNumber: imageNumber,
                 totalImages: command.totalImages,
-                progress: 1,
-                bytes: Uint8List.fromList(chunk.finalImage!),
               ),
             );
           }
@@ -368,7 +453,7 @@ class ImageGenerationCoordinator {
           }
           rethrow;
         }
-        if (_isStreamingNotAllowed(error.toString())) {
+        if (isStreamingGenerationUnsupportedError(error)) {
           mode = _RequestMode.fallback;
           persistFallbackMode = true;
           continue;
@@ -473,14 +558,6 @@ class ImageGenerationCoordinator {
   bool _aborted(GenerationRunHandle handle) =>
       handle.isCancelled || !identical(_activeRun, handle);
 
-  static bool _isStreamingNotAllowed(String error) {
-    final lower = error.toLowerCase();
-    return lower.contains('streaming is not allowed') ||
-        lower.contains('streaming not allowed') ||
-        lower.contains('stream is not allowed') ||
-        lower.contains('stream not allowed');
-  }
-
   static bool _isRemoteCancelled(Object error) =>
       error.toString().toLowerCase().contains('cancelled');
 
@@ -510,20 +587,16 @@ class _RequestResult {
 }
 
 class _RequestSignal {
-  const _RequestSignal._({
-    this.preview,
-    this.result,
-    this.nonStreamOnly = false,
-  });
+  const _RequestSignal._({this.event, this.result, this.nonStreamOnly = false});
 
-  factory _RequestSignal.preview(GenerationPreviewReceived preview) =>
-      _RequestSignal._(preview: preview);
+  factory _RequestSignal.event(GenerationEvent event) =>
+      _RequestSignal._(event: event);
   factory _RequestSignal.result(
     _RequestResult result, {
     bool nonStreamOnly = false,
   }) => _RequestSignal._(result: result, nonStreamOnly: nonStreamOnly);
 
-  final GenerationPreviewReceived? preview;
+  final GenerationEvent? event;
   final _RequestResult? result;
   final bool nonStreamOnly;
 }

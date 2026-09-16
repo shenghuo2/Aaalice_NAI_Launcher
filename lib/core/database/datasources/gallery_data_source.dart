@@ -5,6 +5,7 @@ import '../../../data/models/gallery/nai_image_metadata.dart';
 import '../../utils/app_logger.dart';
 import '../base_data_source.dart';
 import '../data_source.dart' show DataSourceHealth, DataSourceType;
+import 'gallery_album_repository.dart';
 import 'gallery_database_gateway.dart';
 import 'gallery_favorite_tag_repository.dart';
 import 'gallery_image_repository.dart';
@@ -14,6 +15,7 @@ import 'gallery_records.dart';
 import 'gallery_schema.dart';
 import 'gallery_store_context.dart';
 
+export 'gallery_album_repository.dart';
 export 'gallery_database_gateway.dart';
 export 'gallery_favorite_tag_repository.dart';
 export 'gallery_image_repository.dart';
@@ -47,6 +49,10 @@ class GalleryDataSource extends EnhancedBaseDataSource {
       gateway: _gateway,
       context: _context,
     );
+    _albums = SqliteGalleryAlbumRepository(
+      gateway: _gateway,
+      context: _context,
+    );
     _query = SqliteGalleryQuery(gateway: _gateway, context: _context);
   }
 
@@ -56,6 +62,7 @@ class GalleryDataSource extends EnhancedBaseDataSource {
   late final GalleryImageRepository _images;
   late final GalleryMetadataRepository _metadata;
   late final GalleryFavoriteTagRepository _favoriteTags;
+  late final GalleryAlbumRepository _albums;
   late final GalleryQuery _query;
 
   @override
@@ -181,6 +188,8 @@ class GalleryDataSource extends EnhancedBaseDataSource {
   Future<void> setImageTags(int imageId, List<String> tags) =>
       _favoriteTags.setImageTags(imageId, tags);
 
+  GalleryAlbumRepository get albums => _albums;
+
   Future<List<int>> searchFullText(String query, {int limit = 100}) =>
       _query.searchFullText(query, limit: limit);
   Future<List<int>> searchByFileName(String query, {int limit = 100}) =>
@@ -208,6 +217,13 @@ class GalleryDataSource extends EnhancedBaseDataSource {
     int? minFileSize,
     int? maxFileSize,
     List<String>? metadataStatuses,
+    String? model,
+    String? sampler,
+    int? minSteps,
+    int? maxSteps,
+    double? minCfgScale,
+    double? maxCfgScale,
+    String? resolution,
     int limit = 100,
   }) => _query.advancedSearch(
     textQuery: textQuery,
@@ -221,6 +237,13 @@ class GalleryDataSource extends EnhancedBaseDataSource {
     minFileSize: minFileSize,
     maxFileSize: maxFileSize,
     metadataStatuses: metadataStatuses,
+    model: model,
+    sampler: sampler,
+    minSteps: minSteps,
+    maxSteps: maxSteps,
+    minCfgScale: minCfgScale,
+    maxCfgScale: maxCfgScale,
+    resolution: resolution,
     limit: limit,
   );
 

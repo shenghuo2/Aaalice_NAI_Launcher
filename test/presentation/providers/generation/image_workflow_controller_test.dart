@@ -98,10 +98,265 @@ void main() {
       final params = container.read(generationParamsNotifierProvider);
 
       expect(workflow.mode, ImageWorkflowMode.base);
-      expect(params.width, equals(832));
-      expect(params.height, equals(1216));
+      // 源图仍在，尺寸跟随源图而不是载入前的 832x1216
+      expect(params.width, equals(768));
+      expect(params.height, equals(1024));
       expect(params.strength, equals(0.63));
       expect(params.noise, equals(0.04));
+    });
+
+    test(
+      'manual strength and noise edits should survive an enhance round-trip',
+      () {
+        final controller = container.read(
+          imageWorkflowControllerProvider.notifier,
+        );
+        final paramsNotifier = container.read(
+          generationParamsNotifierProvider.notifier,
+        );
+
+        paramsNotifier.updateSize(832, 1216, persist: false);
+        paramsNotifier.updateStrength(0.7);
+        paramsNotifier.updateNoise(0.0);
+        controller.replaceSourceImage(
+          _validImageBytes(width: 768, height: 1024),
+          sourceWidth: 768,
+          sourceHeight: 1024,
+        );
+
+        paramsNotifier.updateStrength(0.4);
+        paramsNotifier.updateNoise(0.12);
+
+        controller.enterEnhanceMode();
+        final enhanced = container.read(generationParamsNotifierProvider);
+        expect(enhanced.strength, equals(0.5));
+        expect(enhanced.noise, equals(0.0));
+
+        controller.exitEnhanceMode();
+
+        final params = container.read(generationParamsNotifierProvider);
+        expect(params.strength, equals(0.4));
+        expect(params.noise, equals(0.12));
+      },
+    );
+
+    test(
+      'manual strength and noise edits should survive an upscale round-trip',
+      () {
+        final controller = container.read(
+          imageWorkflowControllerProvider.notifier,
+        );
+        final paramsNotifier = container.read(
+          generationParamsNotifierProvider.notifier,
+        );
+
+        paramsNotifier.updateSize(832, 1216, persist: false);
+        paramsNotifier.updateStrength(0.7);
+        paramsNotifier.updateNoise(0.0);
+        controller.replaceSourceImage(
+          _validImageBytes(width: 768, height: 1024),
+          sourceWidth: 768,
+          sourceHeight: 1024,
+        );
+
+        paramsNotifier.updateStrength(0.4);
+        paramsNotifier.updateNoise(0.12);
+
+        controller.enterUpscaleMode();
+        controller.exitUpscaleMode();
+
+        final params = container.read(generationParamsNotifierProvider);
+        expect(params.strength, equals(0.4));
+        expect(params.noise, equals(0.12));
+      },
+    );
+
+    test(
+      'manual strength and noise edits should survive an inpaint round-trip',
+      () {
+        final controller = container.read(
+          imageWorkflowControllerProvider.notifier,
+        );
+        final paramsNotifier = container.read(
+          generationParamsNotifierProvider.notifier,
+        );
+
+        paramsNotifier.updateSize(832, 1216, persist: false);
+        paramsNotifier.updateStrength(0.7);
+        paramsNotifier.updateNoise(0.0);
+        controller.replaceSourceImage(
+          _validImageBytes(width: 768, height: 1024),
+          sourceWidth: 768,
+          sourceHeight: 1024,
+        );
+
+        paramsNotifier.updateStrength(0.4);
+        paramsNotifier.updateNoise(0.12);
+
+        controller.applyInpaintEditorResult(
+          maskImage: _validMaskBytes(width: 768, height: 1024),
+          focusedInpaintEnabled: false,
+          focusedSelectionRect: null,
+          minimumContextMegaPixels: 88,
+        );
+        controller.enterBaseMode();
+
+        final params = container.read(generationParamsNotifierProvider);
+        expect(params.strength, equals(0.4));
+        expect(params.noise, equals(0.12));
+      },
+    );
+
+    test(
+      'variation strength applied after the source load should survive an enhance round-trip',
+      () {
+        final controller = container.read(
+          imageWorkflowControllerProvider.notifier,
+        );
+        final paramsNotifier = container.read(
+          generationParamsNotifierProvider.notifier,
+        );
+
+        paramsNotifier.updateStrength(0.7);
+        paramsNotifier.updateNoise(0.0);
+        // 变体入口的顺序：先装源图并回到 base，再写入变体强度
+        controller.replaceSourceImage(
+          _validImageBytes(width: 768, height: 1024),
+          sourceWidth: 768,
+          sourceHeight: 1024,
+        );
+        controller.enterBaseMode(clearMask: true);
+        paramsNotifier.updateStrength(0.45);
+        paramsNotifier.updateNoise(0.0);
+
+        controller.enterEnhanceMode();
+        controller.exitEnhanceMode();
+
+        final params = container.read(generationParamsNotifierProvider);
+        expect(params.strength, equals(0.45));
+      },
+    );
+
+    test(
+      'leaving enhance for upscale should consume the enhance entry snapshot',
+      () {
+        final controller = container.read(
+          imageWorkflowControllerProvider.notifier,
+        );
+        final paramsNotifier = container.read(
+          generationParamsNotifierProvider.notifier,
+        );
+
+        paramsNotifier.updateStrength(0.4);
+        paramsNotifier.updateNoise(0.12);
+        paramsNotifier.setSourceImage(
+          _validImageBytes(width: 768, height: 1024),
+        );
+
+        controller.enterEnhanceMode();
+        expect(
+          container.read(imageWorkflowControllerProvider).enhanceEntryStrength,
+          equals(0.4),
+        );
+
+        controller.enterUpscaleMode();
+
+        final workflow = container.read(imageWorkflowControllerProvider);
+        expect(workflow.mode, ImageWorkflowMode.upscale);
+        expect(workflow.enhanceEntryStrength, isNull);
+        expect(workflow.enhanceEntryNoise, isNull);
+
+        final params = container.read(generationParamsNotifierProvider);
+        expect(params.strength, equals(0.4));
+        expect(params.noise, equals(0.12));
+      },
+    );
+
+    test('exitEnhanceMode should keep the loaded source resolution', () {
+      final controller = container.read(
+        imageWorkflowControllerProvider.notifier,
+      );
+      final paramsNotifier = container.read(
+        generationParamsNotifierProvider.notifier,
+      );
+
+      paramsNotifier.updateSize(832, 1216, persist: false);
+      controller.replaceSourceImage(
+        _validImageBytes(width: 768, height: 1024),
+        sourceWidth: 768,
+        sourceHeight: 1024,
+      );
+
+      final loaded = container.read(generationParamsNotifierProvider);
+      final loadedSize = (loaded.width, loaded.height);
+      expect(loadedSize, isNot(equals((832, 1216))));
+
+      controller.enterEnhanceMode();
+      controller.updateEnhanceUpscaleFactor(1.5);
+      final enhanced = container.read(generationParamsNotifierProvider);
+      expect((enhanced.width, enhanced.height), isNot(equals(loadedSize)));
+
+      controller.exitEnhanceMode();
+
+      final params = container.read(generationParamsNotifierProvider);
+      expect((params.width, params.height), equals(loadedSize));
+    });
+
+    test('exitUpscaleMode should keep the loaded source resolution', () {
+      final controller = container.read(
+        imageWorkflowControllerProvider.notifier,
+      );
+      final paramsNotifier = container.read(
+        generationParamsNotifierProvider.notifier,
+      );
+
+      paramsNotifier.updateSize(832, 1216, persist: false);
+      controller.replaceSourceImage(
+        _validImageBytes(width: 768, height: 1024),
+        sourceWidth: 768,
+        sourceHeight: 1024,
+      );
+
+      final loaded = container.read(generationParamsNotifierProvider);
+      final loadedSize = (loaded.width, loaded.height);
+      expect(loadedSize, isNot(equals((832, 1216))));
+
+      controller.enterUpscaleMode();
+      controller.exitUpscaleMode();
+
+      final params = container.read(generationParamsNotifierProvider);
+      expect((params.width, params.height), equals(loadedSize));
+    });
+
+    test('both routes out of enhance should agree on the resulting size', () {
+      final controller = container.read(
+        imageWorkflowControllerProvider.notifier,
+      );
+      final paramsNotifier = container.read(
+        generationParamsNotifierProvider.notifier,
+      );
+
+      paramsNotifier.updateSize(832, 1216, persist: false);
+      controller.replaceSourceImage(
+        _validImageBytes(width: 768, height: 1024),
+        sourceWidth: 768,
+        sourceHeight: 1024,
+      );
+
+      controller.enterEnhanceMode();
+      controller.updateEnhanceUpscaleFactor(1.5);
+      controller.exitEnhanceMode();
+      final viaExit = container.read(generationParamsNotifierProvider);
+
+      controller.enterEnhanceMode();
+      controller.updateEnhanceUpscaleFactor(1.5);
+      controller.enterBaseMode(clearMask: false);
+      final viaBaseMode = container.read(generationParamsNotifierProvider);
+
+      expect((
+        viaExit.width,
+        viaExit.height,
+      ), equals((viaBaseMode.width, viaBaseMode.height)));
     });
 
     test(
@@ -411,8 +666,8 @@ void main() {
           const Rect.fromLTWH(120, 160, 360, 420),
         );
         expect(workflow.minimumContextMegaPixels, equals(120.0));
-        expect(params.width, equals(896));
-        expect(params.height, equals(1344));
+        expect(params.width, equals(1408));
+        expect(params.height, equals(2112));
         expect(params.maskImage, isNotNull);
         expect(params.isOutpaint, isFalse);
         expect(params.action, ImageGenerationAction.infill);
@@ -1120,6 +1375,81 @@ void main() {
         expect(workflow.enhance.noise, equals(0.12));
       },
     );
+
+    test('focused inpaint should not carry over to the next source image', () {
+      final controller = container.read(
+        imageWorkflowControllerProvider.notifier,
+      );
+
+      controller.replaceSourceImage(_validImageBytes(width: 768, height: 1024));
+      controller.applyInpaintEditorResult(
+        maskImage: Uint8List.fromList([9, 9, 9]),
+        focusedInpaintEnabled: true,
+        focusedSelectionRect: const Rect.fromLTWH(120, 160, 240, 320),
+        minimumContextMegaPixels: 96,
+      );
+
+      var workflow = container.read(imageWorkflowControllerProvider);
+      expect(workflow.focusedInpaintEnabled, isTrue);
+      expect(workflow.focusedSelectionRect, isNotNull);
+
+      controller.replaceSourceImage(_validImageBytes(width: 1024, height: 768));
+
+      workflow = container.read(imageWorkflowControllerProvider);
+      expect(workflow.focusedInpaintEnabled, isFalse);
+      expect(workflow.focusedSelectionRect, isNull);
+    });
+
+    test('focused inpaint should reset when leaving inpaint for base mode', () {
+      final controller = container.read(
+        imageWorkflowControllerProvider.notifier,
+      );
+
+      controller.replaceSourceImage(_validImageBytes(width: 768, height: 1024));
+      controller.applyInpaintEditorResult(
+        maskImage: Uint8List.fromList([9, 9, 9]),
+        focusedInpaintEnabled: true,
+        focusedSelectionRect: const Rect.fromLTWH(120, 160, 240, 320),
+        minimumContextMegaPixels: 96,
+      );
+      controller.enterBaseMode(clearMask: true);
+
+      final workflow = container.read(imageWorkflowControllerProvider);
+      expect(workflow.focusedInpaintEnabled, isFalse);
+      expect(workflow.focusedSelectionRect, isNull);
+    });
+
+    test('applyInpaintEditorResult preserves a legal editor output size', () {
+      final controller = container.read(
+        imageWorkflowControllerProvider.notifier,
+      );
+      final source = _validImageBytes(width: 1344, height: 640);
+      final mask = _validMaskBytes(width: 1344, height: 640);
+
+      controller.applyInpaintEditorResult(
+        sourceImage: source,
+        sourceWidth: 1344,
+        sourceHeight: 640,
+        sourceIsOutpaint: false,
+        maskImage: mask,
+        focusedInpaintEnabled: true,
+        focusedSelectionRect: const Rect.fromLTWH(128, 64, 640, 320),
+        minimumContextMegaPixels: 88,
+      );
+
+      final workflow = container.read(imageWorkflowControllerProvider);
+      final params = container.read(generationParamsNotifierProvider);
+      expect((workflow.sourceWidth, workflow.sourceHeight), (1344, 640));
+      expect(
+        (workflow.sourceImageWidth, workflow.sourceImageHeight),
+        (1344, 640),
+      );
+      expect((params.width, params.height), (1344, 640));
+      expect(params.sourceImage, same(source));
+      expect(params.maskImage, same(mask));
+      expect(workflow.focusedInpaintEnabled, isTrue);
+    });
+
   });
 
   group('resolveSeedvr2SwapIoComponents', () {

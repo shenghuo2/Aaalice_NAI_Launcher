@@ -18,8 +18,11 @@ abstract final class WorkspaceSidePanelContract {
         .toDouble();
   }
 
-  static double overlayWidth(double workspaceWidth) =>
-      maximumFor(workspaceWidth);
+  static double overlayWidth(double workspaceWidth, {double? preferredWidth}) {
+    final maximum = maximumFor(workspaceWidth);
+    if (preferredWidth == null) return maximum;
+    return preferredWidth.clamp(0, maximum).toDouble();
+  }
 
   static double constrainedWorkspaceWidth({
     required double workspaceWidth,

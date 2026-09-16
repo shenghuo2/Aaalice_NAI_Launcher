@@ -8,6 +8,9 @@ import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 
 import '../../../../../core/platform/platform_capabilities.dart';
 import '../../../../../core/utils/app_logger.dart';
+import '../../../../adaptive/interaction_policy.dart';
+import '../../../../utils/card_drop_reader.dart';
+import '../../../../widgets/common/app_toast.dart';
 import '../../../../themes/design_tokens.dart';
 import '../../../../widgets/common/decoded_memory_image.dart';
 import '../../../../widgets/common/image_picker_card/_internal/picker_handler.dart';
@@ -97,41 +100,27 @@ class _VibePreviewDropZoneState extends State<VibePreviewDropZone> {
     widget.onThumbnailChanged?.call(resized);
   }
 
+  static const _dropPolicy = CardDropPolicy(allowMultiple: false);
+
   Future<void> _handleDrop(PerformDropEvent event) async {
     setState(() => _isDragging = false);
-
-    for (final item in event.session.items) {
-      final reader = item.dataReader;
-      if (reader == null) continue;
-
-      // 尝试读取图片格式（SimpleFileFormat 需用 getFile 而非 getValue）
-      for (final format in [Formats.png, Formats.jpeg]) {
-        if (reader.canProvide(format)) {
-          final progress = reader.getFile(
-            format,
-            (file) async {
-              try {
-                final bytes = await file.readAll();
-                if (!mounted) return;
-                final resized = await _resizeImage(bytes);
-                widget.onThumbnailChanged?.call(resized);
-              } catch (e) {
-                AppLogger.w(
-                  'Failed to read dropped image: $e',
-                  'VibePreviewDropZone',
-                );
-              }
-            },
-            onError: (e) {
-              AppLogger.w(
-                'Failed to get dropped file: $e',
-                'VibePreviewDropZone',
-              );
-            },
-          );
-          // 关键检查：如果返回 null，说明格式不可用
-          if (progress != null) return;
-        }
+    try {
+      final resources = await readCardDrop(
+        context,
+        event.session.items,
+        policy: _dropPolicy,
+      );
+      final resized = await _resizeImage(resources.single.image.bytes);
+      if (mounted) widget.onThumbnailChanged?.call(resized);
+    } catch (error, stack) {
+      AppLogger.e(
+        'Vibe preview drop failed',
+        error,
+        stack,
+        'VibePreviewDropZone',
+      );
+      if (mounted) {
+        AppToast.error(context, '${context.l10n.common_error}: $error');
       }
     }
   }
@@ -185,6 +174,7 @@ class _VibePreviewDropZoneState extends State<VibePreviewDropZone> {
   @override
   Widget build(BuildContext context) {
     final capabilities = PlatformCapabilities.current;
+    final interactionPolicy = context.interactionPolicy;
     final content = Stack(
       children: [
         // 图片预览
@@ -223,7 +213,7 @@ class _VibePreviewDropZoneState extends State<VibePreviewDropZone> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (capabilities.hasPrecisePointer) ...[
+              if (interactionPolicy.precisePointerAvailable) ...[
                 _buildIconButton(
                   icon: Icons.add,
                   onPressed: _zoomIn,
@@ -258,10 +248,12 @@ class _VibePreviewDropZoneState extends State<VibePreviewDropZone> {
 
     if (!capabilities.supportsExternalFileDrop) return content;
     return DropRegion(
-      formats: Formats.standardFormats,
+      formats: cardDropFormats,
       hitTestBehavior: HitTestBehavior.opaque,
       onDropOver: (event) {
-        if (event.session.allowedOperations.contains(DropOperation.copy)) {
+        if (widget.onThumbnailChanged != null &&
+            event.session.allowedOperations.contains(DropOperation.copy) &&
+            _dropPolicy.accepts(event.session.items)) {
           if (!_isDragging) setState(() => _isDragging = true);
           return DropOperation.copy;
         }
@@ -271,8 +263,7 @@ class _VibePreviewDropZoneState extends State<VibePreviewDropZone> {
         if (_isDragging) setState(() => _isDragging = false);
       },
       onPerformDrop: (event) async {
-        // 不等待读取，避免阻塞系统拖放会话。
-        unawaited(_handleDrop(event));
+        await _handleDrop(event);
       },
       child: content,
     );

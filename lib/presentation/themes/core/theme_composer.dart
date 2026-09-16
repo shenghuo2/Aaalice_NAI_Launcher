@@ -1,14 +1,12 @@
 /// 将颜色、排版、形状和动效四类有效模块组合成完整主题。
-///
-/// 阴影、纹理、玻璃和主题专属分割线模块曾经只声明不消费，现已移除；
-/// 浮层深度与结构分隔统一由语义组件主题控制。
 library;
 
 import 'package:flutter/material.dart';
-import 'package:nai_launcher/core/platform/platform_capabilities.dart';
 import 'package:nai_launcher/presentation/themes/core/input_surface_style.dart';
+import 'package:nai_launcher/presentation/themes/core/layered_surface_style.dart';
 import 'package:nai_launcher/presentation/themes/core/theme_modules.dart';
 import 'package:nai_launcher/presentation/themes/theme_extension.dart';
+import '../prompt_semantic_colors.dart';
 
 /// Composes the effective theme modules into a complete [ThemeData].
 class ThemeComposer {
@@ -39,7 +37,6 @@ class ThemeComposer {
   /// match the fallback scheme to avoid assertion errors.
   ThemeData buildTheme(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
-    final hasTouchInput = PlatformCapabilities.current.hasTouchInput;
 
     // Get the appropriate color scheme and effective brightness
     ColorScheme colorScheme;
@@ -59,6 +56,8 @@ class ThemeComposer {
       effectiveBrightness = colorScheme.brightness;
     }
 
+    colorScheme = resolveLayeredSurfaceColors(colorScheme);
+
     // Build text theme with proper colors applied
     final textTheme = _applyColorToTextTheme(
       typography.textTheme,
@@ -70,21 +69,29 @@ class ThemeComposer {
       brightness: effectiveBrightness,
       colorScheme: colorScheme,
       textTheme: textTheme,
-      extensions: [buildExtension(effectiveBrightness)],
+      primaryTextTheme: _applyColorToTextTheme(
+        textTheme,
+        colorScheme.onPrimary,
+      ),
+      extensions: [
+        buildExtension(effectiveBrightness),
+        PromptSemanticColors.from(colorScheme),
+      ],
 
       // Icon theme - ensures icons have good visibility by default
       // Uses onSurface for proper contrast on surface backgrounds
       iconTheme: IconThemeData(color: colorScheme.onSurface, size: 24),
-      iconButtonTheme: hasTouchInput
-          ? const IconButtonThemeData(
-              style: ButtonStyle(
-                minimumSize: WidgetStatePropertyAll(Size.square(48)),
-              ),
-            )
-          : null,
+      iconButtonTheme: const IconButtonThemeData(
+        style: ButtonStyle(
+          minimumSize: WidgetStatePropertyAll(Size.square(48)),
+        ),
+      ),
       materialTapTargetSize: MaterialTapTargetSize.padded,
+      sliderTheme: SliderThemeData(
+        tickMarkShape: SliderTickMarkShape.noTickMark,
+      ),
 
-      // Apply divider module colors to Flutter's built-in divider
+      // Keep structural separators quiet across all palettes.
       dividerColor: colorScheme.onSurface.withValues(alpha: 0.08),
       dividerTheme: DividerThemeData(
         color: colorScheme.onSurface.withValues(alpha: 0.08),
@@ -94,10 +101,7 @@ class ThemeComposer {
 
       // 普通卡片依靠语义色面区分层级，不叠加常驻描边和阴影。
       cardTheme: CardThemeData(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(shape.largeRadius),
-          side: BorderSide.none,
-        ),
+        shape: _borderless(shape.cardShape),
         elevation: 0,
         color: colorScheme.surfaceContainerLow,
         surfaceTintColor: Colors.transparent,
@@ -108,7 +112,7 @@ class ThemeComposer {
       // 深度层叠风格：按钮配置
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          shape: shape.buttonShape as OutlinedBorder?,
+          shape: _outlined(shape.buttonShape, shape.smallRadius),
           elevation: 0,
           shadowColor: Colors.transparent,
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -117,7 +121,7 @@ class ThemeComposer {
 
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          shape: shape.buttonShape as OutlinedBorder?,
+          shape: _outlined(shape.buttonShape, shape.smallRadius),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         ),
       ),
@@ -126,7 +130,7 @@ class ThemeComposer {
       // 避免页面上出现成排的白色空心框。
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          shape: shape.buttonShape as OutlinedBorder?,
+          shape: _outlined(shape.buttonShape, shape.smallRadius),
           side: BorderSide.none,
           foregroundColor: colorScheme.onSurfaceVariant,
           backgroundColor: colorScheme.surfaceContainerHighest,
@@ -139,7 +143,7 @@ class ThemeComposer {
 
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          shape: shape.buttonShape as OutlinedBorder?,
+          shape: _outlined(shape.buttonShape, shape.smallRadius),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         ),
       ),
@@ -180,7 +184,7 @@ class ThemeComposer {
           error: true,
         ),
         // Explicit contrast keeps placeholders legible in custom themes.
-        hintStyle: TextStyle(color: colorScheme.outline, fontSize: 16),
+        hintStyle: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 16),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 14,
           vertical: 14,
@@ -191,14 +195,12 @@ class ThemeComposer {
       dropdownMenuTheme: DropdownMenuThemeData(
         menuStyle: MenuStyle(
           shape: WidgetStatePropertyAll(
-            RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(shape.menuRadius),
-            ),
+            _outlined(shape.menuShape, shape.menuRadius),
           ),
           backgroundColor: WidgetStatePropertyAll(
             colorScheme.surfaceContainerHigh,
           ),
-          elevation: const WidgetStatePropertyAll(0), // 使用自定义阴影
+          elevation: const WidgetStatePropertyAll(8),
           shadowColor: WidgetStatePropertyAll(
             Colors.black.withValues(alpha: 0.15),
           ),
@@ -207,9 +209,7 @@ class ThemeComposer {
       ),
 
       popupMenuTheme: PopupMenuThemeData(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(shape.menuRadius),
-        ),
+        shape: shape.menuShape,
         color: colorScheme.surfaceContainerHigh,
         elevation: 8,
         shadowColor: Colors.black.withValues(alpha: 0.15),
@@ -219,9 +219,7 @@ class ThemeComposer {
       menuTheme: MenuThemeData(
         style: MenuStyle(
           shape: WidgetStatePropertyAll(
-            RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(shape.menuRadius),
-            ),
+            _outlined(shape.menuShape, shape.menuRadius),
           ),
           backgroundColor: WidgetStatePropertyAll(
             colorScheme.surfaceContainerHigh,
@@ -279,7 +277,7 @@ class ThemeComposer {
           borderRadius: BorderRadius.circular(shape.smallRadius),
         ),
         side: BorderSide.none,
-        backgroundColor: colorScheme.surfaceContainerHighest,
+        backgroundColor: Colors.transparent,
         selectedColor: colorScheme.primaryContainer,
         surfaceTintColor: Colors.transparent,
         // 两项都必须从 textTheme 派生：Chip 对 labelStyle 是"有则取之"而非
@@ -313,7 +311,7 @@ class ThemeComposer {
             ),
           ],
         ),
-        textStyle: TextStyle(
+        textStyle: textTheme.bodySmall?.copyWith(
           color: effectiveBrightness == Brightness.dark
               ? colorScheme.onSurface
               : colorScheme.onInverseSurface,
@@ -348,9 +346,15 @@ class ThemeComposer {
       dividerThickness: 1,
       useDivider: true,
       controlRadius: shape.smallRadius,
-      cardRadius: shape.largeRadius,
+      cardRadius: _extractBorderRadius(
+        shape.cardShape,
+        fallbackRadius: shape.largeRadius,
+      ).topLeft.x,
       dialogRadius: shape.mediumRadius,
-      menuRadius: shape.menuRadius,
+      menuRadius: _extractBorderRadius(
+        shape.menuShape,
+        fallbackRadius: shape.menuRadius,
+      ).topLeft.x,
       fastDuration: motion.fastDuration,
       normalDuration: motion.normalDuration,
       slowDuration: motion.slowDuration,
@@ -366,12 +370,30 @@ class ThemeComposer {
   }
 
   /// Extracts BorderRadius from a ShapeBorder.
-  BorderRadius _extractBorderRadius(ShapeBorder shapeBorder) {
+  BorderRadius _extractBorderRadius(
+    ShapeBorder shapeBorder, {
+    double? fallbackRadius,
+  }) {
     if (shapeBorder is RoundedRectangleBorder) {
-      return shapeBorder.borderRadius as BorderRadius;
+      return shapeBorder.borderRadius.resolve(TextDirection.ltr);
     }
-    // Default fallback
-    return BorderRadius.circular(shape.smallRadius);
+    return BorderRadius.circular(fallbackRadius ?? shape.smallRadius);
+  }
+
+  /// 保留 preset 声明的卡片几何，只去掉常驻描边。
+  ShapeBorder _borderless(ShapeBorder shapeBorder) {
+    if (shapeBorder is OutlinedBorder) {
+      return shapeBorder.copyWith(side: BorderSide.none);
+    }
+    return shapeBorder;
+  }
+
+  /// 按钮和菜单槽位只接受 [OutlinedBorder]，其余形状退回同尺度圆角矩形。
+  OutlinedBorder _outlined(ShapeBorder shapeBorder, double fallbackRadius) {
+    if (shapeBorder is OutlinedBorder) return shapeBorder;
+    return RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(fallbackRadius),
+    );
   }
 }
 
@@ -389,6 +411,8 @@ class _ModularPageTransitionBuilder extends PageTransitionsBuilder {
     Animation<double> secondaryAnimation,
     Widget child,
   ) {
+    if (MediaQuery.disableAnimationsOf(context)) return child;
+
     final curvedAnimation = CurvedAnimation(
       parent: animation,
       curve: motion.enterCurve,

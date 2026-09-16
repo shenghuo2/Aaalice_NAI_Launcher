@@ -1,19 +1,29 @@
-import 'dart:async';
+import '../../../selection/card_selection_scope.dart';
+import '../../../widgets/common/image_card_frame.dart';
 import 'dart:math' as math;
-import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+
+import '../../../widgets/common/image_viewport_surface.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/platform/platform_capabilities.dart';
 import '../../../../core/utils/localization_extension.dart';
 import '../../../../data/models/vibe/vibe_library_entry.dart';
 import '../../../../data/services/vibe_library_storage_service.dart';
-import '../../../widgets/common/animated_favorite_button.dart';
-import '../../../widgets/common/card_hover_preview_controller.dart';
+import '../../../adaptive/interaction_policy.dart';
+import '../../../widgets/app_branch_visibility.dart';
+import '../../../widgets/common/card_action_buttons.dart';
+import '../../../widgets/common/image_card_actions.dart';
+import '../../../widgets/common/image_card_action_region.dart';
+import '../../../widgets/common/image_hover_preview_controller.dart';
+import '../../../widgets/common/library_card_badges.dart';
+import 'vibe_hover_preview.dart';
 
-enum _VibeCardAction { select, favorite, send, export, edit, delete }
+/// Vibe 图像卡片统一采用 4:5 纵向比例，为缩略图和底部参数保留稳定空间。
+const double vibeCardAspectRatio = 4 / 5;
+
+double computeVibeCardHeight(double width) => width / vibeCardAspectRatio;
 
 /// 统一 Vibe 卡片组件
 ///
@@ -27,14 +37,16 @@ class VibeCard extends ConsumerStatefulWidget {
   final VoidCallback? onTap;
   final VoidCallback? onDoubleTap;
   final VoidCallback? onLongPress;
-  final void Function(TapDownDetails)? onSecondaryTapDown;
   final bool isSelected;
+  final bool selectionMode;
   final bool showFavoriteIndicator;
-  final VoidCallback? onFavoriteToggle;
-  final VoidCallback? onSendToGeneration;
-  final VoidCallback? onExport;
-  final VoidCallback? onEdit;
-  final VoidCallback? onDelete;
+  final String? categoryLabel;
+  final ImageCardCallback? onFavoriteToggle;
+  final ImageCardCallback? onSendToGeneration;
+  final ImageCardCallback? onExport;
+  final ImageCardCallback? onEdit;
+  final ImageCardCallback? onClassify;
+  final ImageCardCallback? onDelete;
 
   const VibeCard({
     super.key,
@@ -44,13 +56,15 @@ class VibeCard extends ConsumerStatefulWidget {
     this.onTap,
     this.onDoubleTap,
     this.onLongPress,
-    this.onSecondaryTapDown,
     this.isSelected = false,
+    this.selectionMode = false,
     this.showFavoriteIndicator = true,
+    this.categoryLabel,
     this.onFavoriteToggle,
     this.onSendToGeneration,
     this.onExport,
     this.onEdit,
+    this.onClassify,
     this.onDelete,
   });
 
@@ -61,14 +75,17 @@ class VibeCard extends ConsumerStatefulWidget {
 class _VibeCardState extends ConsumerState<VibeCard>
     with SingleTickerProviderStateMixin {
   bool _isHovered = false;
+  bool _isFocused = false;
+  bool _branchVisible = true;
   Uint8List? _lazyThumbnailData;
   Future<void>? _thumbnailLoadFuture;
   Future<VibeLibraryDetailData?>? _hoverDetailFuture;
-  final CardHoverPreviewController _hoverController =
-      CardHoverPreviewController();
+  final ImageHoverPreviewController _hoverController =
+      ImageHoverPreviewController();
   final LayerLink _layerLink = LayerLink();
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
+  bool _disableAnimations = false;
 
   @override
   void initState() {
@@ -81,19 +98,52 @@ class _VibeCardState extends ConsumerState<VibeCard>
       parent: _animationController,
       curve: Curves.easeOutCubic,
     );
-    _loadThumbnailIfNeeded();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final wasVisible = _branchVisible;
+    _branchVisible = AppBranchVisibility.of(context);
+    if (_branchVisible) {
+      _loadThumbnailIfNeeded();
+    } else if (wasVisible) {
+      ref
+          .read(vibeLibraryStorageServiceProvider)
+          .cancelPendingDisplayThumbnailLoads();
+    }
+
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    if (disableAnimations == _disableAnimations) return;
+
+    _disableAnimations = disableAnimations;
+    _animationController.duration = disableAnimations
+        ? Duration.zero
+        : const Duration(milliseconds: 300);
+    if (disableAnimations) {
+      _animationController.stop();
+      _animationController.value = _isInteractive && widget.entry.isBundle
+          ? 1
+          : 0;
+    }
   }
 
   @override
   void didUpdateWidget(covariant VibeCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.selectionMode) _hoverController.dismiss();
     if (oldWidget.entry.id != widget.entry.id) {
       _hoverController.dismissFor(oldWidget.entry.id);
       _lazyThumbnailData = null;
       _thumbnailLoadFuture = null;
       _hoverDetailFuture = null;
-      _isHovered = false;
+      _animationController.value = 0;
       _loadThumbnailIfNeeded();
+      if (_isInteractive) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _isInteractive) _scheduleHoverPreview();
+        });
+      }
       return;
     }
 
@@ -110,13 +160,21 @@ class _VibeCardState extends ConsumerState<VibeCard>
   }
 
   void _loadThumbnailIfNeeded() {
-    if (_thumbnailData != null || _thumbnailLoadFuture != null) {
+    if (!_branchVisible ||
+        _thumbnailData != null ||
+        _thumbnailLoadFuture != null) {
       return;
     }
 
     final entryId = widget.entry.id;
-    _thumbnailLoadFuture = ref
-        .read(vibeLibraryStorageServiceProvider)
+    final storage = ref.read(vibeLibraryStorageServiceProvider);
+    // 内存缓存同步命中时直接赋值，让卡片重建后的首帧就有图
+    final cached = storage.peekDisplayThumbnail(entryId);
+    if (cached != null && cached.isNotEmpty) {
+      _lazyThumbnailData = cached;
+      return;
+    }
+    _thumbnailLoadFuture = storage
         .getDisplayThumbnail(entryId)
         .then((thumbnail) {
           if (!mounted || widget.entry.id != entryId) {
@@ -134,23 +192,46 @@ class _VibeCardState extends ConsumerState<VibeCard>
         });
   }
 
-  void _onHoverEnter(PointerEvent event) {
-    setState(() => _isHovered = true);
-    if (widget.entry.isBundle) {
-      _animationController.forward();
-    }
-    _scheduleHoverPreview();
+  bool get _isInteractive => _isHovered || _isFocused;
+
+  void _onHoverEnter(PointerEvent event) => _setHovered(true);
+
+  void _onHoverExit(PointerEvent event) => _setHovered(false);
+
+  void _setHovered(bool value) {
+    if (_isHovered == value) return;
+    final wasInteractive = _isInteractive;
+    setState(() => _isHovered = value);
+    _syncInteractiveState(wasInteractive);
   }
 
-  void _onHoverExit(PointerEvent event) {
-    setState(() => _isHovered = false);
+  void _onFocusChange(bool value) {
+    if (_isFocused == value) return;
+    final wasInteractive = _isInteractive;
+    setState(() => _isFocused = value);
+    _syncInteractiveState(wasInteractive);
+  }
+
+  void _syncInteractiveState(bool wasInteractive) {
+    if (wasInteractive == _isInteractive) return;
     if (widget.entry.isBundle) {
-      _animationController.reverse();
+      if (_disableAnimations) {
+        _animationController.value = _isInteractive ? 1 : 0;
+      } else if (_isInteractive) {
+        _animationController.forward();
+      } else {
+        _animationController.reverse();
+      }
     }
-    _hoverController.dismissFor(widget.entry.id);
+    if (_isInteractive) {
+      _scheduleHoverPreview();
+    } else {
+      _hoverController.dismissFor(widget.entry.id);
+    }
   }
 
   void _scheduleHoverPreview() {
+    if (widget.selectionMode) return;
     final renderObject = context.findRenderObject();
     if (renderObject is! RenderBox || !renderObject.hasSize) return;
     final viewport = MediaQuery.sizeOf(context);
@@ -168,7 +249,8 @@ class _VibeCardState extends ConsumerState<VibeCard>
       layerLink: _layerLink,
       targetRect: targetRect,
       previewSize: previewSize,
-      builder: (_) => _VibeHoverPreview(
+      verticalAlignment: ImageHoverPreviewVerticalAlignment.targetTop,
+      builder: (_) => VibeHoverPreview(
         displayEntry: widget.entry,
         detailFuture: _hoverDetailFuture!,
         fallbackImage: _thumbnailData,
@@ -189,40 +271,69 @@ class _VibeCardState extends ConsumerState<VibeCard>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => ImageCardActionRegion(
+    resourceId: widget.entry.id,
+    actions: _buildActions(),
+    onMenuOpened: () => _hoverController.dismiss(),
+    builder: _buildCard,
+  );
+
+  Widget _buildCard(BuildContext context, List<ImageCardAction> actions) {
     final cardHeight = widget.height ?? widget.width;
     final colorScheme = Theme.of(context).colorScheme;
-    final isTouch = PlatformCapabilities.current.hasTouchInput;
+    final isTouch = context.interactionPolicy.usesTouchActionMenu;
+    final onAddToAgent = ImageCardActionScope.maybeOf(context)?.onAddToAgent;
+    final hasTouchActions =
+        isTouch &&
+        !widget.selectionMode &&
+        (widget.onLongPress != null ||
+            (widget.showFavoriteIndicator && widget.onFavoriteToggle != null) ||
+            onAddToAgent != null ||
+            widget.onSendToGeneration != null ||
+            widget.onExport != null ||
+            widget.onEdit != null ||
+            widget.onClassify != null ||
+            widget.onDelete != null);
 
     return CompositedTransformTarget(
       link: _layerLink,
-      child: MouseRegion(
-        onEnter: _onHoverEnter,
-        onExit: _onHoverExit,
-        cursor: SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: widget.onTap,
-          onDoubleTap: widget.onDoubleTap,
-          onLongPress: widget.onLongPress,
-          onSecondaryTapDown: widget.onSecondaryTapDown,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            curve: Curves.easeOut,
-            width: widget.width,
-            height: cardHeight,
-            transform: Matrix4.identity()
-              ..translateByDouble(0, _isHovered ? -2 : 0, 0, 1),
-            transformAlignment: Alignment.center,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: _buildShadows(colorScheme),
-            ),
-            foregroundDecoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: _buildBorder(colorScheme),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
+      child: FocusableActionDetector(
+        onFocusChange: _onFocusChange,
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.enter): ActivateIntent(),
+          SingleActivator(LogicalKeyboardKey.space): ActivateIntent(),
+        },
+        actions: {
+          ActivateIntent: CallbackAction<ActivateIntent>(
+            onInvoke: (_) {
+              (widget.onTap ?? widget.onDoubleTap)?.call();
+              return null;
+            },
+          ),
+        },
+        child: MouseRegion(
+          onEnter: _onHoverEnter,
+          onExit: _onHoverExit,
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            onTap: () {
+              if (CardSelectionScope.handleTap(context, widget.entry.id)) {
+                return;
+              }
+              widget.onTap?.call();
+            },
+            onDoubleTap: widget.onDoubleTap,
+            onLongPress: widget.onLongPress,
+
+            // 必须抬起后弹菜单：按住时 push 会合成 touch 取消事件，令 DraggableWidget 整批重建闪烁
+            child: ImageCardFrame(
+              hovered: _isInteractive,
+              focused: _isFocused,
+              selected: widget.isSelected,
+              width: widget.width,
+              height: cardHeight,
+              hoverScaleEnabled: false,
+              hoverLift: 2,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -239,29 +350,53 @@ class _VibeCardState extends ConsumerState<VibeCard>
                   // 信息层
                   _buildInfoOverlay(),
 
-                  // 精确指针保留悬浮收藏；触屏合并到常驻操作菜单。
-                  if (widget.showFavoriteIndicator && !isTouch)
-                    _buildFavoriteButton(),
-
                   // Bundle 数量标识
                   if (widget.entry.isBundle) _buildBundleBadge(),
+
+                  if (widget.categoryLabel case final categoryLabel?)
+                    Positioned(
+                      top: 8,
+                      left: 8,
+                      child: LibraryCardCategoryBadge(
+                        key: ValueKey('vibe-card-category-${widget.entry.id}'),
+                        icon: Icons.category_outlined,
+                        label: categoryLabel,
+                        maxWidth: math.max(
+                          80,
+                          widget.width -
+                              (hasTouchActions
+                                  ? 68
+                                  : widget.entry.isFavorite && !isTouch
+                                  ? 48
+                                  : 16),
+                        ),
+                      ),
+                    ),
+
+                  if (!isTouch &&
+                      !_isInteractive &&
+                      !widget.isSelected &&
+                      widget.showFavoriteIndicator &&
+                      widget.entry.isFavorite)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: LibraryCardFavoriteBadge(
+                        key: ValueKey(
+                          'vibe-card-favorite-badge-${widget.entry.id}',
+                        ),
+                        semanticLabel: context.l10n.common_favorite,
+                      ),
+                    ),
 
                   // 选中状态
                   if (widget.isSelected) _buildSelectionOverlay(colorScheme),
 
                   // 操作按钮
-                  if (isTouch &&
-                      !widget.isSelected &&
-                      (widget.onLongPress != null ||
-                          (widget.showFavoriteIndicator &&
-                              widget.onFavoriteToggle != null) ||
-                          widget.onSendToGeneration != null ||
-                          widget.onExport != null ||
-                          widget.onEdit != null ||
-                          widget.onDelete != null))
-                    _buildTouchActionMenu()
-                  else if (_isHovered && !widget.isSelected)
-                    _buildActionButtons(),
+                  if (hasTouchActions)
+                    _buildActionButtons(actions)
+                  else if (_isInteractive && !widget.selectionMode)
+                    _buildActionButtons(actions),
                 ],
               ),
             ),
@@ -271,29 +406,13 @@ class _VibeCardState extends ConsumerState<VibeCard>
     );
   }
 
-  Border? _buildBorder(ColorScheme colorScheme) {
-    if (!widget.isSelected) return null;
-    return Border.all(color: colorScheme.primary, width: 1);
-  }
-
-  List<BoxShadow> _buildShadows(ColorScheme colorScheme) {
-    if (!_isHovered) return const [];
-    return [
-      BoxShadow(
-        color: colorScheme.shadow.withValues(alpha: 0.12),
-        blurRadius: 10,
-        offset: const Offset(0, 4),
-      ),
-    ];
-  }
-
   Widget _buildMainContent() {
     final pixelRatio = MediaQuery.of(context).devicePixelRatio;
     final cacheWidth = (widget.width * pixelRatio).toInt();
     final cacheHeight = ((widget.height ?? widget.width) * pixelRatio).toInt();
 
     return Container(
-      color: Colors.black.withValues(alpha: 0.05),
+      color: ImageViewportSurface.background,
       child: _thumbnailData != null
           ? Image.memory(
               _thumbnailData!,
@@ -303,7 +422,7 @@ class _VibeCardState extends ConsumerState<VibeCard>
               gaplessPlayback: true,
               errorBuilder: (context, error, stackTrace) {
                 return Container(
-                  color: Colors.grey[300],
+                  color: ImageViewportSurface.background,
                   child: const Center(
                     child: Icon(
                       Icons.broken_image,
@@ -315,12 +434,12 @@ class _VibeCardState extends ConsumerState<VibeCard>
               },
             )
           : Container(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              color: ImageViewportSurface.background,
               child: Center(
                 child: Icon(
                   widget.entry.isBundle ? Icons.style : Icons.auto_fix_high,
                   size: 32,
-                  color: Theme.of(context).colorScheme.outline,
+                  color: ImageViewportSurface.mutedForeground,
                 ),
               ),
             ),
@@ -406,12 +525,14 @@ class _VibeCardState extends ConsumerState<VibeCard>
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(6),
-          child: Image.memory(
-            preview,
-            fit: BoxFit.cover,
-            cacheWidth: cacheWidth,
-            cacheHeight: cacheHeight,
-            gaplessPlayback: true,
+          child: ImageViewportSurface(
+            child: Image.memory(
+              preview,
+              fit: BoxFit.cover,
+              cacheWidth: cacheWidth,
+              cacheHeight: cacheHeight,
+              gaplessPlayback: true,
+            ),
           ),
         ),
       ),
@@ -476,18 +597,20 @@ class _VibeCardState extends ConsumerState<VibeCard>
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(6),
-            child: Image.memory(
-              preview,
-              fit: BoxFit.cover,
-              cacheWidth: cacheWidth,
-              cacheHeight: cacheHeight,
-              gaplessPlayback: true,
-              errorBuilder: (context, error, stackTrace) => Container(
-                color: Colors.grey[800],
-                child: const Icon(
-                  Icons.image_not_supported,
-                  color: Colors.grey,
-                  size: 20,
+            child: ImageViewportSurface(
+              child: Image.memory(
+                preview,
+                fit: BoxFit.cover,
+                cacheWidth: cacheWidth,
+                cacheHeight: cacheHeight,
+                gaplessPlayback: true,
+                errorBuilder: (context, error, stackTrace) => Container(
+                  color: ImageViewportSurface.background,
+                  child: const Icon(
+                    Icons.image_not_supported,
+                    color: Colors.grey,
+                    size: 20,
+                  ),
                 ),
               ),
             ),
@@ -590,26 +713,9 @@ class _VibeCardState extends ConsumerState<VibeCard>
     );
   }
 
-  Widget _buildFavoriteButton() {
-    final isFavorite = widget.entry.isFavorite;
-    final showButton = _isHovered || isFavorite;
-
-    if (!showButton) return const SizedBox.shrink();
-
-    return Positioned(
-      top: 8,
-      right: 8,
-      child: CardFavoriteButton(
-        isFavorite: isFavorite,
-        onToggle: widget.onFavoriteToggle,
-        size: 18,
-      ),
-    );
-  }
-
   Widget _buildBundleBadge() {
     return Positioned(
-      top: 8,
+      top: widget.categoryLabel == null ? 8 : 38,
       left: 8,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -668,688 +774,99 @@ class _VibeCardState extends ConsumerState<VibeCard>
     );
   }
 
-  Widget _buildTouchActionMenu() {
-    final l10n = context.l10n;
-    return Positioned(
-      top: 4,
-      right: 4,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.42),
-          borderRadius: BorderRadius.circular(24),
+  List<ImageCardAction> _buildActions() {
+    final onAddToAgent = ImageCardActionScope.maybeOf(context)?.onAddToAgent;
+    return [
+      if (widget.showFavoriteIndicator && widget.onFavoriteToggle != null)
+        ImageCardAction(
+          id: ImageCardActionId.favorite,
+          key: ValueKey('vibe-card-favorite-${widget.entry.id}'),
+          icon: widget.entry.isFavorite
+              ? Icons.favorite_rounded
+              : Icons.favorite_border_rounded,
+          iconColor: widget.entry.isFavorite
+              ? Theme.of(context).colorScheme.error
+              : null,
+          label: widget.entry.isFavorite
+              ? context.l10n.common_unfavorite
+              : context.l10n.common_favorite,
+          invoke: widget.onFavoriteToggle!,
         ),
-        child: PopupMenuButton<_VibeCardAction>(
-          tooltip: l10n.common_moreActions,
-          constraints: const BoxConstraints(minWidth: 210),
-          icon: const Icon(Icons.more_vert_rounded, color: Colors.white),
-          onSelected: (action) {
-            switch (action) {
-              case _VibeCardAction.select:
-                widget.onLongPress?.call();
-              case _VibeCardAction.favorite:
-                widget.onFavoriteToggle?.call();
-              case _VibeCardAction.send:
-                widget.onSendToGeneration?.call();
-              case _VibeCardAction.export:
-                widget.onExport?.call();
-              case _VibeCardAction.edit:
-                widget.onEdit?.call();
-              case _VibeCardAction.delete:
-                widget.onDelete?.call();
-            }
-          },
-          itemBuilder: (context) => [
-            if (widget.onLongPress != null)
-              PopupMenuItem(
-                value: _VibeCardAction.select,
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.check_circle_outline),
-                  title: Text(l10n.common_select),
-                ),
-              ),
-            if (widget.showFavoriteIndicator && widget.onFavoriteToggle != null)
-              PopupMenuItem(
-                value: _VibeCardAction.favorite,
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    widget.entry.isFavorite
-                        ? Icons.favorite
-                        : Icons.favorite_border,
-                    color: widget.entry.isFavorite ? Colors.redAccent : null,
-                  ),
-                  title: Text(
-                    widget.entry.isFavorite
-                        ? l10n.common_unfavorite
-                        : l10n.common_favorite,
-                  ),
-                ),
-              ),
-            if (widget.onSendToGeneration != null)
-              PopupMenuItem(
-                value: _VibeCardAction.send,
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.send),
-                  title: Text(l10n.vibe_reuseButton),
-                ),
-              ),
-            if (widget.onExport != null)
-              PopupMenuItem(
-                value: _VibeCardAction.export,
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.download),
-                  title: Text(l10n.common_export),
-                ),
-              ),
-            if (widget.onEdit != null)
-              PopupMenuItem(
-                value: _VibeCardAction.edit,
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.edit),
-                  title: Text(l10n.common_edit),
-                ),
-              ),
-            if (widget.onDelete != null)
-              PopupMenuItem(
-                value: _VibeCardAction.delete,
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(
-                    Icons.delete,
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-                  title: Text(l10n.common_delete),
-                ),
-              ),
-          ],
+      if (onAddToAgent != null)
+        ImageCardAction(
+          id: ImageCardActionId.addToAgent,
+          key: ValueKey('vibe-card-agent-${widget.entry.id}'),
+          icon: Icons.auto_awesome_outlined,
+          label: context.l10n.agentChat_addResource,
+          invoke: onAddToAgent,
         ),
-      ),
-    );
-  }
+      if (widget.onSendToGeneration != null)
+        ImageCardAction(
+          id: ImageCardActionId.sendToGeneration,
+          key: ValueKey('vibe-card-send-${widget.entry.id}'),
+          icon: Icons.send,
+          label:
+              '${context.l10n.vibe_reuseButton}\n${context.l10n.vibe_shiftReplaceHint}',
+          invoke: widget.onSendToGeneration!,
+        ),
+      if (widget.onExport != null)
+        ImageCardAction(
+          id: ImageCardActionId.export,
+          key: ValueKey('vibe-card-export-${widget.entry.id}'),
+          icon: Icons.download,
+          label: context.l10n.common_export,
+          invoke: widget.onExport!,
+        ),
+      if (widget.onEdit != null)
+        ImageCardAction(
+          id: ImageCardActionId.edit,
+          key: ValueKey('vibe-card-edit-${widget.entry.id}'),
+          icon: Icons.edit,
+          label: context.l10n.common_edit,
+          invoke: widget.onEdit!,
+        ),
+      if (widget.onDelete != null)
+        ImageCardAction(
+          isDanger: true,
+          id: ImageCardActionId.delete,
+          key: ValueKey('vibe-card-delete-${widget.entry.id}'),
+          icon: Icons.delete,
+          label: context.l10n.common_delete,
+          iconColor: Theme.of(context).colorScheme.error,
+          invoke: widget.onDelete!,
+        ),
 
-  Widget _buildActionButtons() {
-    return Positioned(
-      top: 8,
-      right: 8,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (widget.onSendToGeneration != null)
-            _ActionButton(
-              icon: Icons.send,
-              tooltip: context.l10n.vibe_reuseButton,
-              modifierHint: context.l10n.vibe_shiftReplaceHint,
-              onTap: widget.onSendToGeneration,
-            ),
-          if (widget.onExport != null)
-            _ActionButton(
-              icon: Icons.download,
-              tooltip: context.l10n.common_export,
-              onTap: widget.onExport,
-            ),
-          if (widget.onEdit != null)
-            _ActionButton(
-              icon: Icons.edit,
-              tooltip: context.l10n.common_edit,
-              onTap: widget.onEdit,
-            ),
-          if (widget.onDelete != null)
-            _ActionButton(
-              icon: Icons.delete,
-              tooltip: context.l10n.common_delete,
-              onTap: widget.onDelete,
-              isDanger: true,
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _VibeHoverPreview extends StatefulWidget {
-  const _VibeHoverPreview({
-    required this.displayEntry,
-    required this.detailFuture,
-    required this.fallbackImage,
-    required this.maxWidth,
-    required this.maxHeight,
-  });
-
-  final VibeLibraryEntry displayEntry;
-  final Future<VibeLibraryDetailData?> detailFuture;
-  final Uint8List? fallbackImage;
-  final double maxWidth;
-  final double maxHeight;
-
-  @override
-  State<_VibeHoverPreview> createState() => _VibeHoverPreviewState();
-}
-
-class _VibeHoverPreviewState extends State<_VibeHoverPreview> {
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<VibeLibraryDetailData?>(
-      future: widget.detailFuture,
-      builder: (context, snapshot) {
-        final detail = snapshot.data;
-        final entry = detail?.entry ?? widget.displayEntry;
-        final image = _bestPreviewImage(detail, widget.fallbackImage);
-        return _VibeHoverPreviewContent(
-          entry: entry,
-          image: image,
-          maxWidth: widget.maxWidth,
-          maxHeight: widget.maxHeight,
-          isLoading: snapshot.connectionState != ConnectionState.done,
-        );
-      },
-    );
-  }
-
-  Uint8List? _bestPreviewImage(
-    VibeLibraryDetailData? detail,
-    Uint8List? fallback,
-  ) {
-    final entry = detail?.entry;
-    final candidates = <Uint8List?>[
-      entry?.rawImageData,
-      if (detail != null && detail.bundleVibes.isNotEmpty)
-        detail.bundleVibes.first.rawImageData,
-      entry?.thumbnail,
-      entry?.vibeThumbnail,
-      if (detail != null && detail.bundleVibes.isNotEmpty)
-        detail.bundleVibes.first.thumbnail,
-      fallback,
+      if (widget.onClassify != null)
+        ImageCardAction(
+          id: ImageCardActionId.classify,
+          icon: Icons.drive_file_move_outline,
+          label: context.l10n.vibeLibrary_moveToCategory,
+          invoke: widget.onClassify!,
+        ),
+      if (widget.onLongPress != null)
+        ImageCardAction(
+          id: ImageCardActionId.select,
+          icon: Icons.check_circle_outline,
+          label: context.l10n.common_multiSelect,
+          invoke: widget.onLongPress!,
+          showOnHover: false,
+        ),
     ];
-    for (final candidate in candidates) {
-      if (candidate != null && candidate.isNotEmpty) return candidate;
-    }
-    return null;
-  }
-}
-
-class _VibeHoverPreviewContent extends StatefulWidget {
-  const _VibeHoverPreviewContent({
-    required this.entry,
-    required this.image,
-    required this.maxWidth,
-    required this.maxHeight,
-    required this.isLoading,
-  });
-
-  final VibeLibraryEntry entry;
-  final Uint8List? image;
-  final double maxWidth;
-  final double maxHeight;
-  final bool isLoading;
-
-  @override
-  State<_VibeHoverPreviewContent> createState() =>
-      _VibeHoverPreviewContentState();
-}
-
-class _VibeHoverPreviewContentState extends State<_VibeHoverPreviewContent> {
-  Future<double>? _aspectRatioFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _resolveAspectRatio();
   }
 
-  @override
-  void didUpdateWidget(covariant _VibeHoverPreviewContent oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.image, widget.image)) _resolveAspectRatio();
-  }
-
-  void _resolveAspectRatio() {
-    final image = widget.image;
-    _aspectRatioFuture = image == null ? Future.value(1) : _decodeRatio(image);
-  }
-
-  Future<double> _decodeRatio(Uint8List bytes) async {
-    ui.Codec? codec;
-    ui.FrameInfo? frame;
-    try {
-      codec = await ui.instantiateImageCodec(bytes);
-      frame = await codec.getNextFrame();
-      final width = frame.image.width;
-      final height = frame.image.height;
-      return width > 0 && height > 0 ? width / height : 1;
-    } catch (_) {
-      return 1;
-    } finally {
-      frame?.image.dispose();
-      codec?.dispose();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<double>(
-      future: _aspectRatioFuture,
-      initialData: 1,
-      builder: (context, snapshot) =>
-          _buildCard(context, (snapshot.data ?? 1).clamp(0.1, 10).toDouble()),
-    );
-  }
-
-  Widget _buildCard(BuildContext context, double aspectRatio) {
-    final theme = Theme.of(context);
-    final entry = widget.entry;
-    final hasTags = entry.tags.isNotEmpty;
-    final metadataHeight = hasTags ? 124.0 : 92.0;
-    final imageSize = computeVibeHoverImageSize(
-      aspectRatio: aspectRatio,
-      maxWidth: widget.maxWidth,
-      maxHeight: math.max(80, widget.maxHeight - metadataHeight - 4),
-    );
-    final cardWidth = imageSize.width;
-    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
-
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        key: const ValueKey('vibe-hover-preview'),
-        width: cardWidth,
-        constraints: BoxConstraints(maxHeight: widget.maxHeight),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.32),
-              blurRadius: 28,
-              offset: const Offset(0, 14),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              SizedBox(
-                key: const ValueKey('vibe-hover-media'),
-                width: cardWidth,
-                height: imageSize.height,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    ColoredBox(color: theme.colorScheme.surfaceContainerLowest),
-                    if (widget.image != null)
-                      Image.memory(
-                        widget.image!,
-                        fit: BoxFit.contain,
-                        cacheWidth: (cardWidth * pixelRatio).round(),
-                        gaplessPlayback: true,
-                        errorBuilder: (_, __, ___) => _imageFallback(theme),
-                      )
-                    else
-                      _imageFallback(theme),
-                    if (widget.isLoading)
-                      Positioned(
-                        top: 10,
-                        right: 10,
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white.withValues(alpha: 0.9),
-                          ),
-                        ),
-                      ),
-                    if (entry.isBundle)
-                      Positioned(
-                        left: 10,
-                        top: 10,
-                        child: _HoverBadge(
-                          icon: Icons.layers_outlined,
-                          label: '${entry.bundledVibeCount}',
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            entry.displayName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        if (entry.encodingModel case final model?) ...[
-                          const SizedBox(width: 8),
-                          _HoverBadge(
-                            icon: Icons.memory_outlined,
-                            label: model,
-                            subtle: true,
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _VibeHoverStat(
-                            icon: Icons.tune,
-                            label: context.l10n.vibe_strength,
-                            value: '${(entry.strength * 100).round()}%',
-                          ),
-                        ),
-                        Expanded(
-                          child: _VibeHoverStat(
-                            icon: Icons.auto_awesome_outlined,
-                            label: context.l10n.vibe_infoExtracted,
-                            value: '${(entry.infoExtracted * 100).round()}%',
-                          ),
-                        ),
-                        Expanded(
-                          child: _VibeHoverStat(
-                            icon: Icons.history,
-                            label: context.l10n.vibeDetail_usageCount,
-                            value: '${entry.usedCount}',
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (hasTags) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        entry.tags.take(6).map((tag) => '#$tag').join('  '),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          height: 1.35,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
+  Widget _buildActionButtons(List<ImageCardAction> actions) => Positioned(
+    top: 8,
+    right: 8,
+    child: CardActionButtons(
+      menuKey: ValueKey('vibe-card-more-${widget.entry.id}'),
+      touchShortcuts: const {ImageCardActionId.favorite},
+      visible: true,
+      direction: Axis.vertical,
+      buttons: actions,
+      availableSize: Size(
+        widget.width - 16,
+        (widget.height ?? widget.width) - 16,
       ),
-    );
-  }
-
-  Widget _imageFallback(ThemeData theme) {
-    return ColoredBox(
-      color: theme.colorScheme.surfaceContainerHighest,
-      child: Center(
-        child: Icon(
-          widget.entry.isBundle ? Icons.style : Icons.auto_fix_high,
-          size: 46,
-          color: theme.colorScheme.outline,
-        ),
-      ),
-    );
-  }
-}
-
-@visibleForTesting
-Size computeVibeHoverPreviewBounds(Size viewport) {
-  return Size(
-    math.min(380.0, math.max(0.0, viewport.width - 20)),
-    math.min(680.0, math.max(0.0, viewport.height - 20)),
+    ),
   );
-}
-
-@visibleForTesting
-Size computeVibeHoverImageSize({
-  required double aspectRatio,
-  required double maxWidth,
-  required double maxHeight,
-}) {
-  final safeRatio = aspectRatio > 0 ? aspectRatio : 1.0;
-  final width = safeRatio >= 1
-      ? maxWidth
-      : math.min(maxWidth, math.max(240.0, maxHeight * safeRatio));
-  final naturalHeight = width / safeRatio;
-  final height = math.min(maxHeight, math.max(120.0, naturalHeight));
-  return Size(width, height);
-}
-
-class _VibeHoverStat extends StatelessWidget {
-  const _VibeHoverStat({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: theme.colorScheme.onSurfaceVariant),
-        const SizedBox(width: 5),
-        Flexible(
-          child: Text(
-            '$label $value',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              fontFeatures: const [ui.FontFeature.tabularFigures()],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _HoverBadge extends StatelessWidget {
-  const _HoverBadge({
-    required this.icon,
-    required this.label,
-    this.subtle = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool subtle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final foreground = subtle
-        ? theme.colorScheme.onSurfaceVariant
-        : Colors.white;
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 150),
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-      decoration: BoxDecoration(
-        color: subtle
-            ? theme.colorScheme.surfaceContainerHighest
-            : Colors.black.withValues(alpha: 0.62),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: foreground),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: foreground,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 操作按钮组件
-class _ActionButton extends StatefulWidget {
-  final IconData icon;
-  final String tooltip;
-
-  /// 修饰键提示文本，如 "Shift+点击 替换"
-  final String? modifierHint;
-  final VoidCallback? onTap;
-  final bool isDanger;
-
-  const _ActionButton({
-    required this.icon,
-    required this.tooltip,
-    this.modifierHint,
-    this.onTap,
-    this.isDanger = false,
-  });
-
-  @override
-  State<_ActionButton> createState() => _ActionButtonState();
-}
-
-class _ActionButtonState extends State<_ActionButton> {
-  bool _isHovered = false;
-  bool _showTooltip = false;
-  Timer? _tooltipTimer;
-
-  void _onEnter() {
-    setState(() {
-      _isHovered = true;
-      _showTooltip = true;
-    });
-    _tooltipTimer?.cancel();
-  }
-
-  void _onExit() {
-    setState(() => _isHovered = false);
-    _tooltipTimer?.cancel();
-    _tooltipTimer = Timer(const Duration(milliseconds: 100), () {
-      if (mounted) setState(() => _showTooltip = false);
-    });
-  }
-
-  @override
-  void dispose() {
-    _tooltipTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final backgroundColor = widget.isDanger
-        ? (_isHovered
-              ? colorScheme.error
-              : colorScheme.error.withValues(alpha: 0.9))
-        : (_isHovered ? Colors.white : Colors.white.withValues(alpha: 0.9));
-    final iconColor = widget.isDanger
-        ? colorScheme.onError
-        : (_isHovered ? Colors.black : Colors.black.withValues(alpha: 0.65));
-
-    return MouseRegion(
-      onEnter: (_) => _onEnter(),
-      onExit: (_) => _onExit(),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            // 按钮主体
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              curve: Curves.easeOut,
-              width: 32,
-              height: 32,
-              margin: const EdgeInsets.only(bottom: 4),
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: backgroundColor,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(
-                      alpha: _isHovered ? 0.28 : 0.2,
-                    ),
-                    blurRadius: _isHovered ? 8 : 4,
-                    offset: Offset(0, _isHovered ? 3 : 2),
-                  ),
-                ],
-              ),
-              child: Icon(widget.icon, size: 16, color: iconColor),
-            ),
-            // 自定义 Tooltip
-            if (_showTooltip)
-              Positioned(
-                right: 40,
-                top: 4,
-                child: AnimatedOpacity(
-                  opacity: _showTooltip ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 100),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.88),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          widget.tooltip,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        if (widget.modifierHint != null) ...[
-                          const SizedBox(height: 2),
-                          Text(
-                            widget.modifierHint!,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.7),
-                              fontSize: 10,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
 }

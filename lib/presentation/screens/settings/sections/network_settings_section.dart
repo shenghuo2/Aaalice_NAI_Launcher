@@ -1,3 +1,4 @@
+import 'package:nai_launcher/presentation/widgets/common/horizontal_action_strip.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -136,10 +137,7 @@ class NetworkSettingsSectionState
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                           child: Align(
                             alignment: Alignment.centerLeft,
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: selector,
-                            ),
+                            child: HorizontalActionStrip(child: selector),
                           ),
                         ),
                       ],
@@ -164,6 +162,7 @@ class NetworkSettingsSectionState
                             border: const OutlineInputBorder(),
                             isDense: true,
                           ),
+                          textInputAction: TextInputAction.next,
                           onChanged: (_) => _saveManualProxy(),
                         );
                         final portInput = ThemedInput(
@@ -175,10 +174,12 @@ class NetworkSettingsSectionState
                             isDense: true,
                           ),
                           keyboardType: TextInputType.number,
+                          textInputAction: TextInputAction.done,
                           inputFormatters: [
                             FilteringTextInputFormatter.digitsOnly,
                           ],
                           onChanged: (_) => _saveManualProxy(),
+                          onSubmitted: (_) => _saveManualProxy(),
                         );
 
                         if (constraints.maxWidth < 440) {

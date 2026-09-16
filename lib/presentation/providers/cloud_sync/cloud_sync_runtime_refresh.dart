@@ -4,9 +4,11 @@ import '../../../core/autocomplete/autocomplete_settings.dart' as autocomplete;
 import '../../agent_settings/providers/agent_settings_provider.dart';
 import '../../prompt_assistant/providers/prompt_assistant_config_provider.dart';
 import '../composition_guide_provider.dart';
+import '../dlss_provider.dart';
 import '../fixed_tags_provider.dart';
 import '../font_provider.dart';
 import '../font_scale_provider.dart';
+import '../gallery_album_provider.dart';
 import '../generation/generation_settings_notifiers.dart';
 import '../history_click_behavior_provider.dart';
 import '../image_save_settings_provider.dart';
@@ -18,11 +20,9 @@ import '../online_gallery_output_filter_provider.dart';
 import '../online_gallery_prompt_tag_settings_provider.dart';
 import '../precise_ref_library_provider.dart';
 import '../preview_transparency_provider.dart';
-import '../prompt_config_provider.dart';
 import '../prompt_regex_rules_provider.dart';
 import '../quality_preset_provider.dart';
 import '../quick_tag_cloud_gallery_provider.dart';
-import '../random_mode_provider.dart';
 import '../random_preset_provider.dart';
 import '../share_image_settings_provider.dart';
 import '../shortcuts_provider.dart';
@@ -33,15 +33,20 @@ import '../theme_provider.dart';
 import '../uc_preset_provider.dart';
 import '../vibe_library_category_provider.dart';
 import '../vibe_library_provider.dart';
+import '../watermark_settings_provider.dart';
 
 Future<void> refreshCloudSyncRuntime(Ref ref, Set<String> adapterIds) async {
   if (adapterIds.contains('portable-settings')) {
+    if (ref.exists(dlssProvider)) {
+      ref.read(dlssProvider).refreshPreferences();
+    }
     ref.read(fixedTagsNotifierProvider.notifier).refresh();
     ref.read(tagLibraryPageNotifierProvider.notifier).refresh();
     ref.invalidate(themeNotifierProvider);
     ref.invalidate(fontNotifierProvider);
     ref.invalidate(fontScaleNotifierProvider);
     ref.invalidate(localeNotifierProvider);
+    ref.invalidate(watermarkSettingsProvider);
     ref.invalidate(historyClickBehaviorNotifierProvider);
     ref.invalidate(previewTransparencyNotifierProvider);
     ref.invalidate(compositionGuideNotifierProvider);
@@ -51,7 +56,6 @@ Future<void> refreshCloudSyncRuntime(Ref ref, Set<String> adapterIds) async {
     ref.invalidate(onlineGalleryOutputFilterProvider);
     ref.invalidate(onlineGalleryPromptTagSettingsProvider);
     ref.invalidate(promptRegexRulesProvider);
-    ref.invalidate(randomModeNotifierProvider);
     ref.invalidate(autocomplete.autocompleteSettingsProvider);
     ref.invalidate(autoFormatPromptSettingsProvider);
     ref.invalidate(highlightEmphasisSettingsProvider);
@@ -81,9 +85,6 @@ Future<void> refreshCloudSyncRuntime(Ref ref, Set<String> adapterIds) async {
   if (adapterIds.contains('random-presets')) {
     ref.invalidate(randomPresetNotifierProvider);
   }
-  if (adapterIds.contains('prompt-presets')) {
-    ref.invalidate(promptConfigNotifierProvider);
-  }
   if (adapterIds.contains('shortcuts')) {
     ref.invalidate(shortcutConfigNotifierProvider);
   }
@@ -99,6 +100,9 @@ Future<void> refreshCloudSyncRuntime(Ref ref, Set<String> adapterIds) async {
   }
   if (adapterIds.contains('online-gallery-favorites')) {
     ref.invalidate(onlineGalleryLocalFavoritesProvider);
+  }
+  if (adapterIds.contains('gallery-albums')) {
+    await ref.read(galleryAlbumNotifierProvider.notifier).refresh();
   }
   if (adapterIds.contains('vibe-library')) {
     await ref.read(vibeLibraryNotifierProvider.notifier).reload();

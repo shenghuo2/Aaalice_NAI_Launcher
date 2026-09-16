@@ -1,10 +1,13 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
+import 'package:synchronized/synchronized.dart';
 
 import '../../core/utils/app_logger.dart';
 import '../../data/models/vibe/vibe_library_category.dart';
 import '../../data/services/vibe_library_storage_service.dart';
 import 'category_operation_error.dart';
+import '../../data/models/gallery/gallery_tree_drop_slot.dart';
+import '../../data/models/gallery/library_tree_order.dart';
 
 part 'vibe_library_category_provider.freezed.dart';
 part 'vibe_library_category_provider.g.dart';
@@ -56,6 +59,7 @@ class VibeLibraryCategoryState with _$VibeLibraryCategoryState {
 /// Vibe 库分类状态管理
 @riverpod
 class VibeLibraryCategoryNotifier extends _$VibeLibraryCategoryNotifier {
+  final _categoryMoveLock = Lock();
   VibeLibraryStorageService get _storageService =>
       ref.read(vibeLibraryStorageServiceProvider);
 
@@ -331,58 +335,36 @@ class VibeLibraryCategoryNotifier extends _$VibeLibraryCategoryNotifier {
     }
   }
 
-  /// 重新排序分类
-  Future<void> reorderCategories(
-    String? parentId,
-    int oldIndex,
-    int newIndex,
-  ) async {
-    try {
-      // 获取同级分类
-      final siblings = parentId == null
-          ? state.categories.rootCategories.sortedByOrder()
-          : state.categories.getChildren(parentId).sortedByOrder();
-
-      if (oldIndex < 0 ||
-          oldIndex >= siblings.length ||
-          newIndex < 0 ||
-          newIndex >= siblings.length) {
-        return;
-      }
-
-      // 重新排序
-      final reordered = [...siblings];
-      final item = reordered.removeAt(oldIndex);
-      reordered.insert(newIndex, item);
-
-      // 更新排序顺序
-      final updatedSiblings = reordered.asMap().entries.map((e) {
-        return e.value.copyWith(sortOrder: e.key);
-      }).toList();
-
-      // 保存到存储
-      for (final category in updatedSiblings) {
-        await _storageService.saveCategory(category);
-      }
-
-      // 更新完整分类列表
-      final updatedCategories = state.categories.map((c) {
-        final updated = updatedSiblings.where((s) => s.id == c.id).firstOrNull;
-        return updated ?? c;
-      }).toList();
-
-      state = state.copyWith(categories: updatedCategories);
-      AppLogger.d('Vibe库分类重新排序完成');
-    } catch (e, stackTrace) {
-      AppLogger.e('重新排序Vibe库分类失败', e, stackTrace);
-      state = state.copyWith(
-        error: CategoryOperationError(
-          CategoryOperationErrorCode.reorderFailed,
-          details: e.toString(),
-        ),
-      );
-    }
-  }
+  Future<bool> moveCategoryToSlot(
+    String categoryId,
+    String targetId,
+    GalleryTreeDropSlot slot, {
+    Map<String, int>? displayOrder,
+  }) => _categoryMoveLock.synchronized(() async {
+    final storage = _storageService;
+    final working = applyLibraryDisplayOrder(
+      state.categories,
+      displayOrder,
+      idOf: (c) => c.id,
+      withOrder: (c, order) => c.copyWith(sortOrder: order),
+    );
+    final updated = moveLibraryTreeItem(
+      working,
+      sourceId: categoryId,
+      targetId: targetId,
+      slot: slot,
+      flat: true,
+      idOf: (c) => c.id,
+      parentOf: (c) => c.parentId,
+      orderOf: (c) => c.sortOrder,
+      withPlacement: (c, parent, order) =>
+          c.copyWith(parentId: parent, sortOrder: order),
+    );
+    if (updated == null) return false;
+    await storage.saveCategories(updated);
+    state = state.copyWith(categories: updated, error: null);
+    return true;
+  });
 
   /// 清除错误
   void clearError() {

@@ -6,7 +6,9 @@ import 'package:uuid/uuid.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/utils/nai_resolution_adapter.dart';
 import '../../../data/models/gallery/nai_image_metadata.dart';
+import '../../../data/models/fixed_tag/fixed_tag_usage_snapshot.dart';
 import '../../../data/models/image/image_stream_chunk.dart';
+import '../../../data/models/image/image_postprocess_phase.dart';
 
 enum GeneratedImageKind { completed, failedStreamSnapshot }
 
@@ -86,6 +88,8 @@ class GeneratedImage {
   final int height;
   final GeneratedImageKind kind;
   final NaiImageMetadata? metadata;
+  final FixedTagUsageSnapshot? fixedTagUsageSnapshot;
+  final String? postprocessError;
 
   /// Source captured for a supported current-session transformation.
   ///
@@ -107,6 +111,8 @@ class GeneratedImage {
     DateTime? createdAt,
     this.kind = GeneratedImageKind.completed,
     this.metadata,
+    this.fixedTagUsageSnapshot,
+    this.postprocessError,
     this.comparisonSource,
     this.preserveOriginalBytesOnSave = false,
     this.filePath,
@@ -119,6 +125,8 @@ class GeneratedImage {
     required int height,
     GeneratedImageKind kind = GeneratedImageKind.completed,
     NaiImageMetadata? metadata,
+    FixedTagUsageSnapshot? fixedTagUsageSnapshot,
+    String? postprocessError,
     ImageComparisonSource? comparisonSource,
     bool preserveOriginalBytesOnSave = false,
   }) {
@@ -130,6 +138,8 @@ class GeneratedImage {
       height: encodedSize?.$2 ?? height,
       kind: kind,
       metadata: metadata,
+      fixedTagUsageSnapshot: fixedTagUsageSnapshot,
+      postprocessError: postprocessError,
       comparisonSource: comparisonSource,
       preserveOriginalBytesOnSave: preserveOriginalBytesOnSave,
     );
@@ -145,9 +155,11 @@ class GeneratedImage {
       createdAt: createdAt,
       kind: kind,
       metadata: metadata,
+      fixedTagUsageSnapshot: fixedTagUsageSnapshot,
       comparisonSource: comparisonSource,
       preserveOriginalBytesOnSave: preserveOriginalBytesOnSave,
       filePath: path,
+      postprocessError: postprocessError,
     );
   }
 
@@ -193,6 +205,7 @@ class StreamPreviewSlot {
     required this.progress,
     this.previewBytes,
     this.focusedPreviewPlacement,
+    this.postprocessPhase,
   });
 
   final int imageNumber;
@@ -200,6 +213,7 @@ class StreamPreviewSlot {
   final double progress;
   final Uint8List? previewBytes;
   final FocusedStreamPreviewPlacement? focusedPreviewPlacement;
+  final ImagePostprocessPhase? postprocessPhase;
 
   StreamPreviewSlot copyWith({
     int? imageNumber,
@@ -208,11 +222,13 @@ class StreamPreviewSlot {
     Uint8List? previewBytes,
     FocusedStreamPreviewPlacement? focusedPreviewPlacement,
     bool clearFocusedPreviewPlacement = false,
+    ImagePostprocessPhase? postprocessPhase,
   }) {
     return StreamPreviewSlot(
       imageNumber: imageNumber ?? this.imageNumber,
       totalImages: totalImages ?? this.totalImages,
       progress: progress ?? this.progress,
+      postprocessPhase: postprocessPhase ?? this.postprocessPhase,
       previewBytes: previewBytes ?? this.previewBytes,
       focusedPreviewPlacement: clearFocusedPreviewPlacement
           ? null
@@ -240,6 +256,9 @@ class ImageGenerationState {
   /// 当前请求中的流式预览槽位（用于一次请求多张时稳定历史位置）。
   final List<StreamPreviewSlot> streamPreviewSlots;
 
+  /// 已完成图像在自己首帧到达前继续显示的最后一帧预览，按图像 id 索引。
+  final Map<String, StreamPreviewFrame> completionPreviews;
+
   /// 当前批次的分辨率（点击生成时捕获）
   final int? batchWidth;
   final int? batchHeight;
@@ -250,6 +269,9 @@ class ImageGenerationState {
   /// 中央区域显示图像的分辨率
   final int? displayWidth;
   final int? displayHeight;
+
+  /// 一次生成调用是否仍在进行：从点击到整条调用结算（含读盘、编码、跑批与收尾）。
+  final bool isSubmitting;
 
   const ImageGenerationState({
     this.status = GenerationStatus.idle,
@@ -262,11 +284,13 @@ class ImageGenerationState {
     this.streamPreview,
     this.focusedPreviewPlacement,
     this.streamPreviewSlots = const [],
+    this.completionPreviews = const {},
     this.batchWidth,
     this.batchHeight,
     this.displayImages = const [],
     this.displayWidth,
     this.displayHeight,
+    this.isSubmitting = false,
   });
 
   ImageGenerationState copyWith({
@@ -280,6 +304,7 @@ class ImageGenerationState {
     Uint8List? streamPreview,
     FocusedStreamPreviewPlacement? focusedPreviewPlacement,
     List<StreamPreviewSlot>? streamPreviewSlots,
+    Map<String, StreamPreviewFrame>? completionPreviews,
     bool clearStreamPreview = false,
     bool clearFocusedPreviewPlacement = false,
     int? batchWidth,
@@ -287,6 +312,7 @@ class ImageGenerationState {
     List<GeneratedImage>? displayImages,
     int? displayWidth,
     int? displayHeight,
+    bool? isSubmitting,
   }) {
     return ImageGenerationState(
       status: status ?? this.status,
@@ -306,15 +332,24 @@ class ImageGenerationState {
       streamPreviewSlots: clearStreamPreview
           ? (streamPreviewSlots ?? const [])
           : (streamPreviewSlots ?? this.streamPreviewSlots),
+      completionPreviews: completionPreviews ?? this.completionPreviews,
       batchWidth: batchWidth ?? this.batchWidth,
       batchHeight: batchHeight ?? this.batchHeight,
       displayImages: displayImages ?? this.displayImages,
       displayWidth: displayWidth ?? this.displayWidth,
       displayHeight: displayHeight ?? this.displayHeight,
+      isSubmitting: isSubmitting ?? this.isSubmitting,
     );
   }
 
   bool get isGenerating => status == GenerationStatus.generating;
+
+  /// 已提交但还没开跑：读盘、Vibe 编码、随机词都发生在这一段。
+  bool get isPreparing => isSubmitting && !isGenerating;
+
+  /// 忙区间，用于挡住重复提交、队列启动与 Krita 插队。
+  bool get isBusy => isSubmitting || isGenerating;
+
   bool get hasImages => displayImages.isNotEmpty;
 
   /// 是否有流式预览图像

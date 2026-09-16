@@ -1,44 +1,52 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
+import 'package:nai_launcher/l10n/app_localizations.dart';
+import 'package:nai_launcher/core/windowing/agent_chat_code_block.dart';
 import 'package:nai_launcher/core/windowing/agent_chat_shared_widgets.dart';
 
 void main() {
-  testWidgets(
-    'context indicator stays visible before and after usage arrives',
-    (tester) async {
-      Widget build({int? used, int? window, bool compacting = false}) =>
-          MaterialApp(
-            home: Scaffold(
-              body: Align(
-                alignment: Alignment.bottomRight,
-                child: AgentChatContextIndicator(
-                  usedTokens: used,
-                  contextWindow: window,
-                  usageLabel: used == null ? 'Unavailable' : '$used / $window',
-                  unavailableLabel: 'Unavailable',
-                  compactingLabel: 'Compacting',
-                  compacting: compacting,
-                ),
-              ),
-            ),
-          );
-
-      await tester.pumpWidget(build());
-      expect(
-        find.byKey(const ValueKey('agent-chat-context-indicator')),
-        findsOneWidget,
-      );
-      expect(find.text('Unavailable'), findsOneWidget);
-
-      await tester.pumpWidget(build(used: 96000, window: 128000));
-      expect(find.text('96000 / 128000'), findsOneWidget);
-
+  testWidgets('code blocks copy whitespace and update while streaming', (
+    tester,
+  ) async {
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    for (final code in ['  first\n', '  first\n\nsecond\n']) {
       await tester.pumpWidget(
-        build(used: 128000, window: 128000, compacting: true),
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: AgentChatMarkdownContent(
+              text: '```dart\n$code```',
+              touchOptimized: true,
+            ),
+          ),
+        ),
       );
-      expect(find.text('Compacting'), findsOneWidget);
-    },
-  );
+      expect(find.byType(AgentChatCodeBlock), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.copy_rounded));
+      await tester.pump();
+      expect(copied, code);
+      expect(tester.takeException(), isNull);
+    }
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 5));
+  });
 
   testWidgets('approval surface keeps both actions usable on a narrow phone', (
     tester,

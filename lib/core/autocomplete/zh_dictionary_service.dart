@@ -49,13 +49,21 @@ class ZhDictionaryService extends ChangeNotifier
   String? _metadataPath;
   ZhDictionaryState _state = const ZhDictionaryState();
   ZhDictionarySource? _pendingUpdateSource;
+  Future<void>? _initialization;
 
   ZhDictionaryDownloader get _downloader => ZhDictionaryDownloader(dio: _dio);
 
   ZhDictionaryState get state => _state;
 
-  Future<void> initialize() async {
-    if (_databasePath != null) return;
+  // A resolved path does not mean the installed database has been validated.
+  // Startup lookups and editor hints must wait for the same installed state.
+  Future<void> initialize() =>
+      _initialization ??= _initialize().onError<Object>((error, stack) {
+        _initialization = null;
+        Error.throwWithStackTrace(error, stack);
+      });
+
+  Future<void> _initialize() async {
     final appDir = await _applicationSupportDirectory();
     final directory = Directory(p.join(appDir.path, 'autocomplete', 'ffdkj'));
     await directory.create(recursive: true);
@@ -264,6 +272,50 @@ class ZhDictionaryService extends ChangeNotifier
     return result;
   }
 
+  /// Resolves a narrowly scoped missing-character fallback for plain words.
+  ///
+  /// Structured tags, artist names, identifiers and multi-word tags are
+  /// deliberately excluded because an approximate match could silently change
+  /// their meaning. Substitutions and extra characters are also rejected so a
+  /// valid word absent from the dictionary cannot become another word such as
+  /// `fewer` -> `fever`. A match is accepted only when exactly one dictionary
+  /// tag with the same first character can restore one omitted character.
+  Future<Map<String, String>> resolveFuzzy(List<String> canonicalTags) async {
+    if (canonicalTags.isEmpty || !await _openIfInstalled()) return const {};
+    final result = <String, String>{};
+    for (final source in canonicalTags) {
+      final tag = _normalize(source);
+      if (tag.length < 5 ||
+          tag.length > 12 ||
+          !RegExp(r'^[a-z]+$').hasMatch(tag)) {
+        continue;
+      }
+      final prefix = tag.substring(0, 2);
+      final prefixUpperBound =
+          '${prefix[0]}'
+          '${String.fromCharCode(prefix.codeUnitAt(1) + 1)}';
+      final rows = await _database!.rawQuery(
+        '''
+        SELECT name, cn_name FROM tags
+        WHERE name >= ? AND name < ?
+          AND LENGTH(name) = ?
+          AND cn_name IS NOT NULL
+          AND TRIM(cn_name) <> ''
+        ORDER BY post_count DESC
+        ''',
+        [prefix, prefixUpperBound, tag.length + 1],
+      );
+      final matches = rows.where(
+        (row) => _isSingleMissingCharacterAway(tag, row['name'] as String),
+      );
+      final unique = matches.take(2).toList(growable: false);
+      if (unique.length == 1) {
+        result[source] = (unique.single['cn_name'] as String).trim();
+      }
+    }
+    return result;
+  }
+
   @override
   Future<List<CompletionCandidate>> search(CompletionQuery query) async {
     if (!query.isChinese || query.token.trim().isEmpty) return const [];
@@ -408,6 +460,26 @@ class ZhDictionaryService extends ChangeNotifier
 
   static String _normalize(String value) =>
       value.trim().toLowerCase().replaceAll(' ', '_');
+
+  static bool _isSingleMissingCharacterAway(String source, String candidate) {
+    if (candidate.length != source.length + 1) return false;
+    var sourceIndex = 0;
+    var candidateIndex = 0;
+    var skipped = false;
+    while (sourceIndex < source.length && candidateIndex < candidate.length) {
+      if (source.codeUnitAt(sourceIndex) ==
+          candidate.codeUnitAt(candidateIndex)) {
+        sourceIndex++;
+        candidateIndex++;
+      } else if (skipped) {
+        return false;
+      } else {
+        skipped = true;
+        candidateIndex++;
+      }
+    }
+    return true;
+  }
 
   static String _escapeLike(String value) => value
       .replaceAll('\\', '\\\\')

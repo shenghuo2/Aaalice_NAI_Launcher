@@ -3,12 +3,12 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import '../../../widgets/common/model_family_icon.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 
 import '../../../../core/platform/platform_capabilities.dart';
 import '../../../../data/models/character/character_prompt.dart';
-import '../../../../data/models/tag_library/tag_library_entry.dart';
 import '../../../../data/services/local_onnx_model_service.dart';
 import '../../../providers/generation/generation_panel_expansion_provider.dart';
 import '../../../providers/generation/generation_params_notifier.dart';
@@ -16,9 +16,11 @@ import '../../../providers/reverse_prompt_provider.dart';
 import '../../../providers/tag_library_page_provider.dart';
 import '../../../prompt_assistant/providers/prompt_assistant_history_provider.dart';
 import '../../../utils/asset_protection_guard.dart';
-import '../../../utils/dropped_file_reader.dart';
+import '../../../utils/card_drop_reader.dart';
+import '../../../widgets/common/image_card_action.dart';
 import '../../../../core/utils/localization_extension.dart';
 import '../../../widgets/common/app_toast.dart';
+import '../../../widgets/common/translated_tag_text.dart';
 import '../../../widgets/common/collapsible_image_panel.dart';
 import '../../../widgets/common/decoded_memory_image.dart';
 import '../../../widgets/common/themed_divider.dart';
@@ -171,10 +173,11 @@ class _ReversePromptPanelState extends ConsumerState<ReversePromptPanel> {
     if (!PlatformCapabilities.current.supportsExternalFileDrop) return button;
 
     return DropRegion(
-      formats: Formats.standardFormats,
+      formats: cardDropFormats,
       hitTestBehavior: HitTestBehavior.opaque,
       onDropOver: (event) {
-        if (event.session.allowedOperations.contains(DropOperation.copy)) {
+        if (event.session.allowedOperations.contains(DropOperation.copy) &&
+            const CardDropPolicy().accepts(event.session.items)) {
           if (!_isDragging) {
             setState(() => _isDragging = true);
           }
@@ -189,7 +192,7 @@ class _ReversePromptPanelState extends ConsumerState<ReversePromptPanel> {
       },
       onPerformDrop: (event) async {
         setState(() => _isDragging = false);
-        unawaited(_handleDrop(event));
+        await _handleDrop(event);
       },
       child: button,
     );
@@ -300,7 +303,7 @@ class _ReversePromptPanelState extends ConsumerState<ReversePromptPanel> {
                   .map(
                     (model) => DropdownMenuItem(
                       value: model.path,
-                      child: Text(model.name),
+                      child: ModelNameLabel(modelId: model.name),
                     ),
                   )
                   .toList(),
@@ -403,10 +406,10 @@ class _ReversePromptPanelState extends ConsumerState<ReversePromptPanel> {
             ],
           ),
           const SizedBox(height: 6),
-          Text(
+          TranslatedPromptText(
             selectedCharacter.prompt,
+            selectable: false,
             maxLines: 2,
-            overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -440,11 +443,9 @@ class _ReversePromptPanelState extends ConsumerState<ReversePromptPanel> {
   }
 
   Future<void> _selectReverseCharacterFromLibrary() async {
-    final entry = await showDialog<TagLibraryEntry>(
-      context: context,
-      builder: (context) => TagLibraryPickerDialog(
-        title: context.l10n.reversePrompt_selectReplacementTargetTitle,
-      ),
+    final entry = await TagLibraryPickerDialog.show(
+      context,
+      title: context.l10n.reversePrompt_selectReplacementTargetTitle,
     );
 
     if (entry == null) {
@@ -553,25 +554,27 @@ class _ReversePromptPanelState extends ConsumerState<ReversePromptPanel> {
   }
 
   Future<void> _handleDrop(PerformDropEvent event) async {
-    var handledAny = false;
-    for (final item in event.session.items) {
-      final reader = item.dataReader;
-      if (reader == null) {
-        continue;
+    final notifier = ref.read(reversePromptProvider.notifier);
+    try {
+      final resources = await readCardDrop(context, event.session.items);
+      final result = await ImageCardBatchResult.execute(resources, (
+        resource,
+      ) async {
+        final file = resource.image;
+        await notifier.addImage(file.bytes, name: file.fileName);
+      });
+      if (result.failures.isNotEmpty) {
+        throw StateError(
+          '${result.failures.length}/${resources.length}: ${result.failures.values.map((failure) => failure.error).join('; ')}',
+        );
       }
-      final file = await DroppedFileReader.read(
-        reader,
-        logTag: 'ReversePromptDrop',
-      );
-      if (file != null) {
-        handledAny = true;
-        await ref
-            .read(reversePromptProvider.notifier)
-            .addImage(file.bytes, name: file.fileName);
+    } catch (error) {
+      if (mounted) {
+        AppToast.error(
+          context,
+          '${context.l10n.reversePrompt_dropUnreadable}: $error',
+        );
       }
-    }
-    if (!handledAny && mounted) {
-      AppToast.warning(context, context.l10n.reversePrompt_dropUnreadable);
     }
   }
 
@@ -652,7 +655,7 @@ class _PromptOutputBlock extends StatelessWidget {
         children: [
           Text(title, style: theme.textTheme.labelMedium),
           const SizedBox(height: 4),
-          SelectableText(text, style: theme.textTheme.bodySmall),
+          TranslatedPromptText(text, style: theme.textTheme.bodySmall),
         ],
       ),
     );

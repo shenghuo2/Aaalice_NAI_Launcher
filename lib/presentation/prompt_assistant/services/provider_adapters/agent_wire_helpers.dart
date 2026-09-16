@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -93,14 +94,15 @@ AgentWireError agentWireErrorFrom(Object error, ProviderConfig provider) {
     }
     final status = error.response?.statusCode;
     final detail = _extractDetail(error.response?.data) ?? error.message ?? '';
-    final transient = status == 429 ||
+    final transient =
+        status == 429 ||
         (status != null && status >= 500) ||
         error.type == DioExceptionType.receiveTimeout ||
         error.type == DioExceptionType.connectionTimeout ||
         error.type == DioExceptionType.connectionError;
     final lowered = detail.toLowerCase();
-    final overloaded = lowered.contains('overloaded') ||
-        lowered.contains('rate limit');
+    final overloaded =
+        lowered.contains('overloaded') || lowered.contains('rate limit');
     return AgentWireError(
       'LLM request failed'
       '${status != null ? ': HTTP $status' : ''}'
@@ -109,8 +111,10 @@ AgentWireError agentWireErrorFrom(Object error, ProviderConfig provider) {
       transient: transient || overloaded,
     );
   }
-  return AgentWireError('LLM request failed: provider=${provider.name}: '
-      '${error.toString()}');
+  return AgentWireError(
+    'LLM request failed: provider=${provider.name}: '
+    '${error.toString()}',
+  );
 }
 
 String? _extractDetail(dynamic data) {
@@ -158,18 +162,114 @@ Stream<Uint8List> agentStreamPost(
   required Object payload,
   required Map<String, dynamic> headers,
   required CancelToken cancelToken,
+  Duration? receiveTimeout = const Duration(minutes: 5),
 }) async* {
-  final response = await dio.post<ResponseBody>(
-    endpoint,
-    data: payload,
-    options: Options(
-      headers: headers,
-      responseType: ResponseType.stream,
-      sendTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(minutes: 5),
-    ),
-    cancelToken: cancelToken,
-  );
+  var receivedBytes = false;
+  for (var attempt = 0; ; attempt++) {
+    if (cancelToken.cancelError case final error?) throw error;
+    try {
+      await for (final chunk in _agentStreamPostOnce(
+        dio,
+        endpoint: endpoint,
+        payload: payload,
+        headers: headers,
+        cancelToken: cancelToken,
+        receiveTimeout: receiveTimeout,
+      )) {
+        if (chunk.isNotEmpty) receivedBytes = true;
+        yield chunk;
+      }
+      return;
+    } on Object catch (error) {
+      if (cancelToken.cancelError case final cancelled?) throw cancelled;
+      // Never replay a stream after bytes have reached its parser, even if
+      // those bytes have not yet produced a visible text or tool event.
+      if (receivedBytes ||
+          attempt >= 2 ||
+          !_isTransientConnectionError(error)) {
+        rethrow;
+      }
+      await _waitForRetry(
+        Duration(milliseconds: 500 * (1 << attempt)),
+        cancelToken,
+      );
+    }
+  }
+}
+
+bool _isTransientConnectionError(Object error) {
+  if (error is DioException) {
+    if (error.response != null) return false;
+    return switch (error.type) {
+      DioExceptionType.connectionTimeout ||
+      DioExceptionType.sendTimeout ||
+      DioExceptionType.receiveTimeout ||
+      DioExceptionType.connectionError => true,
+      DioExceptionType.unknown =>
+        error.error != null && _isTransientConnectionError(error.error!),
+      _ => false,
+    };
+  }
+  if (error is HandshakeException) {
+    // Certificate failures require configuration changes, not another request.
+    return error.message.toLowerCase().contains(
+      'connection terminated during handshake',
+    );
+  }
+  return error is SocketException || error is TimeoutException;
+}
+
+Future<void> _waitForRetry(Duration delay, CancelToken cancelToken) async {
+  final ready = Completer<void>();
+  final timer = Timer(delay, ready.complete);
+  try {
+    await Future.any([ready.future, cancelToken.whenCancel]);
+    if (cancelToken.cancelError case final error?) throw error;
+  } finally {
+    timer.cancel();
+  }
+}
+
+Stream<Uint8List> _agentStreamPostOnce(
+  Dio dio, {
+  required String endpoint,
+  required Object payload,
+  required Map<String, dynamic> headers,
+  required CancelToken cancelToken,
+  required Duration? receiveTimeout,
+}) async* {
+  late final Response<ResponseBody> response;
+  try {
+    response = await dio.post<ResponseBody>(
+      endpoint,
+      data: payload,
+      options: Options(
+        headers: headers,
+        responseType: ResponseType.stream,
+        sendTimeout: const Duration(seconds: 30),
+        receiveTimeout: receiveTimeout,
+      ),
+      cancelToken: cancelToken,
+    );
+  } on DioException catch (error) {
+    final response = error.response;
+    final responseBody = response?.data;
+    if (response != null && responseBody is ResponseBody) {
+      final bytes = BytesBuilder(copy: false);
+      await for (final chunk in responseBody.stream) {
+        bytes.add(chunk);
+      }
+      final text = utf8.decode(bytes.takeBytes(), allowMalformed: true);
+      dynamic decoded = text;
+      try {
+        decoded = jsonDecode(text);
+      } catch (_) {
+        // 非 JSON 错误正文仍需原样呈现，避免 Dio 的通用状态说明掩盖根因。
+      }
+      response.data = decoded;
+    }
+    rethrow;
+  }
   final body = response.data;
   if (body == null) {
     throw StateError('LLM stream response is empty: $endpoint');

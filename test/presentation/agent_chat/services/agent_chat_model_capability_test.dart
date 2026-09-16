@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_launcher/core/agent/agent_types.dart';
-import 'package:nai_launcher/presentation/agent_chat/model/agent_reasoning_model_rule.dart';
-import 'package:nai_launcher/presentation/agent_chat/services/agent_chat_model_capability.dart';
+import 'package:nai_launcher/presentation/prompt_assistant/models/agent_reasoning_model_rule.dart';
+import 'package:nai_launcher/presentation/prompt_assistant/models/assistant_model_capability.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/models/agent_protocol.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/models/prompt_assistant_models.dart';
 
@@ -62,6 +62,17 @@ void main() {
               ThinkingLevel.low,
               ThinkingLevel.high,
               ThinkingLevel.max,
+            ],
+          ),
+          (
+            provider: 'openrouter',
+            protocol: ProviderProtocol.openaiChatCompletions,
+            baseUrl: 'https://openrouter.ai/api/v1',
+            model: 'google/gemini-3.8-flash',
+            levels: const [
+              ThinkingLevel.low,
+              ThinkingLevel.medium,
+              ThinkingLevel.high,
             ],
           ),
           (
@@ -156,7 +167,6 @@ void main() {
                 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1',
             model: 'qwen3.8-max',
             levels: const [
-              ThinkingLevel.off,
               ThinkingLevel.low,
               ThinkingLevel.medium,
               ThinkingLevel.xhigh,
@@ -212,7 +222,7 @@ void main() {
     }
   });
 
-  test('preserves Pi aliases even when native requests are equal', () {
+  test('maps DeepSeek effort and preserves Mistral level aliases', () {
     final deepSeek = AgentChatModelCapability.resolve(
       const ProviderConfig(
         id: 'deepseek',
@@ -250,7 +260,7 @@ void main() {
       deepSeek.resolveReasoningRequest('high'),
       isA<AgentReasoningRequest>()
           .having((request) => request.api, 'api', AgentReasoningApi.deepSeek)
-          .having((request) => request.effort, 'effort', isNull),
+          .having((request) => request.effort, 'effort', 'high'),
     );
   });
 
@@ -280,17 +290,53 @@ void main() {
     );
   });
 
-  test('Gemini 3 missing reasoning uses Pi hidden minimum', () {
-    final capability = AgentChatModelCapability.resolve(
-      ProviderPreset.gemini.createConfig(id: 'google'),
+  test('Gemini 3 missing reasoning uses its supported hidden minimum', () {
+    final provider = ProviderPreset.gemini.createConfig(id: 'google');
+    final proCapability = AgentChatModelCapability.resolve(
+      provider,
       'gemini-3.1-pro-preview',
     );
+    final flashCapability = AgentChatModelCapability.resolve(
+      provider,
+      'gemini-3.8-flash',
+    );
 
-    final request = capability.resolveReasoningRequest(null);
+    final proRequest = proCapability.resolveReasoningRequest(null);
+    final flashRequest = flashCapability.resolveReasoningRequest(null);
 
-    expect(request?.enabled, isFalse);
-    expect(request?.sendWhenDisabled, isTrue);
-    expect(request?.effort, 'LOW');
+    expect(proRequest?.enabled, isFalse);
+    expect(proRequest?.sendWhenDisabled, isTrue);
+    expect(proRequest?.effort, 'LOW');
+    expect(flashCapability.levels, [
+      ThinkingLevel.low,
+      ThinkingLevel.medium,
+      ThinkingLevel.high,
+    ]);
+    expect(flashRequest?.enabled, isFalse);
+    expect(flashRequest?.sendWhenDisabled, isTrue);
+    expect(flashRequest?.effort, 'LOW');
+    expect(flashCapability.resolveReasoningRequest('minimal')?.effort, 'LOW');
+  });
+
+  test('OpenRouter Gemini 3.8 uses native reasoning levels', () {
+    final capability = AgentChatModelCapability.resolve(
+      ProviderPreset.openRouter.createConfig(id: 'openrouter'),
+      'google/gemini-3.8-flash',
+    );
+
+    expect(capability.model.contextWindow, 1048576);
+    expect(capability.model.maxTokens, 65536);
+    expect(capability.levels, [
+      ThinkingLevel.low,
+      ThinkingLevel.medium,
+      ThinkingLevel.high,
+    ]);
+    expect(
+      capability.resolveReasoningRequest('low')?.api,
+      AgentReasoningApi.openRouter,
+    );
+    expect(capability.resolveReasoningRequest('low')?.effort, 'low');
+    expect(capability.resolveReasoningRequest('high')?.effort, 'high');
   });
 
   test('omits missing reasoning on models whose off mapping is null', () {
@@ -307,7 +353,7 @@ void main() {
   });
 
   test('Mistral effort keeps model-specific level mappings', () {
-    const metadata = AgentChatModelMetadata(
+    const metadata = AssistantModelMetadata(
       contextWindow: 1,
       maxOutputTokens: 1,
       thinkingLevels: [ThinkingLevel.off, ThinkingLevel.low],
@@ -337,6 +383,119 @@ void main() {
     expect(capability.model.contextWindow, 0);
     expect(capability.model.reasoning, isFalse);
     expect(capability.levels, isEmpty);
+  });
+
+  group('unrecognised gateways fall back to the model name', () {
+    const relay = ProviderConfig(
+      id: 'relay',
+      name: 'Relay station',
+      protocol: ProviderProtocol.openaiChatCompletions,
+      baseUrl: 'https://api.my-relay.test/v1',
+      preset: ProviderPreset.openaiCompatibleChat,
+    );
+
+    const geminiRelay = ProviderConfig(
+      id: 'gemini-relay',
+      name: 'Gemini relay station',
+      protocol: ProviderProtocol.geminiGenerateContent,
+      baseUrl: 'https://relay.example.test/v1beta',
+      preset: ProviderPreset.gemini,
+    );
+
+    test('keeps Gemini 3.8 reasoning semantics on a custom v1beta host', () {
+      final capability = AgentChatModelCapability.resolve(
+        geminiRelay,
+        'gemini-3.8-flash',
+      );
+
+      expect(capability.model.contextWindow, 1048576);
+      expect(capability.model.maxTokens, 65536);
+      expect(capability.levels, [
+        ThinkingLevel.low,
+        ThinkingLevel.medium,
+        ThinkingLevel.high,
+      ]);
+      expect(
+        capability.resolveReasoningRequest('low')?.api,
+        AgentReasoningApi.geminiLevel,
+      );
+      expect(capability.resolveReasoningRequest('low')?.effort, 'LOW');
+    });
+
+    test('borrows the window for a transparently proxied model', () {
+      final capability = AgentChatModelCapability.resolve(
+        relay,
+        'kimi-k2-thinking',
+      );
+
+      expect(capability.model.contextWindow, 262144);
+    });
+
+    test('matches case-insensitively like the exact tier does', () {
+      expect(
+        AgentChatModelCapability.resolve(
+          relay,
+          'Kimi-K2-Thinking',
+        ).model.contextWindow,
+        262144,
+      );
+    });
+
+    test('takes the smallest window when providers disagree', () {
+      // qwen/qwen3.6-27b is 262144 on openrouter and 131072 on groq.
+      // Underestimating only compacts early; overestimating overflows.
+      expect(
+        AgentChatModelCapability.resolve(
+          relay,
+          'qwen/qwen3.6-27b',
+        ).model.contextWindow,
+        131072,
+      );
+    });
+
+    test(
+      'borrows the window but not the reasoning config across protocols',
+      () {
+        final capability = AgentChatModelCapability.resolve(
+          relay,
+          'claude-opus-4-8',
+        );
+
+        expect(capability.model.contextWindow, greaterThan(0));
+        expect(capability.levels, isEmpty);
+        expect(capability.model.reasoning, isFalse);
+      },
+    );
+
+    test('stays unavailable when the name is not in the catalog', () {
+      expect(
+        AgentChatModelCapability.resolve(
+          relay,
+          'private-v9',
+        ).model.contextWindow,
+        0,
+      );
+    });
+
+    test('a manual window rescues a model the catalog cannot place', () {
+      final capability = AgentChatModelCapability.resolve(
+        relay,
+        'private-v9',
+        contextWindowOverride: 65536,
+      );
+
+      expect(capability.model.contextWindow, 65536);
+    });
+
+    test('a manual window outranks the catalog', () {
+      final capability = AgentChatModelCapability.resolve(
+        relay,
+        'kimi-k2-thinking',
+        contextWindowOverride: 32000,
+      );
+
+      expect(capability.model.contextWindow, 32000);
+    });
   });
 
   test(

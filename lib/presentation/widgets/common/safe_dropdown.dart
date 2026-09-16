@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../adaptive/interaction_policy.dart';
 import 'input_surface_container.dart';
 
 /// 安全的下拉框 - 自动验证value是否在items中
@@ -12,6 +13,7 @@ class SafeDropdown<T> extends StatefulWidget {
   final bool isExpanded;
   final double borderRadius;
   final Widget? icon;
+  final double? itemHeight;
 
   const SafeDropdown({
     super.key,
@@ -22,6 +24,7 @@ class SafeDropdown<T> extends StatefulWidget {
     this.isExpanded = true,
     this.borderRadius = 8.0,
     this.icon,
+    this.itemHeight = kMinInteractiveDimension,
   });
 
   @override
@@ -54,14 +57,24 @@ class _SafeDropdownState<T> extends State<SafeDropdown<T>> {
     final theme = Theme.of(context);
     final validValue = _validateValue();
 
+    final controlExtent = context.interactionPolicy.minimumControlExtent;
+    final availableMenuHeight =
+        MediaQuery.sizeOf(context).height -
+        MediaQuery.paddingOf(context).vertical -
+        MediaQuery.viewInsetsOf(context).vertical -
+        32;
+
     return InputSurfaceContainer(
       borderRadius: widget.borderRadius,
+      keyboardFocusOnly: true,
       isFocused: _focusNode.hasFocus,
+      constraints: BoxConstraints(minHeight: controlExtent),
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<T>(
           value: validValue,
           items: widget.items,
+          itemHeight: widget.itemHeight,
           onChanged: widget.onChanged,
           isExpanded: widget.isExpanded,
           focusNode: _focusNode,
@@ -81,8 +94,11 @@ class _SafeDropdownState<T> extends State<SafeDropdown<T>> {
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
               ),
           dropdownColor: theme.colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.zero,
-          style: TextStyle(color: theme.colorScheme.onSurface, fontSize: 14),
+          menuMaxHeight: availableMenuHeight > 0 ? availableMenuHeight : null,
+          borderRadius: BorderRadius.circular(6),
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurface,
+          ),
         ),
       ),
     );

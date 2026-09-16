@@ -1,5 +1,7 @@
 import 'dart:ui' show PointerDeviceKind;
 
+import 'package:nai_launcher/core/constants/storage_keys.dart';
+import 'package:nai_launcher/presentation/widgets/prompt/tag_editor_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -10,27 +12,154 @@ import 'package:nai_launcher/core/services/prompt_token_counter_service.dart';
 import 'package:nai_launcher/core/storage/local_storage_service.dart';
 import 'package:nai_launcher/data/models/character/character_prompt.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
+import 'package:nai_launcher/presentation/adaptive/interaction_policy.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/providers/prompt_assistant_history_provider.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/providers/prompt_assistant_state_provider.dart';
-import 'package:nai_launcher/presentation/prompt_assistant/widgets/prompt_assistant_overlay.dart';
 import 'package:nai_launcher/presentation/providers/character_position_canvas_provider.dart';
 import 'package:nai_launcher/presentation/providers/character_prompt_provider.dart';
 import 'package:nai_launcher/presentation/providers/prompt_token_counter_provider.dart';
-import 'package:nai_launcher/presentation/screens/generation/widgets/generation_toggle_button.dart';
 import 'package:nai_launcher/presentation/screens/generation/widgets/prompt_input.dart';
-import 'package:nai_launcher/presentation/screens/generation/widgets/prompt_type_switch.dart';
 import 'package:nai_launcher/presentation/themes/core/input_surface_style.dart';
 import 'package:nai_launcher/presentation/widgets/common/input_surface_container.dart';
 import 'package:nai_launcher/presentation/widgets/common/themed_input.dart';
 import 'package:nai_launcher/presentation/widgets/common/weight_adjust_toolbar.dart';
+import 'package:nai_launcher/presentation/widgets/character/character_prompt_button.dart';
 import 'package:nai_launcher/presentation/widgets/character/inline_character_editor.dart';
+import 'package:nai_launcher/presentation/widgets/prompt/fixed_tags_button.dart';
+import 'package:nai_launcher/presentation/widgets/prompt/quality_tags_selector.dart';
+import 'package:nai_launcher/presentation/widgets/prompt/uc_preset_selector.dart';
 import 'package:nai_launcher/presentation/widgets/prompt/unified/unified_prompt_config.dart';
 import 'package:nai_launcher/presentation/widgets/prompt/unified/unified_prompt_input.dart';
 
+import '../../../../helpers/memory_local_storage.dart';
+
 void main() {
-  test('Windows 下提示词切换按钮不使用富文本 Tooltip', () {
-    expect(shouldUseRichPromptTypeTooltip(TargetPlatform.windows), isFalse);
-    expect(shouldUseRichPromptTypeTooltip(TargetPlatform.macOS), isTrue);
+  testWidgets('主提示词拖动高度保留正文并跨正负和标签模式复用', (tester) async {
+    final storage = _TestLocalStorageService();
+    final app = ProviderScope(
+      overrides: [
+        localStorageServiceProvider.overrideWith((ref) {
+          return storage;
+        }),
+        characterPromptNotifierProvider.overrideWith(
+          _TestCharacterPromptNotifier.new,
+        ),
+        promptTokenUsageProvider(PromptTokenCountTarget.positive).overrideWith(
+          (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 512),
+        ),
+        promptTokenUsageProvider(PromptTokenCountTarget.negative).overrideWith(
+          (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 512),
+        ),
+      ],
+      child: const MaterialApp(
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        home: Scaffold(
+          body: SingleChildScrollView(child: PromptInputWidget(autoGrow: true)),
+        ),
+      ),
+    );
+    await tester.pumpWidget(app);
+
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final positive = find.byKey(
+      const ValueKey('generation_prompt_positive_input'),
+    );
+    final text = find
+        .descendant(of: positive, matching: find.byType(EditableText))
+        .first;
+    await tester.enterText(text, 'cat, dog');
+    await tester.pump();
+    final editor = tester.widget<EditableText>(text);
+    editor.controller.selection = const TextSelection.collapsed(offset: 3);
+    await tester.pump();
+    // Dismiss the autocomplete overlay before interacting with the bottom edge.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    final editorState = tester.state(text);
+    final oldHeight = tester.getSize(positive).height;
+    final handle = find.byKey(
+      const ValueKey('generation-prompt-height-handle'),
+    );
+    await tester.drag(
+      handle,
+      const Offset(0, 100),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    final manualHeight = tester.getSize(positive).height;
+    expect(manualHeight, greaterThan(oldHeight + 40));
+    expect(tester.state(text), same(editorState));
+    expect(editor.focusNode.hasFocus, isTrue);
+    expect(editor.controller.text, 'cat, dog');
+    expect(
+      editor.controller.selection,
+      const TextSelection.collapsed(offset: 3),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('tag-mode-button')));
+    await tester.pump();
+    expect(tester.getSize(positive).height, manualHeight);
+    await tester.drag(
+      handle,
+      const Offset(0, -40),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    final tagHeight = tester.getSize(positive).height;
+    expect(tagHeight, lessThan(manualHeight));
+    expect(editor.controller.text, 'cat, dog');
+    await tester.tap(find.byIcon(Icons.block).first);
+    await tester.pump();
+    final negative = find.byKey(
+      const ValueKey('generation_prompt_negative_input'),
+    );
+    expect(tester.getSize(negative).height, tagHeight);
+    expect(find.byType(TagEditorView), findsNothing);
+    expect(tester.takeException(), isNull);
+    // Settle the double-tap recognizer and the existing toolbar blur delay.
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(
+      storage.getSetting<double>(StorageKeys.promptEditorManualHeight),
+      tagHeight,
+    );
+    expect(
+      storage.getSetting<bool>(
+        '${StorageKeys.promptTagMode}.generation_prompt_main',
+      ),
+      isTrue,
+    );
+    await tester.pumpWidget(app);
+    await tester.pump();
+    expect(tester.getSize(positive).height, tagHeight);
+    expect(find.byType(TagEditorView), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('tag-mode-button')));
+    await tester.pump();
+    expect(
+      storage.getSetting<bool>(
+        '${StorageKeys.promptTagMode}.generation_prompt_main',
+      ),
+      isFalse,
+    );
+    Focus.of(tester.element(handle)).requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.home);
+    await tester.pump();
+    expect(
+      storage.getSetting<double>(StorageKeys.promptEditorManualHeight),
+      isNull,
+    );
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(app);
+    await tester.pump();
+    expect(tester.getSize(positive).height, oldHeight);
+    expect(find.byType(TagEditorView), findsNothing);
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('冷启动时切换到负面提示词不会抛出异常', (tester) async {
@@ -78,7 +207,67 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('紧凑提示词编辑器使用区别于页面的输入色面', (tester) async {
+  testWidgets('响应式壳层切换保持提示词控制器、选区与焦点', (tester) async {
+    final harnessKey = GlobalKey<_ResponsivePromptHarnessState>();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localStorageServiceProvider.overrideWith(
+            (ref) => _TestLocalStorageService(),
+          ),
+          characterPromptNotifierProvider.overrideWith(
+            _TestCharacterPromptNotifier.new,
+          ),
+          promptTokenUsageProvider(
+            PromptTokenCountTarget.positive,
+          ).overrideWith(
+            (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 512),
+          ),
+          promptTokenUsageProvider(
+            PromptTokenCountTarget.negative,
+          ).overrideWith(
+            (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 512),
+          ),
+        ],
+        child: MaterialApp(
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          home: Scaffold(body: _ResponsivePromptHarness(key: harnessKey)),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final editableFinder = find.descendant(
+      of: find.byKey(const ValueKey('responsive-prompt-host')),
+      matching: find.byType(EditableText),
+    );
+    await tester.enterText(editableFinder.first, 'one, two, three');
+    await tester.showKeyboard(editableFinder.first);
+    final before = tester.widget<EditableText>(editableFinder.first);
+    before.controller.selection = const TextSelection(
+      baseOffset: 5,
+      extentOffset: 8,
+    );
+    expect(before.focusNode.hasFocus, isTrue);
+
+    harnessKey.currentState!.toggleLayout();
+    await tester.pump();
+    await tester.pump();
+
+    final after = tester.widget<EditableText>(editableFinder.first);
+    expect(identical(after.controller, before.controller), isTrue);
+    expect(after.controller.text, 'one, two, three');
+    expect(
+      after.controller.selection,
+      const TextSelection(baseOffset: 5, extentOffset: 8),
+    );
+    expect(after.focusNode.hasFocus, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('紧凑提示词编辑器使用独立色面且正文没有额外右侧预留', (tester) async {
     const colorScheme = ColorScheme.dark(
       surface: Color(0xFF1A1A1A),
       onSurface: Color(0xFFF4EEDC),
@@ -121,7 +310,7 @@ void main() {
       const ValueKey('generation_prompt_compact_surface'),
     );
     final input = tester.widget<UnifiedPromptInput>(
-      find.byKey(const ValueKey('generation_prompt_compact_input')),
+      find.byKey(const ValueKey('generation_prompt_positive_input')),
     );
     expect(surface, findsOneWidget);
     expect(
@@ -133,6 +322,17 @@ void main() {
     );
     expect(input.surfaceColor, expectedColor);
     expect(input.surfaceColor, isNot(colorScheme.surface));
+    final surfaceRect = tester.getRect(
+      find.descendant(
+        of: surface,
+        matching: find.byType(InputSurfaceContainer),
+      ),
+    );
+    final editableRect = tester.getRect(
+      find.descendant(of: surface, matching: find.byType(EditableText)),
+    );
+    expect(editableRect.left - surfaceRect.left, closeTo(13, 0.1));
+    expect(surfaceRect.right - editableRect.right, closeTo(13, 0.1));
   });
 
   testWidgets('手机最大化提示词工作台把预设工具放在编辑区下方', (tester) async {
@@ -163,7 +363,7 @@ void main() {
             body: Align(
               alignment: Alignment.topLeft,
               child: SizedBox(
-                width: 380,
+                width: 320,
                 height: 420,
                 child: PromptInputWidget(isMaximized: true),
               ),
@@ -176,53 +376,91 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    final primaryRow = find.byKey(
-      const ValueKey('generation_prompt_mobile_primary_row'),
+    final typeSwitch = find.byKey(
+      const ValueKey('generation_prompt_type_switch'),
     );
     final secondaryScroll = find.byKey(
       const ValueKey('generation_prompt_mobile_secondary_scroll'),
+    );
+    final contextBar = find.byKey(
+      const ValueKey('generation_prompt_mobile_context_bar'),
+    );
+    final clearAction = find.byKey(
+      const ValueKey('generation_prompt_mobile_clear_action'),
     );
     final secondaryActions = [
       find.byKey(const ValueKey('generation_prompt_mobile_character_action')),
       find.byKey(const ValueKey('generation_prompt_mobile_fixed_tags_action')),
       find.byKey(const ValueKey('generation_prompt_mobile_quality_action')),
       find.byKey(const ValueKey('generation_prompt_mobile_uc_action')),
+      find.byKey(const ValueKey('generation_prompt_mobile_bottom_actions')),
     ];
     final editor = find.byKey(
       const ValueKey('generation_prompt_positive_input'),
     );
 
-    expect(primaryRow, findsOneWidget);
-    expect(
-      find.descendant(
-        of: primaryRow,
-        matching: find.byIcon(Icons.fullscreen_exit),
-      ),
-      findsNothing,
-    );
+    expect(typeSwitch, findsOneWidget);
     expect(secondaryScroll, findsOneWidget);
-    expect(tester.getSize(secondaryScroll).height, 44);
-    expect(tester.getSize(secondaryScroll).width, 380);
+    expect(
+      find.byKey(
+        const ValueKey('generation_prompt_mobile_secondary_scroll_hint'),
+      ),
+      findsOneWidget,
+    );
+    expect(clearAction, findsOneWidget);
+    expect(tester.getSize(secondaryScroll).height, greaterThanOrEqualTo(48));
+    expect(tester.getSize(secondaryScroll).width, 272);
+    expect(tester.getSize(clearAction), const Size.square(48));
+    expect(
+      tester.getRect(clearAction).right,
+      closeTo(tester.getRect(contextBar).right, 0.1),
+    );
+    expect(
+      find.descendant(of: clearAction, matching: find.byIcon(Icons.clear)),
+      findsOneWidget,
+    );
+    expect(clearAction.hitTestable(), findsOneWidget);
     for (final action in secondaryActions) {
       expect(action, findsOneWidget);
-      expect(tester.getSize(action).height, 44);
+      expect(tester.getSize(action).height, greaterThanOrEqualTo(48));
       expect(
         tester.getCenter(action).dy,
         closeTo(tester.getCenter(secondaryActions.first).dy, 0.1),
       );
+      await tester.ensureVisible(action);
+      await tester.pump();
+      expect(action.hitTestable(), findsOneWidget);
     }
     expect(
-      tester.getBottomLeft(primaryRow).dy,
+      tester.getBottomLeft(typeSwitch).dy,
       lessThan(tester.getTopLeft(editor).dy),
     );
     expect(
       tester.getBottomLeft(editor).dy,
       lessThan(tester.getTopLeft(secondaryScroll).dy),
     );
+    final bottomActions = find.byKey(
+      const ValueKey('generation_prompt_mobile_bottom_actions'),
+    );
+    expect(
+      find.descendant(
+        of: bottomActions,
+        matching: find.byIcon(Icons.casino_outlined),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: bottomActions, matching: find.byIcon(Icons.clear)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: bottomActions, matching: find.byIcon(Icons.settings)),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('手机角色按钮直接展开单个已有角色的完整编辑器', (tester) async {
+  testWidgets('手机角色管理不会自动触发单角色编辑', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(380, 800);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -278,7 +516,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('测试角色'), findsWidgets);
-    expect(find.byType(CharacterPromptEditor), findsOneWidget);
+    expect(find.byType(CharacterPromptEditor), findsNothing);
     expect(
       tester
           .getSize(
@@ -292,7 +530,42 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('手机多角色管理先显示概览，选择角色后展开编辑器', (tester) async {
+  testWidgets('手机已有角色时添加菜单仍可新建角色', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(380, 800);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final container = await _pumpMobilePromptHarness(tester);
+    final notifier = container.read(characterPromptNotifierProvider.notifier);
+    (notifier as _TestCharacterPromptNotifier).seed([
+      CharacterPrompt.create(name: '已有角色', prompt: '1girl'),
+    ]);
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey('generation_prompt_mobile_character_action')),
+    );
+    await tester.pumpAndSettle();
+    final sheet = find.byKey(
+      const ValueKey('generation_mobile_character_manager_sheet'),
+    );
+    final l10n = AppLocalizations.of(tester.element(sheet))!;
+
+    await tester.tap(find.byKey(const Key('character-add-menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(l10n.characterEditor_addMale));
+    await tester.pumpAndSettle();
+
+    expect(
+      container.read(characterPromptNotifierProvider).characters,
+      hasLength(2),
+    );
+    expect(find.byType(CharacterPromptEditor), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('手机多角色管理使用全高 bottom sheet 并保持概览到编辑器状态', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(380, 800);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -314,17 +587,18 @@ void main() {
     final sheet = find.byKey(
       const ValueKey('generation_mobile_character_manager_sheet'),
     );
-    final overviewHeight = tester.getSize(sheet).height;
+    final formHeight = tester.getSize(sheet).height;
+    expect(find.byKey(const ValueKey('adaptive-bottom-sheet')), findsOneWidget);
     expect(find.text('角色甲'), findsOneWidget);
     expect(find.text('角色乙'), findsOneWidget);
     expect(find.byType(CharacterPromptEditor), findsNothing);
-    expect(overviewHeight, lessThan(600));
+    expect(formHeight, greaterThan(600));
 
     await tester.tap(find.text('角色乙'));
     await tester.pumpAndSettle();
 
     expect(find.byType(CharacterPromptEditor), findsOneWidget);
-    expect(tester.getSize(sheet).height, greaterThan(overviewHeight + 100));
+    expect(tester.getSize(sheet).height, formHeight);
     expect(tester.takeException(), isNull);
   });
 
@@ -357,7 +631,10 @@ void main() {
     );
     expect(sheet, findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.control_camera));
+    final positionAction = find.byIcon(Icons.control_camera);
+    await tester.ensureVisible(positionAction);
+    await tester.pump();
+    await tester.tap(positionAction);
     await tester.pumpAndSettle();
 
     expect(sheet, findsNothing);
@@ -407,7 +684,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('V5 透明背景开关位于正向提示词框左下角', (tester) async {
+  testWidgets('V5 透明背景开关切换正负面提示词后仍然可见', (tester) async {
     final storage = _TestLocalStorageService(
       defaultModel: 'nai-diffusion-5-curated',
     );
@@ -457,6 +734,40 @@ void main() {
     );
 
     expect(toggle, findsOneWidget);
+    final footer = find.byKey(const ValueKey('generation_prompt_footer'));
+    final footerButtons = find.descendant(
+      of: footer,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is TextButton || widget is IconButton,
+      ),
+    );
+    final surfaces = <Finder>[];
+    for (final element in footerButtons.evaluate()) {
+      final surface = find
+          .descendant(
+            of: find.byWidget(element.widget),
+            matching: find.byType(Material),
+          )
+          .first;
+      surfaces.add(surface);
+      expect(tester.getSize(surface).height, 32);
+      expect(tester.widget<Material>(surface).shape, isA<StadiumBorder>());
+      expect(
+        tester.getSize(find.byWidget(element.widget)).height,
+        greaterThanOrEqualTo(44),
+      );
+    }
+    expect(surfaces.length, greaterThanOrEqualTo(4));
+    final hover = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await hover.addPointer(location: Offset.zero);
+    for (final surface in surfaces) {
+      final before = tester.getRect(surface);
+      await hover.moveTo(before.center);
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(tester.getRect(surface), before);
+      expect(tester.widget<Material>(surface).shape, isA<StadiumBorder>());
+    }
+    await hover.removePointer();
     expect(
       tester.getTopLeft(toggle).dy,
       greaterThanOrEqualTo(tester.getBottomLeft(promptField).dy),
@@ -465,7 +776,58 @@ void main() {
       tester.getTopLeft(toggle).dx,
       closeTo(tester.getTopLeft(promptField).dx, 1),
     );
-    expect(tester.widget<GenerationToggleButton>(toggle).isEnabled, isFalse);
+    expect(
+      tester.getRect(find.byKey(const ValueKey('tag-mode-button'))).left,
+      greaterThan(tester.getRect(toggle).right),
+    );
+    expect(
+      tester
+          .widget<Semantics>(
+            find.descendant(
+              of: toggle,
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Semantics && widget.properties.toggled != null,
+              ),
+            ),
+          )
+          .properties
+          .toggled,
+      isFalse,
+    );
+
+    final assistant = find.byKey(
+      const ValueKey(
+        'prompt_assistant_toolbar_${PromptHistorySessionIds.generationPrompt}',
+      ),
+    );
+    final count = find.byKey(const ValueKey('generation_prompt_footer_count'));
+    await tester.tap(
+      find.descendant(
+        of: assistant,
+        matching: find.byIcon(Icons.auto_awesome_rounded),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 160));
+
+    expect(toggle, findsOneWidget);
+    expect(count, findsOneWidget);
+    expect(
+      tester.getRect(toggle).top,
+      greaterThanOrEqualTo(tester.getRect(assistant).bottom),
+    );
+    expect(
+      tester.getRect(count).top,
+      greaterThanOrEqualTo(tester.getRect(assistant).bottom),
+    );
+
+    await tester.tap(
+      find.descendant(
+        of: assistant,
+        matching: find.byIcon(Icons.keyboard_arrow_down_rounded),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 160));
 
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
     addTearDown(mouse.removePointer);
@@ -473,7 +835,12 @@ void main() {
     await mouse.moveTo(tester.getCenter(toggle));
     await tester.pump(const Duration(milliseconds: 301));
 
-    expect(find.text(', transparent background'), findsOneWidget);
+    final toggleTooltip = find.ancestor(
+      of: toggle,
+      matching: find.byType(Tooltip),
+    );
+    expect(toggleTooltip, findsOneWidget);
+    expect(tester.widget<Tooltip>(toggleTooltip).richMessage, isNotNull);
 
     await mouse.moveTo(const Offset(950, 400));
     await tester.pump();
@@ -481,16 +848,428 @@ void main() {
     await tester.tap(toggle);
     await tester.pump();
 
-    expect(tester.widget<GenerationToggleButton>(toggle).isEnabled, isTrue);
+    expect(
+      tester
+          .widget<Semantics>(
+            find.descendant(
+              of: toggle,
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Semantics && widget.properties.toggled != null,
+              ),
+            ),
+          )
+          .properties
+          .toggled,
+      isTrue,
+    );
     expect(storage.savedTransparentBackground, isTrue);
 
     await tester.tap(find.byIcon(Icons.block).first);
     await tester.pump();
 
-    expect(toggle, findsNothing);
+    expect(
+      find.byKey(const ValueKey('generation_prompt_negative_input')),
+      findsOneWidget,
+    );
+    expect(toggle, findsOneWidget);
+    expect(
+      tester
+          .widget<Semantics>(
+            find.descendant(
+              of: toggle,
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Semantics && widget.properties.toggled != null,
+              ),
+            ),
+          )
+          .properties
+          .toggled,
+      isTrue,
+    );
   });
 
-  testWidgets('手机提示词助手在 footer 同栏展开且不侵占编辑区', (tester) async {
+  testWidgets('320 宽桌面侧栏可滚动到全部提示词入口且助手贴右', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localStorageServiceProvider.overrideWith(
+              (ref) => _TestLocalStorageService(
+                defaultModel: 'nai-diffusion-5-curated',
+              ),
+            ),
+            characterPromptNotifierProvider.overrideWith(
+              _TestCharacterPromptNotifier.new,
+            ),
+            promptTokenUsageProvider(
+              PromptTokenCountTarget.positive,
+            ).overrideWith(
+              (ref) async => const PromptTokenUsage(usedTokens: 12, limit: 703),
+            ),
+            promptTokenUsageProvider(
+              PromptTokenCountTarget.negative,
+            ).overrideWith(
+              (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 703),
+            ),
+          ],
+          child: const MaterialApp(
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  width: 320,
+                  height: 420,
+                  child: PromptInputWidget(autoGrow: true),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final responsiveToolbar = find.byKey(
+        const ValueKey('generation_prompt_mobile_toolbar'),
+      );
+      final typeSwitch = find.byKey(
+        const ValueKey('generation_prompt_type_switch'),
+      );
+      final secondary = find.byKey(
+        const ValueKey('generation_prompt_mobile_secondary_row'),
+      );
+      final footer = find.byKey(const ValueKey('generation_prompt_footer'));
+      final assistant = find.byKey(
+        const ValueKey(
+          'prompt_assistant_toolbar_${PromptHistorySessionIds.generationPrompt}',
+        ),
+      );
+      expect(tester.getSize(responsiveToolbar).width, 320);
+      expect(typeSwitch, findsOneWidget);
+      expect(secondary, findsOneWidget);
+      expect(
+        tester.getRect(assistant).right,
+        closeTo(tester.getRect(footer).right - 4, 0.1),
+      );
+
+      for (final key in const [
+        'generation_prompt_mobile_fixed_tags_action',
+        'generation_prompt_mobile_quality_action',
+        'generation_prompt_mobile_uc_action',
+      ]) {
+        final action = find.byKey(ValueKey(key));
+        expect(action, findsOneWidget);
+        expect(action.hitTestable(), findsOneWidget);
+        expect(
+          tester.getRect(action).right,
+          lessThanOrEqualTo(tester.getRect(responsiveToolbar).right),
+        );
+      }
+      expect(
+        find.byKey(const ValueKey('generation_prompt_mobile_character_action')),
+        findsNothing,
+      );
+      expect(find.byType(CharacterPromptButton), findsNothing);
+      final bottomActions = find.byKey(
+        const ValueKey('generation_prompt_bottom_actions'),
+      );
+      expect(bottomActions, findsOneWidget);
+      expect(
+        find.descendant(of: footer, matching: bottomActions),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.descendant(of: typeSwitch, matching: find.byIcon(Icons.block)),
+      );
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('generation_prompt_negative_input')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .getRect(
+              find.byKey(
+                const ValueKey(
+                  'prompt_assistant_toolbar_${PromptHistorySessionIds.generationNegative}',
+                ),
+              ),
+            )
+            .right,
+        closeTo(tester.getRect(footer).right - 4, 0.1),
+      );
+
+      final settings = find.widgetWithIcon(IconButton, Icons.settings);
+      expect(settings, findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(
+            const ValueKey('generation_prompt_footer_actions_scroll'),
+          ),
+          matching: settings,
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('450 宽无全屏按钮时顶栏保留文字并保持单行', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localStorageServiceProvider.overrideWith(
+              (ref) => _TestLocalStorageService(),
+            ),
+            characterPromptNotifierProvider.overrideWith(
+              _TestCharacterPromptNotifier.new,
+            ),
+            promptTokenUsageProvider(
+              PromptTokenCountTarget.positive,
+            ).overrideWith(
+              (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 703),
+            ),
+            promptTokenUsageProvider(
+              PromptTokenCountTarget.negative,
+            ).overrideWith(
+              (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 703),
+            ),
+          ],
+          child: const MaterialApp(
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  width: 450,
+                  height: 420,
+                  child: PromptInputWidget(
+                    autoGrow: true,
+                    showMaximizeButton: false,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final toolbar = find.byKey(
+        const ValueKey('generation_prompt_compact_single_row'),
+      );
+      final typeSwitch = find.byKey(
+        const ValueKey('generation_prompt_type_switch'),
+      );
+      expect(toolbar, findsOneWidget);
+      expect(tester.getSize(toolbar).width, 450);
+      expect(tester.getRect(typeSwitch).right, lessThanOrEqualTo(450));
+      expect(
+        tester.widget<FixedTagsButton>(find.byType(FixedTagsButton)).iconOnly,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<QualityTagsSelector>(find.byType(QualityTagsSelector))
+            .iconOnly,
+        isFalse,
+      );
+      final bottomActions = find.byKey(
+        const ValueKey('generation_prompt_bottom_actions'),
+      );
+      expect(bottomActions, findsOneWidget);
+      expect(find.widgetWithIcon(IconButton, Icons.fullscreen), findsNothing);
+      for (final icon in const [
+        Icons.casino_outlined,
+        Icons.clear,
+        Icons.settings,
+      ]) {
+        expect(
+          find.descendant(of: toolbar, matching: find.byIcon(icon)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: bottomActions, matching: find.byIcon(icon)),
+          findsOneWidget,
+        );
+      }
+      expect(
+        find.byKey(const ValueKey('generation_prompt_mobile_character_action')),
+        findsNothing,
+      );
+      final positiveMode = find.byKey(
+        const ValueKey('generation_prompt_positive_mode'),
+      );
+      final negativeMode = find.byKey(
+        const ValueKey('generation_prompt_negative_mode'),
+      );
+      expect(tester.getSize(find.text('Prompt')).width, greaterThan(10));
+      expect(
+        tester.getSize(find.text('Undesired Content')).width,
+        greaterThan(10),
+      );
+      expect(
+        find.descendant(of: positiveMode, matching: find.text('0')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: negativeMode, matching: find.text('0')),
+        findsOneWidget,
+      );
+
+      await tester.enterText(
+        find.byKey(const ValueKey('generation_prompt_positive_input')),
+        '1girl, blue hair',
+      );
+      await tester.pump();
+      expect(
+        find.descendant(of: positiveMode, matching: find.text('2')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('520 宽桌面顶栏与底栏均保持单行', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localStorageServiceProvider.overrideWith(
+              (ref) => _TestLocalStorageService(),
+            ),
+            characterPromptNotifierProvider.overrideWith(
+              _TestCharacterPromptNotifier.new,
+            ),
+            promptTokenUsageProvider(
+              PromptTokenCountTarget.positive,
+            ).overrideWith(
+              (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 703),
+            ),
+            promptTokenUsageProvider(
+              PromptTokenCountTarget.negative,
+            ).overrideWith(
+              (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 703),
+            ),
+          ],
+          child: const MaterialApp(
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  width: 520,
+                  height: 420,
+                  child: PromptInputWidget(autoGrow: true),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      final toolbar = find.byKey(
+        const ValueKey('generation_prompt_compact_single_row'),
+      );
+      final footer = find.byKey(const ValueKey('generation_prompt_footer'));
+      final bottomActions = find.byKey(
+        const ValueKey('generation_prompt_bottom_actions'),
+      );
+      expect(toolbar, findsOneWidget);
+      expect(tester.getSize(toolbar).height, 48);
+      expect(
+        tester
+            .getSize(
+              find.byKey(const ValueKey('generation_prompt_type_switch')),
+            )
+            .width,
+        lessThanOrEqualTo(200),
+      );
+      expect(
+        tester.widget<FixedTagsButton>(find.byType(FixedTagsButton)).iconOnly,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<QualityTagsSelector>(find.byType(QualityTagsSelector))
+            .iconOnly,
+        isFalse,
+      );
+      expect(
+        tester.widget<UcPresetSelector>(find.byType(UcPresetSelector)).iconOnly,
+        isFalse,
+      );
+      final typeSwitch = find.byKey(
+        const ValueKey('generation_prompt_type_switch'),
+      );
+      final compactActions = find.byKey(
+        const ValueKey('generation_prompt_compact_single_row_actions'),
+      );
+      expect(
+        tester.getRect(typeSwitch).right,
+        closeTo(tester.getRect(compactActions).left - 4, 0.1),
+      );
+      expect(
+        tester.getRect(compactActions).right,
+        closeTo(tester.getRect(toolbar).right, 0.1),
+      );
+      expect(
+        find.descendant(
+          of: find.byType(UcPresetSelector),
+          matching: find.byType(Text),
+        ),
+        findsOneWidget,
+      );
+      for (final control in <Finder>[
+        find.byType(FixedTagsButton),
+        find.byType(QualityTagsSelector),
+        find.byType(UcPresetSelector),
+        find.widgetWithIcon(IconButton, Icons.fullscreen),
+      ]) {
+        expect(
+          tester.getRect(control).right,
+          lessThanOrEqualTo(tester.getRect(toolbar).right),
+          reason: '$control must stay inside the compact toolbar',
+        );
+      }
+      expect(find.byType(CharacterPromptButton), findsNothing);
+      expect(
+        find.descendant(of: footer, matching: bottomActions),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithIcon(IconButton, Icons.settings).hitTestable(),
+        findsOneWidget,
+      );
+      expect(
+        tester.getRect(bottomActions).bottom,
+        lessThanOrEqualTo(tester.getRect(footer).bottom),
+      );
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('手机提示词助手在输入区浮层展开且不改变文本布局', (tester) async {
     PlatformCapabilities.debugOverride = PlatformCapabilities.forPlatform(
       TargetPlatform.android,
     );
@@ -522,10 +1301,17 @@ void main() {
           supportedLocales: AppLocalizations.supportedLocales,
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           home: Scaffold(
-            body: SizedBox(
-              width: 320,
-              height: 420,
-              child: PromptInputWidget(isMaximized: true),
+            body: InteractionPolicyScope(
+              initialPolicy: InteractionPolicy(
+                modality: InteractionModality.touch,
+                touchAvailable: true,
+                precisePointerAvailable: false,
+              ),
+              child: SizedBox(
+                width: 320,
+                height: 420,
+                child: PromptInputWidget(isMaximized: true),
+              ),
             ),
           ),
         ),
@@ -538,13 +1324,28 @@ void main() {
     final input = find.byKey(
       const ValueKey('generation_prompt_positive_input'),
     );
+    final narrowToolbarActions = [
+      find.byKey(const ValueKey('generation_prompt_mobile_character_action')),
+      find.byKey(const ValueKey('generation_prompt_mobile_fixed_tags_action')),
+      find.byKey(const ValueKey('generation_prompt_mobile_quality_action')),
+      find.byKey(const ValueKey('generation_prompt_mobile_uc_action')),
+    ];
+    for (final action in narrowToolbarActions) {
+      expect(action, findsOneWidget);
+      expect(tester.getSize(action).height, 48);
+      await tester.ensureVisible(action);
+      await tester.pump();
+      expect(action.hitTestable(), findsOneWidget);
+    }
     final transparent = find.byKey(
       const ValueKey('generation_transparent_background_toggle'),
     );
     final footer = find.byKey(const ValueKey('generation_prompt_footer'));
     final count = find.byKey(const ValueKey('generation_prompt_footer_count'));
     final assistant = find.byKey(
-      const ValueKey('generation_prompt_footer_assistant'),
+      const ValueKey(
+        'prompt_assistant_toolbar_${PromptHistorySessionIds.generationPrompt}',
+      ),
     );
     final toolbar = find.byKey(
       const ValueKey(
@@ -567,7 +1368,18 @@ void main() {
     );
     expect(assistant, findsOneWidget);
     expect(toolbar, findsOneWidget);
+    expect(
+      tester.getRect(assistant).right,
+      closeTo(tester.getRect(footer).right - 4, 0.1),
+    );
     expect(textField.decoration?.contentPadding, const EdgeInsets.all(12));
+    expect(
+      find.descendant(
+        of: footer,
+        matching: find.byKey(const ValueKey('tag-mode-button')),
+      ),
+      findsOneWidget,
+    );
     expect(
       tester.getRect(transparent).top,
       greaterThanOrEqualTo(tester.getRect(input).bottom),
@@ -577,16 +1389,19 @@ void main() {
       greaterThanOrEqualTo(tester.getRect(input).bottom),
     );
     expect(
-      tester.getRect(assistant).top,
-      greaterThanOrEqualTo(tester.getRect(input).bottom),
+      tester.getRect(assistant).bottom,
+      lessThanOrEqualTo(tester.getRect(input).bottom),
     );
     expect(
-      tester.getRect(transparent).right,
-      lessThanOrEqualTo(tester.getRect(count).left),
+      find.byKey(const ValueKey('generation_prompt_footer_actions_scroll')),
+      findsOneWidget,
     );
+    await tester.ensureVisible(transparent);
+    await tester.pump();
+    expect(transparent.hitTestable(), findsOneWidget);
     expect(
-      tester.getRect(assistant).left - tester.getRect(count).right,
-      greaterThanOrEqualTo(8),
+      tester.getRect(count).top - tester.getRect(assistant).bottom,
+      greaterThanOrEqualTo(0),
     );
     expect(tester.getSize(toolbar).width, greaterThanOrEqualTo(48));
     expect(tester.getSize(toolbar).height, 48);
@@ -601,8 +1416,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 160));
 
-    expect(count, findsNothing);
-    expect(find.text('259 / 1471'), findsNothing);
+    expect(count, findsOneWidget);
+    expect(find.text('259 / 1471'), findsOneWidget);
     expect(
       find.descendant(
         of: assistant,
@@ -610,12 +1425,12 @@ void main() {
       ),
       findsNothing,
     );
-    expect(transparent, findsNothing);
+    expect(transparent, findsOneWidget);
     expect(assistant, findsOneWidget);
     expect(tester.getSize(footer).height, collapsedFooterHeight);
     expect(
-      tester.getRect(assistant).top,
-      greaterThanOrEqualTo(tester.getRect(input).bottom),
+      tester.getRect(assistant).bottom,
+      lessThanOrEqualTo(tester.getRect(input).bottom),
     );
     for (final icon in [
       Icons.translate,
@@ -631,8 +1446,8 @@ void main() {
       await tester.ensureVisible(action);
       await tester.pump();
       expect(
-        tester.getRect(action).top,
-        greaterThanOrEqualTo(tester.getRect(input).bottom),
+        tester.getRect(action).bottom,
+        lessThanOrEqualTo(tester.getRect(input).bottom),
       );
       expect(
         tester.getRect(action).left,
@@ -643,6 +1458,14 @@ void main() {
         lessThanOrEqualTo(tester.getRect(assistant).right),
       );
     }
+    expect(
+      tester
+          .getRect(
+            find.widgetWithIcon(IconButton, Icons.keyboard_arrow_down_rounded),
+          )
+          .right,
+      closeTo(tester.getRect(footer).right - 4, 0.1),
+    );
 
     await tester.tap(
       find.descendant(
@@ -663,8 +1486,8 @@ void main() {
     expect(transparent, findsOneWidget);
     expect(tester.getSize(footer).height, collapsedFooterHeight);
     expect(
-      tester.getRect(assistant).left - tester.getRect(count).right,
-      greaterThanOrEqualTo(8),
+      tester.getRect(count).top - tester.getRect(assistant).bottom,
+      greaterThanOrEqualTo(0),
     );
     expect(tester.takeException(), isNull);
   });
@@ -944,79 +1767,104 @@ void main() {
     expect(input.scrollPhysics, isNull);
   });
 
-  testWidgets('expanded prompt assistant does not cover editable prompt text', (
-    tester,
-  ) async {
-    const sessionId = 'assistant_clearance_test';
-    final controller = TextEditingController(
-      text: List.filled(12, 'long prompt tag').join(', '),
-    );
-    addTearDown(controller.dispose);
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+  for (final fitContent in [false, true]) {
+    for (final width in [320.0, 600.0, 840.0, 1180.0, 1600.0]) {
+      for (final scale in [1.0, 3.0]) {
+        testWidgets(
+          'prompt assistant floats without reserving space ($fitContent, $width, $scale)',
+          (tester) async {
+            const sessionId = 'assistant_overlay_test';
+            final controller = TextEditingController(
+              text: List.filled(12, 'long prompt tag').join(', '),
+            );
+            addTearDown(controller.dispose);
+            debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+            await tester.binding.setSurfaceSize(Size(width, 600));
+            addTearDown(() => tester.binding.setSurfaceSize(null));
 
-    try {
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            localStorageServiceProvider.overrideWith(
-              (ref) => _TestLocalStorageService(),
-            ),
-          ],
-          child: MaterialApp(
-            supportedLocales: AppLocalizations.supportedLocales,
-            localizationsDelegates: AppLocalizations.localizationsDelegates,
-            home: Scaffold(
-              body: SizedBox(
-                width: 320,
-                height: 80,
-                child: UnifiedPromptInput(
-                  controller: controller,
-                  sessionId: sessionId,
-                  config: const UnifiedPromptConfig(
-                    enableAutocomplete: false,
-                    enableSyntaxHighlight: false,
+            try {
+              await tester.pumpWidget(
+                ProviderScope(
+                  overrides: [
+                    localStorageServiceProvider.overrideWith(
+                      (ref) => _TestLocalStorageService(),
+                    ),
+                  ],
+                  child: MaterialApp(
+                    builder: (context, child) => MediaQuery(
+                      data: MediaQuery.of(
+                        context,
+                      ).copyWith(textScaler: TextScaler.linear(scale)),
+                      child: child!,
+                    ),
+                    supportedLocales: AppLocalizations.supportedLocales,
+                    localizationsDelegates:
+                        AppLocalizations.localizationsDelegates,
+                    home: Scaffold(
+                      body: SizedBox(
+                        width: width,
+                        height: fitContent ? null : 240,
+                        child: UnifiedPromptInput(
+                          controller: controller,
+                          sessionId: sessionId,
+                          config: const UnifiedPromptConfig(
+                            enableAutocomplete: false,
+                            enableSyntaxHighlight: false,
+                          ),
+                          decoration: const InputDecoration(
+                            contentPadding: EdgeInsets.all(12),
+                          ),
+                          maxLines: null,
+                          fitContent: fitContent,
+                          expands: !fitContent,
+                        ),
+                      ),
+                    ),
                   ),
-                  decoration: const InputDecoration(
-                    contentPadding: EdgeInsets.all(12),
-                  ),
-                  maxLines: null,
-                  expands: true,
                 ),
-              ),
-            ),
-          ),
-        ),
-      );
+              );
 
-      final container = ProviderScope.containerOf(
-        tester.element(find.byType(UnifiedPromptInput)),
-      );
-      container
-          .read(promptAssistantStateProvider.notifier)
-          .setExpanded(sessionId, true);
-      await tester.pump();
-
-      final textField = tester.widget<TextField>(find.byType(TextField));
-      final padding = textField.decoration!.contentPadding!.resolve(
-        TextDirection.ltr,
-      );
-      final toolbar = find.byKey(
-        const ValueKey<String>('prompt_assistant_toolbar_$sessionId'),
-      );
-      final editableRect = tester.getRect(find.byType(EditableText));
-      final toolbarRect = tester.getRect(toolbar);
-
-      expect(padding.bottom, PromptAssistantOverlay.contentBottomClearance);
-      expect(toolbar, findsOneWidget);
-      expect(editableRect.height, greaterThanOrEqualTo(18));
-      expect(editableRect.bottom, lessThanOrEqualTo(toolbarRect.top));
-      expect(toolbarRect.left, greaterThanOrEqualTo(8));
-      expect(toolbarRect.right, lessThanOrEqualTo(312));
-      expect(tester.takeException(), isNull);
-    } finally {
-      debugDefaultTargetPlatformOverride = null;
+              final container = ProviderScope.containerOf(
+                tester.element(find.byType(UnifiedPromptInput)),
+              );
+              await tester.pump();
+              final editorRect = tester.getRect(find.byType(EditableText));
+              final inputRect = tester.getRect(find.byType(UnifiedPromptInput));
+              final toolbar = find.byKey(
+                const ValueKey<String>('prompt_assistant_toolbar_$sessionId'),
+              );
+              for (final expanded in [false, true, false]) {
+                container
+                    .read(promptAssistantStateProvider.notifier)
+                    .setExpanded(sessionId, expanded);
+                await tester.pumpAndSettle();
+                final textField = tester.widget<TextField>(
+                  find.byType(TextField),
+                );
+                expect(
+                  textField.decoration!.contentPadding,
+                  const EdgeInsets.all(12),
+                );
+                expect(tester.getRect(find.byType(EditableText)), editorRect);
+                expect(
+                  tester.getRect(find.byType(UnifiedPromptInput)),
+                  inputRect,
+                );
+                expect(toolbar, findsOneWidget);
+                final toolbarRect = tester.getRect(toolbar);
+                expect(toolbarRect.left, greaterThanOrEqualTo(inputRect.left));
+                expect(toolbarRect.right, lessThanOrEqualTo(inputRect.right));
+                expect(toolbarRect.bottom, lessThanOrEqualTo(inputRect.bottom));
+                expect(tester.takeException(), isNull);
+              }
+            } finally {
+              debugDefaultTargetPlatformOverride = null;
+            }
+          },
+        );
+      }
     }
-  });
+  }
 }
 
 Future<ProviderContainer> _pumpMobilePromptHarness(WidgetTester tester) async {
@@ -1055,7 +1903,41 @@ Future<ProviderContainer> _pumpMobilePromptHarness(WidgetTester tester) async {
   );
 }
 
-class _TestLocalStorageService extends LocalStorageService {
+class _ResponsivePromptHarness extends StatefulWidget {
+  const _ResponsivePromptHarness({super.key});
+
+  @override
+  State<_ResponsivePromptHarness> createState() =>
+      _ResponsivePromptHarnessState();
+}
+
+class _ResponsivePromptHarnessState extends State<_ResponsivePromptHarness> {
+  final _promptKey = GlobalKey();
+  var _compact = false;
+
+  void toggleLayout() => setState(() => _compact = !_compact);
+
+  @override
+  Widget build(BuildContext context) => Column(
+    children: [
+      TextButton(
+        key: const ValueKey('toggle-responsive-prompt'),
+        onPressed: toggleLayout,
+        child: const Text('toggle'),
+      ),
+      Expanded(
+        child: Container(
+          key: const ValueKey('responsive-prompt-host'),
+          alignment: Alignment.topCenter,
+          padding: EdgeInsets.all(_compact ? 8 : 0),
+          child: PromptInputWidget(key: _promptKey, compact: _compact),
+        ),
+      ),
+    ],
+  );
+}
+
+class _TestLocalStorageService extends MemoryLocalStorage {
   _TestLocalStorageService({
     this.enablePromptWeightScroll = true,
     this.defaultModel = 'nai-diffusion-4-5-full',

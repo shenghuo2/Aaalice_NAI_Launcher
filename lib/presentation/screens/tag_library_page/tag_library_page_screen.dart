@@ -1,12 +1,20 @@
+import '../../selection/card_selection_scope.dart';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import '../../../core/constants/storage_keys.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 
 import '../../../core/agent/resources/agent_chat_resource_reference.dart';
+import '../../../core/platform/platform_capabilities.dart';
 import '../../../core/shortcuts/default_shortcuts.dart';
 import '../../../core/utils/character_prompt_block_parser.dart';
 import '../../../core/utils/comfyui_prompt_parser/pipe_parser.dart';
+import '../../../core/utils/file_explorer_utils.dart';
 import '../../../core/utils/localization_extension.dart';
 import '../../../core/utils/sd_to_nai_converter.dart';
 import '../../../data/models/tag_library/tag_library_entry.dart';
@@ -19,10 +27,23 @@ import '../../router/app_routes.dart';
 
 import '../../agent_chat/widgets/agent_resource_drop_region.dart';
 import '../../widgets/common/app_toast.dart';
+import '../../widgets/common/library_classification_drag.dart';
+import '../../widgets/common/context_menu_anchor.dart';
+import '../../widgets/common/owned_scroll_controller.dart';
 import '../../widgets/common/themed_confirm_dialog.dart';
+import '../../widgets/gallery/gallery_album_tree_view.dart';
+import '../../widgets/gallery/gallery_sidebar.dart';
+import '../../widgets/gallery/gallery_sidebar_sort_control.dart';
+import '../../providers/library_sidebar_sort_provider.dart';
+import '../../utils/library_sidebar_sort.dart';
+import '../../services/library_sidebar_move_service.dart';
+import '../../widgets/gallery/library_sidebar_root_drop_target.dart';
+import '../../../data/models/tag_library/tag_library_category.dart';
+import '../../../data/models/gallery/gallery_tree_drop_slot.dart';
 import '../../widgets/shortcuts/shortcut_aware_widget.dart';
 import 'widgets/category_tree_view.dart';
 import 'widgets/entry_card.dart';
+import 'widgets/entry_create_card.dart';
 import 'widgets/entry_list_item.dart';
 import 'widgets/entry_add_dialog.dart';
 import 'widgets/send_to_home_dialog.dart';
@@ -44,10 +65,28 @@ class TagLibraryPageScreen extends ConsumerStatefulWidget {
 class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
   /// 搜索框焦点节点
   final FocusNode _searchFocusNode = FocusNode();
+  final OwnedScrollController _cardScrollController = OwnedScrollController(
+    viewport: OwnedViewportOffset(),
+  );
+  final OwnedScrollController _listScrollController = OwnedScrollController(
+    viewport: OwnedViewportOffset(),
+  );
+  final OwnedScrollController _groupedScrollController = OwnedScrollController(
+    viewport: OwnedViewportOffset(),
+  );
+  final ValueNotifier<Set<String>> _expandedCategoryIds =
+      ValueNotifier<Set<String>>(<String>{});
+  final ValueNotifier<bool> _categoriesExpanded = ValueNotifier(true);
+  bool _showCategoryPanel = true;
 
   @override
   void dispose() {
     _searchFocusNode.dispose();
+    _expandedCategoryIds.dispose();
+    _categoriesExpanded.dispose();
+    _cardScrollController.dispose();
+    _listScrollController.dispose();
+    _groupedScrollController.dispose();
     super.dispose();
   }
 
@@ -55,9 +94,8 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final state = ref.watch(tagLibraryPageNotifierProvider);
-    final isSelectionMode = ref.watch(
-      tagLibrarySelectionNotifierProvider.select((value) => value.isActive),
-    );
+    final selectionState = ref.watch(tagLibrarySelectionNotifierProvider);
+    final isSelectionMode = selectionState.isActive;
 
     // 定义快捷键映射
     final shortcuts = <String, VoidCallback>{
@@ -122,50 +160,58 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
       },
     };
 
-    return PopScope<void>(
-      canPop: !isSelectionMode,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && isSelectionMode) {
-          ref.read(tagLibrarySelectionNotifierProvider.notifier).exit();
-        }
-      },
-      child: PageShortcuts(
-        contextType: ShortcutContext.tagLibrary,
-        shortcuts: shortcuts,
-        child: Scaffold(
-          body: LayoutBuilder(
-            builder: (context, constraints) {
-              final showSidebar = constraints.maxWidth >= 840;
-              return Row(
-                children: [
-                  if (showSidebar) _buildCategorySidebar(theme, state),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        TagLibraryToolbar(
-                          onShowCategories: showSidebar
-                              ? null
-                              : () => _showCategoryPanel(theme, state),
-                          onEnterSelectionMode: () => ref
-                              .read(
-                                tagLibrarySelectionNotifierProvider.notifier,
-                              )
-                              .enter(),
-                          onBulkDelete: _handleBulkDelete,
-                          onBulkMoveCategory: _handleBulkMoveCategory,
-                          onBulkToggleFavorite: _handleBulkToggleFavorite,
-                          onBulkCopy: _handleBulkCopy,
-                          onImport: _handleImport,
-                          onExport: _handleExport,
-                          onAddEntry: _showAddEntryDialog,
-                        ),
-                        Expanded(child: _buildContent(theme, state)),
-                      ],
+    return CardSelectionScope(
+      selection: selectionState,
+      commands: ref.read(tagLibrarySelectionNotifierProvider.notifier),
+      orderedIds: state.filteredEntries.map((entry) => entry.id).toList(),
+      child: CardSelectionShortcuts(
+        child: PopScope<void>(
+          canPop: !isSelectionMode,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop && isSelectionMode) {
+              ref.read(tagLibrarySelectionNotifierProvider.notifier).exit();
+            }
+          },
+          child: PageShortcuts(
+            contextType: ShortcutContext.tagLibrary,
+            shortcuts: shortcuts,
+            child: Scaffold(
+              body: LayoutBuilder(
+                builder: (context, constraints) {
+                  final persistentCategories = constraints.maxWidth >= 840;
+                  final showSidebar =
+                      persistentCategories && _showCategoryPanel;
+                  return GalleryCollectionWorkspace(
+                    sidebarWidthKey: StorageKeys.tagLibrarySidebarWidth,
+                    toolbar: TagLibraryToolbar(
+                      showPageTitle: true,
+                      showCategoryPanel: showSidebar,
+                      onShowCategories: persistentCategories
+                          ? () => setState(
+                              () => _showCategoryPanel = !_showCategoryPanel,
+                            )
+                          : () => _showCategoryPanelSheet(state),
+                      onOpenFolder:
+                          PlatformCapabilities.current.supportsOpenFolder
+                          ? _openLibraryFolder
+                          : null,
+                      onEnterSelectionMode: () => ref
+                          .read(tagLibrarySelectionNotifierProvider.notifier)
+                          .enter(),
+                      onBulkDelete: _handleBulkDelete,
+                      onBulkMoveCategory: _handleBulkMoveCategory,
+                      onBulkToggleFavorite: _handleBulkToggleFavorite,
+                      onBulkCopy: _handleBulkCopy,
+                      onImport: _handleImport,
+                      onExport: _handleExport,
+                      onAddEntry: _showAddEntryDialog,
                     ),
-                  ),
-                ],
-              );
-            },
+                    sidebar: showSidebar ? _buildCategorySidebar() : null,
+                    body: _buildContent(theme, state, isSelectionMode),
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ),
@@ -229,157 +275,236 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
   }
 
   /// 构建分类侧边栏
-  Widget _buildCategorySidebar(
-    ThemeData theme,
-    TagLibraryPageState state, {
+  Widget _buildCategorySidebar({
     bool forPanel = false,
     VoidCallback? onCategorySelectionComplete,
-  }) {
-    return Container(
-      key: forPanel ? null : const Key('tag-library-category-sidebar'),
-      width: forPanel ? double.infinity : 240,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        border: forPanel
-            ? null
-            : Border(
-                right: BorderSide(
-                  color: theme.colorScheme.outlineVariant.withValues(
-                    alpha: 0.3,
-                  ),
-                ),
-              ),
+  }) => ValueListenableBuilder<bool>(
+    valueListenable: _categoriesExpanded,
+    builder: (context, expanded, _) => Consumer(
+      builder: (context, sidebarRef, _) => _buildCategorySidebarContents(
+        sidebarRef.watch(tagLibraryPageNotifierProvider),
+        sidebarRef
+            .watch(
+              librarySidebarSortProvider(LibrarySidebarSection.tagCategories),
+            )
+            .sort,
+        expanded: expanded,
+        forPanel: forPanel,
+        onCategorySelectionComplete: onCategorySelectionComplete,
       ),
-      child: Column(
+    ),
+  );
+
+  Widget _buildCategorySidebarContents(
+    TagLibraryPageState state,
+    LibrarySidebarSort sort, {
+    required bool expanded,
+    required bool forPanel,
+    VoidCallback? onCategorySelectionComplete,
+  }) {
+    void selectCategory(String? id) {
+      ref.read(tagLibraryPageNotifierProvider.notifier).selectCategory(id);
+      onCategorySelectionComplete?.call();
+    }
+
+    final allEntriesItem = GalleryAllImagesItem(
+      key: const Key('tag-library-all-entries'),
+      icon: Icons.folder_outlined,
+      selectedIcon: Icons.folder,
+      label: context.l10n.tagLibrary_allEntries,
+      count: state.entries.length,
+      isSelected: state.selectedCategoryId == null,
+      onTap: () => selectCategory(null),
+    );
+    final allEntries = GestureDetector(
+      onSecondaryTapUp: (details) => _showEntryCreationContextMenu(
+        details.globalPosition,
+        initialCategoryId: null,
+      ),
+      child: LibraryClassificationDropTarget<TagLibraryEntry>(
+        kind: AgentChatResourceKind.tagLibraryEntry,
+        resolve: (id) => ref
+            .read(tagLibraryPageNotifierProvider)
+            .entries
+            .where((entry) => entry.id == id)
+            .firstOrNull,
+        needsChange: (entry) => entry.categoryId != null,
+        onAccept: (entry) => ref
+            .read(tagLibraryPageNotifierProvider.notifier)
+            .moveEntryToCategory(entry.id, null),
+        child: allEntriesItem,
+      ),
+    );
+
+    return GallerySidebarSurface(
+      key: forPanel ? null : const Key('tag-library-category-sidebar'),
+      modal: forPanel,
+      child: ListView(
+        padding: EdgeInsets.zero,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            constraints: const BoxConstraints(minHeight: 62),
-            child: Row(
-              children: [
-                if (!forPanel) ...[
-                  Icon(
-                    Icons.folder_outlined,
-                    size: 20,
-                    color: theme.colorScheme.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      context.l10n.tagLibrary_categories,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ] else
-                  const Spacer(),
-                FilledButton.tonalIcon(
-                  onPressed: () => _showAddCategoryDialog(),
-                  icon: const Icon(Icons.add, size: 18),
-                  label: Text(
-                    context.l10n.common_new,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                  ),
-                ),
-              ],
+          if (!forPanel)
+            const SizedBox(
+              height: GalleryCollectionChrome.navigationTopPadding,
+            ),
+          allEntries,
+          LibrarySidebarRootDropTarget<TagLibraryCategory>(
+            canDrop: (category) => category.parentId != null,
+            onDrop: (category) async {
+              await ref
+                  .read(librarySidebarMoveServiceProvider)
+                  .moveTagCategory(
+                    category.id,
+                    null,
+                    GalleryTreeDropSlot.child,
+                  );
+            },
+            child: GallerySidebarSectionHeader(
+              toggleKey: const Key('tag-library-category-section-toggle'),
+              icon: Icons.folder_outlined,
+              title: context.l10n.tagLibrary_categories,
+              trailing: const GallerySidebarSortControl(
+                section: LibrarySidebarSection.tagCategories,
+              ),
+              isExpanded: expanded,
+              onToggle: () => _categoriesExpanded.value = !expanded,
+              onCreate: _showAddCategoryDialog,
             ),
           ),
-
-          const Divider(height: 1),
-
-          // 分类树
-          Expanded(
-            child: CategoryTreeView(
-              categories: state.categories,
-              entries: state.entries,
-              selectedCategoryId: state.selectedCategoryId,
-              onCategorySelected: (id) {
-                ref
-                    .read(tagLibraryPageNotifierProvider.notifier)
-                    .selectCategory(id);
-                onCategorySelectionComplete?.call();
-              },
-              onCategoryRename: (id, name) {
-                ref
-                    .read(tagLibraryPageNotifierProvider.notifier)
-                    .renameCategory(id, name);
-              },
-              onCategoryDelete: (id) {
-                _showDeleteCategoryConfirmation(id);
-              },
-              onAddSubCategory: (parentId) {
-                _showAddCategoryDialog(parentId: parentId);
-              },
-              onCategoryMove: (categoryId, newParentId) {
-                ref
-                    .read(tagLibraryPageNotifierProvider.notifier)
-                    .moveCategory(categoryId, newParentId);
-              },
-              onCategoryReorder: (parentId, oldIndex, newIndex) {
-                ref
-                    .read(tagLibraryPageNotifierProvider.notifier)
-                    .reorderCategories(parentId, oldIndex, newIndex);
-              },
-              onEntryDrop: (entryId, categoryId) {
-                ref
-                    .read(tagLibraryPageNotifierProvider.notifier)
-                    .moveEntryToCategory(entryId, categoryId);
-                AppToast.success(context, context.l10n.tagLibrary_entryMoved);
-              },
-            ),
-          ),
+          if (expanded) _buildCategoryTree(state, sort, selectCategory),
         ],
       ),
     );
   }
 
-  Future<void> _showCategoryPanel(ThemeData theme, TagLibraryPageState state) {
+  Widget _buildCategoryTree(
+    TagLibraryPageState state,
+    LibrarySidebarSort sort,
+    ValueChanged<String?> selectCategory,
+  ) => ValueListenableBuilder<Set<String>>(
+    valueListenable: _expandedCategoryIds,
+    builder: (context, expandedCategoryIds, _) => CategoryTreeView(
+      categories: state.categories,
+      sort: sort,
+      entries: state.entries,
+      selectedCategoryId: state.selectedCategoryId,
+      expandedCategoryIds: expandedCategoryIds,
+      includeAllEntries: false,
+      embedded: true,
+      onExpandedCategoryIdsChanged: (ids) {
+        _expandedCategoryIds.value = ids;
+      },
+      onCategorySelected: selectCategory,
+      onCategoryRename: (id, name) {
+        ref
+            .read(tagLibraryPageNotifierProvider.notifier)
+            .renameCategory(id, name);
+      },
+      onCategoryDelete: _showDeleteCategoryConfirmation,
+      onAddSubCategory: (parentId) {
+        _showAddCategoryDialog(parentId: parentId);
+      },
+      onAddEntry: _showAddEntryDialogForCategory,
+      onCategoryMove: (categoryId, newParentId) {
+        ref
+            .read(tagLibraryPageNotifierProvider.notifier)
+            .moveCategory(categoryId, newParentId);
+      },
+      onCategoryMoveToSlot: (id, targetId, slot) => ref
+          .read(librarySidebarMoveServiceProvider)
+          .moveTagCategory(id, targetId, slot),
+      onEntryDrop: (entryId, categoryId) async {
+        await ref
+            .read(tagLibraryPageNotifierProvider.notifier)
+            .moveEntryToCategory(entryId, categoryId);
+        if (!context.mounted) return;
+        AppToast.success(context, context.l10n.tagLibrary_entryMoved);
+      },
+      onEntryFavoriteDrop: (entryId) async {
+        final index = state.entries.indexWhere(
+          (candidate) => candidate.id == entryId,
+        );
+        if (index >= 0 && !state.entries[index].isFavorite) {
+          await ref
+              .read(tagLibraryPageNotifierProvider.notifier)
+              .toggleFavorite(entryId);
+        }
+      },
+    ),
+  );
+
+  Future<void> _showCategoryPanelSheet(TagLibraryPageState state) {
     return AdaptivePresenter.showPanel<void>(
       context: context,
       title: context.l10n.tagLibrary_categories,
       initialChildSize: 0.76,
       builder: (panelContext, scrollController) => _buildCategorySidebar(
-        theme,
-        state,
         forPanel: true,
         onCategorySelectionComplete: () => Navigator.of(panelContext).pop(),
       ),
     );
   }
 
+  Future<void> _openLibraryFolder() async {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final directory = Directory(
+        path.join(appDir.path, 'tag_library_thumbnails'),
+      );
+      await directory.create(recursive: true);
+      await FileExplorerUtils.openDirectory(directory.path);
+    } catch (error) {
+      if (mounted) {
+        AppToast.error(
+          context,
+          context.l10n.localGallery_openFolderFailed('$error'),
+        );
+      }
+    }
+  }
+
   /// 构建内容区域
-  Widget _buildContent(ThemeData theme, TagLibraryPageState state) {
+  Widget _buildContent(
+    ThemeData theme,
+    TagLibraryPageState state,
+    bool isSelectionMode,
+  ) {
     final entries = state.filteredEntries;
 
     if (state.isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(
+        child: CircularProgressIndicator(
+          value: MediaQuery.disableAnimationsOf(context) ? 0.72 : null,
+        ),
+      );
     }
 
-    if (entries.isEmpty) {
+    if (entries.isEmpty && state.viewMode != TagLibraryViewMode.card) {
       return _buildEmptyState(theme, state);
     }
 
-    switch (state.viewMode) {
-      case TagLibraryViewMode.card:
-        return _buildCardGrid(theme, entries);
-      case TagLibraryViewMode.list:
-        return _buildListView(theme, entries);
-      case TagLibraryViewMode.grouped:
-        return GroupedEntriesView(
-          onEdit: _showEditDialog,
-          onDelete: _showDeleteEntryConfirmationForEntry,
-          onSend: _showEntryDetail,
-        );
-    }
+    final content = switch (state.viewMode) {
+      TagLibraryViewMode.card => _buildCardGrid(
+        theme,
+        entries,
+        showCreateCard: !isSelectionMode,
+      ),
+      TagLibraryViewMode.list => _buildListView(theme, entries),
+      TagLibraryViewMode.grouped => GroupedEntriesView(
+        scrollController: _groupedScrollController,
+        entryBuilder: (entry) =>
+            _buildEntryItem(entry, true, showCategory: false),
+      ),
+    };
+
+    if (isSelectionMode) return content;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onSecondaryTapUp: (details) => _showEntryCreationContextMenu(
+        details.globalPosition,
+        initialCategoryId: _selectedEntryCategoryId(state),
+      ),
+      child: content,
+    );
   }
 
   /// 构建空状态
@@ -422,23 +547,43 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
   }
 
   /// 构建卡片网格
-  Widget _buildCardGrid(ThemeData theme, List<TagLibraryEntry> entries) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 240,
-        mainAxisExtent: 80,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-      ),
-      itemCount: entries.length,
-      itemBuilder: (context, index) => _buildEntryItem(entries[index], true),
+  Widget _buildCardGrid(
+    ThemeData theme,
+    List<TagLibraryEntry> entries, {
+    required bool showCreateCard,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+        final layout = computeTagLibraryGridLayout(
+          constraints.maxWidth,
+          textScale,
+        );
+        return GridView.builder(
+          controller: _cardScrollController,
+          padding: EdgeInsets.all(layout.padding),
+          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: layout.maxCrossAxisExtent,
+            mainAxisExtent: layout.mainAxisExtent,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+          ),
+          itemCount: entries.length + (showCreateCard ? 1 : 0),
+          itemBuilder: (context, index) {
+            if (index < entries.length) {
+              return _buildEntryItem(entries[index], true);
+            }
+            return EntryCreateCard(onPressed: _showAddEntryDialog);
+          },
+        );
+      },
     );
   }
 
   /// 构建列表视图
   Widget _buildListView(ThemeData theme, List<TagLibraryEntry> entries) {
     return ListView.builder(
+      controller: _listScrollController,
       padding: const EdgeInsets.all(16),
       itemCount: entries.length,
       itemBuilder: (context, index) => Padding(
@@ -449,7 +594,11 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
   }
 
   /// 构建条目组件（卡片或列表项）
-  Widget _buildEntryItem(TagLibraryEntry entry, bool isCard) {
+  Widget _buildEntryItem(
+    TagLibraryEntry entry,
+    bool isCard, {
+    bool showCategory = true,
+  }) {
     final state = ref.read(tagLibraryPageNotifierProvider);
     final selectionState = ref.watch(tagLibrarySelectionNotifierProvider);
     final allIds = state.filteredEntries.map((e) => e.id).toList();
@@ -468,7 +617,6 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
     }
 
     final commonProps = (
-      enableDrag: !selectionState.isActive,
       isSelectionMode: selectionState.isActive,
       isSelected: isSelected,
       onToggleSelection: toggleSelection,
@@ -485,8 +633,7 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
         EntryCard(
           key: ValueKey(entry.id),
           entry: entry,
-          categoryName: categoryName,
-          enableDrag: commonProps.enableDrag,
+          categoryName: showCategory ? categoryName : null,
           isSelectionMode: commonProps.isSelectionMode,
           isSelected: commonProps.isSelected,
           onToggleSelection: commonProps.onToggleSelection,
@@ -494,6 +641,7 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
           onDelete: commonProps.onDelete,
           onEdit: commonProps.onEdit,
           onSend: () => _showEntryDetail(entry),
+          onClassify: () => _classifyEntry(entry),
           onToggleFavorite: commonProps.onToggleFavorite,
         ),
       );
@@ -504,14 +652,14 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
       EntryListItem(
         key: ValueKey(entry.id),
         entry: entry,
-        categoryName: categoryName,
-        enableDrag: commonProps.enableDrag,
+        categoryName: showCategory ? categoryName : null,
         isSelectionMode: commonProps.isSelectionMode,
         isSelected: commonProps.isSelected,
         onToggleSelection: commonProps.onToggleSelection,
         onTap: () => _showEntryDetail(entry),
         onDelete: commonProps.onDelete,
         onEdit: commonProps.onEdit,
+        onClassify: () => _classifyEntry(entry),
         onToggleFavorite: commonProps.onToggleFavorite,
       ),
     );
@@ -527,6 +675,19 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
       ),
       child: child,
     );
+  }
+
+  Future<void> _classifyEntry(TagLibraryEntry entry) async {
+    final state = ref.read(tagLibraryPageNotifierProvider);
+    final target = await BulkMoveCategoryDialog.show(
+      context,
+      categories: state.categories,
+      currentCategoryId: entry.categoryId,
+    );
+    if (target == null || !mounted) return;
+    await ref
+        .read(tagLibraryPageNotifierProvider.notifier)
+        .moveEntryToCategory(entry.id, target.isEmpty ? null : target);
   }
 
   /// 获取分类名称
@@ -585,13 +746,10 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
 
     final state = ref.read(tagLibraryPageNotifierProvider);
 
-    // 显示分类选择对话框
-    final targetCategoryId = await showDialog<String?>(
-      context: context,
-      builder: (context) => BulkMoveCategoryDialog(
-        categories: state.categories,
-        currentCategoryId: state.selectedCategoryId,
-      ),
+    final targetCategoryId = await BulkMoveCategoryDialog.show(
+      context,
+      categories: state.categories,
+      currentCategoryId: state.selectedCategoryId,
     );
 
     if (targetCategoryId == null || !mounted) return;
@@ -600,7 +758,10 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
     for (final entryId in selectedIds) {
       await ref
           .read(tagLibraryPageNotifierProvider.notifier)
-          .moveEntryToCategory(entryId, targetCategoryId);
+          .moveEntryToCategory(
+            entryId,
+            targetCategoryId.isEmpty ? null : targetCategoryId,
+          );
     }
 
     ref.read(tagLibrarySelectionNotifierProvider.notifier).exit();
@@ -678,16 +839,16 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
 
   /// 导入词库
   void _handleImport() {
-    showDialog(context: context, builder: (context) => const ImportDialog());
+    ImportDialog.show(context);
   }
 
   /// 导出词库
   void _handleExport() {
     final state = ref.read(tagLibraryPageNotifierProvider);
-    showDialog(
-      context: context,
-      builder: (context) =>
-          ExportDialog(entries: state.entries, categories: state.categories),
+    ExportDialog.show(
+      context,
+      entries: state.entries,
+      categories: state.categories,
     );
   }
 
@@ -695,94 +856,98 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
 
   void _showAddEntryDialog() {
     final state = ref.read(tagLibraryPageNotifierProvider);
-    showDialog(
-      context: context,
-      builder: (context) => EntryAddDialog(
-        categories: state.categories,
-        initialCategoryId: state.selectedCategoryId,
-      ),
+    _showAddEntryDialogForCategory(_selectedEntryCategoryId(state));
+  }
+
+  void _showAddEntryDialogForCategory(String? categoryId) {
+    final state = ref.read(tagLibraryPageNotifierProvider);
+    EntryAddDialog.show(
+      context,
+      categories: state.categories,
+      initialCategoryId: categoryId,
     );
   }
 
-  void _showAddCategoryDialog({String? parentId}) {
-    final controller = TextEditingController();
-    showDialog(
+  String? _selectedEntryCategoryId(TagLibraryPageState state) {
+    final selected = state.selectedCategoryId;
+    return state.categories.any((category) => category.id == selected)
+        ? selected
+        : null;
+  }
+
+  Future<void> _showEntryCreationContextMenu(
+    Offset position, {
+    required String? initialCategoryId,
+  }) async {
+    final create = await showMenu<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(dialogContext.l10n.tagLibrary_newCategory),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: dialogContext.l10n.tagLibrary_categoryNameHint,
-            border: const OutlineInputBorder(),
+      position: contextMenuAnchorAt(context, position),
+      items: [
+        PopupMenuItem(
+          key: const Key('tag-library-context-create-entry'),
+          value: true,
+          child: Row(
+            children: [
+              const Icon(Icons.add_box_outlined, size: 18),
+              const SizedBox(width: 8),
+              Text(context.l10n.tagLibrary_addEntry),
+            ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(dialogContext.l10n.common_cancel),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final name = controller.text.trim();
-              if (name.isNotEmpty) {
-                final result = await ref
-                    .read(tagLibraryPageNotifierProvider.notifier)
-                    .addCategory(name: name, parentId: parentId);
-                if (!dialogContext.mounted) return;
-                if (result != null) {
-                  Navigator.of(dialogContext).pop();
-                } else {
-                  AppToast.error(
-                    dialogContext,
-                    dialogContext.l10n.tagLibrary_categoryNameExists,
-                  );
-                }
-              }
-            },
-            child: Text(dialogContext.l10n.common_create),
-          ),
-        ],
+      ],
+    );
+    if (create == true && mounted) {
+      _showAddEntryDialogForCategory(initialCategoryId);
+    }
+  }
+
+  Future<void> _showAddCategoryDialog({String? parentId}) async {
+    await AdaptivePresenter.showForm<void>(
+      context: context,
+      title: context.l10n.tagLibrary_newCategory,
+      dialogWidth: 440,
+      builder: (panelContext, scrollController) => _AddCategoryForm(
+        scrollController: scrollController,
+        onCreate: (name) async {
+          final result = await ref
+              .read(tagLibraryPageNotifierProvider.notifier)
+              .addCategory(name: name, parentId: parentId);
+          if (result != null) return true;
+          if (panelContext.mounted) {
+            AppToast.error(
+              panelContext,
+              panelContext.l10n.tagLibrary_categoryNameExists,
+            );
+          }
+          return false;
+        },
       ),
     );
   }
 
-  void _showDeleteCategoryConfirmation(String categoryId) {
+  Future<void> _showDeleteCategoryConfirmation(String categoryId) async {
     final state = ref.read(tagLibraryPageNotifierProvider);
     final category = state.categories.firstWhere((c) => c.id == categoryId);
     final entryCount = state.getCategoryEntryCount(categoryId);
+    final l10n = context.l10n;
 
-    showDialog(
+    final confirmed = await ThemedConfirmDialog.show(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(context.l10n.tagLibrary_deleteCategoryTitle),
-        content: Text(
-          context.l10n.tagLibrary_deleteCategoryConfirm(
-            category.displayName,
-            entryCount.toString(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(context.l10n.common_cancel),
-          ),
-          FilledButton(
-            onPressed: () {
-              ref
-                  .read(tagLibraryPageNotifierProvider.notifier)
-                  .deleteCategory(categoryId);
-              Navigator.of(context).pop();
-            },
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: Text(context.l10n.common_delete),
-          ),
-        ],
+      title: l10n.tagLibrary_deleteCategoryTitle,
+      content: l10n.tagLibrary_deleteCategoryConfirm(
+        category.displayName,
+        entryCount.toString(),
       ),
+      confirmText: l10n.common_delete,
+      cancelText: l10n.common_cancel,
+      type: ThemedConfirmDialogType.danger,
+      icon: Icons.delete_outline,
     );
+    if (!confirmed || !mounted) return;
+
+    ref
+        .read(tagLibraryPageNotifierProvider.notifier)
+        .deleteCategory(categoryId);
   }
 
   void _showDeleteEntryConfirmation(String entryId) {
@@ -791,34 +956,22 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
     _showDeleteEntryConfirmationForEntry(entry);
   }
 
-  void _showDeleteEntryConfirmationForEntry(TagLibraryEntry entry) {
-    showDialog(
+  Future<void> _showDeleteEntryConfirmationForEntry(
+    TagLibraryEntry entry,
+  ) async {
+    final l10n = context.l10n;
+    final confirmed = await ThemedConfirmDialog.show(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(context.l10n.tagLibrary_deleteEntryTitle),
-        content: Text(
-          context.l10n.tagLibrary_deleteEntryConfirm(entry.displayName),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text(context.l10n.common_cancel),
-          ),
-          FilledButton(
-            onPressed: () {
-              ref
-                  .read(tagLibraryPageNotifierProvider.notifier)
-                  .deleteEntry(entry.id);
-              Navigator.of(context).pop();
-            },
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: Text(context.l10n.common_delete),
-          ),
-        ],
-      ),
+      title: l10n.tagLibrary_deleteEntryTitle,
+      content: l10n.tagLibrary_deleteEntryConfirm(entry.displayName),
+      confirmText: l10n.common_delete,
+      cancelText: l10n.common_cancel,
+      type: ThemedConfirmDialogType.danger,
+      icon: Icons.delete_outline,
     );
+    if (!confirmed || !mounted) return;
+
+    ref.read(tagLibraryPageNotifierProvider.notifier).deleteEntry(entry.id);
   }
 
   void _showEntryDetail(TagLibraryEntry entry) async {
@@ -934,12 +1087,120 @@ class _TagLibraryPageScreenState extends ConsumerState<TagLibraryPageScreen> {
     };
   }
 
-  void _showEditDialog(dynamic entry) {
+  void _showEditDialog(TagLibraryEntry entry) {
     final state = ref.read(tagLibraryPageNotifierProvider);
-    showDialog(
-      context: context,
-      builder: (context) =>
-          EntryAddDialog(categories: state.categories, entry: entry),
+    EntryAddDialog.show(context, categories: state.categories, entry: entry);
+  }
+}
+
+class _AddCategoryForm extends StatefulWidget {
+  const _AddCategoryForm({
+    required this.scrollController,
+    required this.onCreate,
+  });
+
+  final ScrollController scrollController;
+  final Future<bool> Function(String name) onCreate;
+
+  @override
+  State<_AddCategoryForm> createState() => _AddCategoryFormState();
+}
+
+class _AddCategoryFormState extends State<_AddCategoryForm> {
+  final TextEditingController _controller = TextEditingController();
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final name = _controller.text.trim();
+    if (name.isEmpty || _submitting) return;
+    setState(() => _submitting = true);
+    final created = await widget.onCreate(name);
+    if (!mounted) return;
+    if (created) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      key: const ValueKey('tag-library-add-category-form'),
+      controller: widget.scrollController,
+      padding: const EdgeInsets.all(16),
+      children: [
+        TextField(
+          controller: _controller,
+          autofocus: true,
+          enabled: !_submitting,
+          textInputAction: TextInputAction.done,
+          decoration: InputDecoration(
+            labelText: context.l10n.tagLibrary_categoryNameHint,
+            filled: true,
+            border: InputBorder.none,
+          ),
+          onSubmitted: (_) => _submit(),
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          alignment: WrapAlignment.end,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            TextButton(
+              onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+              child: Text(context.l10n.common_cancel),
+            ),
+            FilledButton(
+              onPressed: _submitting ? null : _submit,
+              child: _submitting
+                  ? SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        value: MediaQuery.disableAnimationsOf(context)
+                            ? 0.72
+                            : null,
+                      ),
+                    )
+                  : Text(context.l10n.common_create),
+            ),
+          ],
+        ),
+      ],
     );
   }
+}
+
+@immutable
+class TagLibraryGridLayout {
+  const TagLibraryGridLayout({
+    required this.maxCrossAxisExtent,
+    required this.mainAxisExtent,
+    required this.padding,
+  });
+
+  final double maxCrossAxisExtent;
+  final double mainAxisExtent;
+  final double padding;
+}
+
+TagLibraryGridLayout computeTagLibraryGridLayout(
+  double availableWidth,
+  double textScale,
+) {
+  final compact = availableWidth < 600;
+  final effectiveScale = textScale.clamp(1.0, 3.0);
+  return TagLibraryGridLayout(
+    maxCrossAxisExtent: compact ? 280 : 240,
+    mainAxisExtent: 80 + (effectiveScale - 1) * 12,
+    padding: compact ? 12 : 16,
+  );
 }

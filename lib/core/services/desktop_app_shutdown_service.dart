@@ -16,6 +16,12 @@ class DesktopAppShutdownService {
   DesktopAppShutdownService._();
 
   static Future<void>? _shutdownFuture;
+  static bool get isShuttingDown => _shutdownFuture != null;
+  static Future<void> Function()? _windowStateFlushHandler;
+
+  static void setWindowStateFlushHandler(Future<void> Function() handler) {
+    _windowStateFlushHandler = handler;
+  }
 
   static Future<void> shutdownAndExit(int code) {
     return _shutdownFuture ??= _performShutdown(code);
@@ -23,6 +29,37 @@ class DesktopAppShutdownService {
 
   static Future<void> _performShutdown(int code) async {
     AppLogger.i('Application shutdown started', 'AppShutdown');
+
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      // Hide immediately without destroying the engine needed to finish cleanup.
+      try {
+        await windowManager.hide();
+      } catch (error, stackTrace) {
+        AppLogger.e(
+          'Window hide failed during shutdown',
+          error,
+          stackTrace,
+          'AppShutdown',
+        );
+      }
+      try {
+        await trayManager.destroy();
+      } catch (error) {
+        AppLogger.w('Tray shutdown failed: $error', 'AppShutdown');
+      }
+    }
+
+    try {
+      await _windowStateFlushHandler?.call();
+      AppLogger.i('Window state flushed successfully', 'AppShutdown');
+    } catch (error, stackTrace) {
+      AppLogger.e(
+        'Window state flush failed during shutdown',
+        error,
+        stackTrace,
+        'AppShutdown',
+      );
+    }
 
     try {
       await DatabaseManager.instance.dispose();
@@ -39,12 +76,6 @@ class DesktopAppShutdownService {
     }
 
     if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
-      try {
-        await trayManager.destroy();
-      } catch (error) {
-        AppLogger.w('Tray shutdown failed: $error', 'AppShutdown');
-      }
-
       try {
         await windowManager.setPreventClose(false);
         await windowManager.destroy();

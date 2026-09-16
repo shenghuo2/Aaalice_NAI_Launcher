@@ -186,11 +186,38 @@ class AccountDetailTile extends ConsumerWidget {
                 ],
               ),
             ),
+            if (subscription.tier > 0 && (subscription.expiresAt ?? 0) > 0)
+              Text(
+                context.l10n.settings_subscriptionExpiresOn(
+                  DateTime.fromMillisecondsSinceEpoch(
+                    subscription.expiresAt! * 1000,
+                  ),
+                ),
+                key: const Key('account-subscription-expiry'),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
           ],
         );
       },
       error: (_) =>
           Icon(Icons.error_outline, size: 16, color: theme.colorScheme.error),
+      unsupported: () => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          context.l10n.settings_thirdPartyApiAccount,
+          style: TextStyle(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
     );
   }
 

@@ -1,5 +1,7 @@
+import 'package:nai_launcher/presentation/widgets/common/horizontal_action_strip.dart';
 import 'package:flutter/material.dart';
 
+import '../../../themes/core/layered_surface_style.dart';
 import '../../../themes/design_tokens.dart';
 
 /// 设置卡片组件
@@ -46,11 +48,7 @@ class SettingsCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    // 部分自定义主题未单独定义容器色阶，需保留最小色差才能让分组可见。
-    final cardColor = Color.alphaBlend(
-      colorScheme.onSurface.withValues(alpha: 0.05),
-      colorScheme.surfaceContainerLow,
-    );
+    final cardColor = sectionSurfaceColor(colorScheme);
 
     final description = this.description;
 
@@ -74,10 +72,7 @@ class SettingsCard extends StatelessWidget {
                   DesignTokens.spacingMd,
                   DesignTokens.spacingXxs,
                 ),
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: navigation!,
-                ),
+                child: HorizontalActionStrip(child: navigation!),
               ),
             if (title != null)
               Padding(
@@ -137,10 +132,7 @@ class SettingsCard extends StatelessWidget {
                         children: [
                           titleBlock,
                           const SizedBox(height: DesignTokens.spacingXs),
-                          SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: trailing!,
-                          ),
+                          HorizontalActionStrip(child: trailing!),
                         ],
                       );
                     }
@@ -153,10 +145,7 @@ class SettingsCard extends StatelessWidget {
                           constraints: BoxConstraints(
                             maxWidth: constraints.maxWidth * 0.45,
                           ),
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: trailing!,
-                          ),
+                          child: HorizontalActionStrip(child: trailing!),
                         ),
                       ],
                     );

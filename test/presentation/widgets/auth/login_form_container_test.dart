@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
+import 'package:nai_launcher/presentation/adaptive/interaction_policy.dart';
 import 'package:nai_launcher/presentation/providers/auth_provider.dart';
 import 'package:nai_launcher/presentation/themes/core/input_surface_style.dart';
 import 'package:nai_launcher/presentation/widgets/auth/auth_mode_switcher.dart';
+import 'package:nai_launcher/presentation/widgets/auth/credentials_login_form.dart';
 import 'package:nai_launcher/presentation/widgets/auth/login_form_container.dart';
+import 'package:nai_launcher/presentation/widgets/auth/third_party_api_login_card.dart';
 import 'package:nai_launcher/presentation/widgets/common/floating_label_input.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -107,6 +110,34 @@ void main() {
   });
 
   testWidgets(
+    'credentials actions reflow at 320 width with 3x text and keep touch targets',
+    (tester) async {
+      await _pumpCredentialsForm(
+        tester,
+        width: 320,
+        textScaler: const TextScaler.linear(3),
+        policy: const InteractionPolicy(
+          modality: InteractionModality.touch,
+          touchAvailable: true,
+          precisePointerAvailable: false,
+        ),
+      );
+
+      final checkbox = find.byKey(const Key('credentials_auto_login_checkbox'));
+      final forgotPassword = find.byKey(
+        const Key('credentials_forgot_password'),
+      );
+      expect(tester.getSize(checkbox), const Size.square(48));
+      expect(tester.getSize(forgotPassword).height, greaterThanOrEqualTo(48));
+      expect(
+        tester.getTopLeft(forgotPassword).dy,
+        greaterThan(tester.getTopLeft(checkbox).dy),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'login forms do not mutate a pre-existing auth error while building',
     (tester) async {
       await _pumpLoginForm(
@@ -125,6 +156,31 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final locale in AppLocalizations.supportedLocales) {
+    testWidgets(
+      'third-party streaming hint keeps the exact settings path on narrow layouts for $locale',
+      (tester) async {
+        await _pumpThirdPartyCard(tester, locale);
+
+        final hintFinder = find.byKey(const Key('third_party_streaming_hint'));
+        final l10n = AppLocalizations.of(tester.element(hintFinder))!;
+        final hint = l10n.auth_thirdPartyStreamingHint;
+
+        expect(find.text(hint), findsOneWidget);
+        expect(hint, contains(l10n.settings_title));
+        expect(hint, contains(l10n.settings_generation));
+        expect(hint, contains(l10n.settings_generationOutputSection));
+        expect(hint, contains(l10n.settings_generationStreamPreview));
+
+        final hintRect = tester.getRect(hintFinder);
+        final cardRect = tester.getRect(find.byType(ThirdPartyApiLoginCard));
+        expect(hintRect.left, greaterThanOrEqualTo(cardRect.left));
+        expect(hintRect.right, lessThanOrEqualTo(cardRect.right));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }
 
 Future<void> _pumpLoginForm(
@@ -151,6 +207,69 @@ Future<void> _pumpLoginForm(
             child: SizedBox(
               width: 402,
               child: SingleChildScrollView(child: LoginFormContainer()),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+Future<void> _pumpCredentialsForm(
+  WidgetTester tester, {
+  required double width,
+  required TextScaler textScaler,
+  required InteractionPolicy policy,
+}) async {
+  await tester.binding.setSurfaceSize(Size(width, 1200));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [authNotifierProvider.overrideWith(_FakeAuthNotifier.new)],
+      child: MaterialApp(
+        locale: const Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: InteractionPolicyScope(
+          initialPolicy: policy,
+          child: MediaQuery(
+            data: MediaQueryData(
+              size: Size(width, 1200),
+              textScaler: textScaler,
+            ),
+            child: const Scaffold(
+              body: SingleChildScrollView(
+                padding: EdgeInsets.all(16),
+                child: CredentialsLoginForm(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+Future<void> _pumpThirdPartyCard(WidgetTester tester, Locale locale) async {
+  await tester.binding.setSurfaceSize(const Size(360, 1000));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [authNotifierProvider.overrideWith(_FakeAuthNotifier.new)],
+      child: MaterialApp(
+        locale: locale,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: const MediaQuery(
+          data: MediaQueryData(textScaler: TextScaler.linear(2)),
+          child: Scaffold(
+            body: SingleChildScrollView(
+              padding: EdgeInsets.all(20),
+              child: ThirdPartyApiLoginCard(),
             ),
           ),
         ),

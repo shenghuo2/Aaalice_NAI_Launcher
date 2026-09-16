@@ -7,7 +7,9 @@ import 'package:image/image.dart' as img;
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../core/constants/model_capabilities.dart';
-import '../../core/services/android_generation_foreground_service.dart';
+import '../../core/platform/platform_capabilities.dart';
+import '../../core/services/android_foreground_task_service.dart';
+import '../../core/services/android_media_store_service.dart';
 import '../../core/services/anlas_calculator.dart';
 import '../../core/services/character_conversion_service.dart';
 import '../../core/utils/app_logger.dart';
@@ -22,6 +24,8 @@ import '../../core/utils/prompt_preset_resolution.dart';
 import '../../data/datasources/remote/nai_image_generation_api_service.dart';
 import '../../data/models/character/character_prompt.dart' as ui_character;
 import '../../data/models/fixed_tag/fixed_tag_entry.dart';
+import '../../data/models/fixed_tag/fixed_tag_prompt_type.dart';
+import '../../data/models/fixed_tag/fixed_tag_usage_snapshot.dart';
 import '../../data/models/gallery/nai_image_metadata.dart';
 import '../../data/models/image/image_params.dart';
 import '../../data/models/image/image_stream_chunk.dart';
@@ -30,6 +34,7 @@ import '../../data/services/alias_resolver_service.dart';
 import '../../data/services/statistics_cache_service.dart';
 import '../services/generation_history_storage_service.dart';
 import 'auth_provider.dart';
+import 'dlss_provider.dart';
 import 'character_prompt_provider.dart';
 import 'fixed_tags_provider.dart';
 import 'generation/generation_command.dart';
@@ -41,6 +46,7 @@ import 'generation/generation_result_lifecycle_service.dart';
 import 'generation/generation_settings_notifiers.dart';
 import 'generation/image_generation_coordinator.dart';
 import 'generation/image_workflow_controller.dart';
+import 'generation/stream_preview_snapshot.dart';
 import 'image_save_settings_provider.dart';
 import 'local_gallery_provider.dart';
 import 'prompt_config_provider.dart';
@@ -62,28 +68,14 @@ export 'generation/generation_result_lifecycle_service.dart';
 export 'generation/image_generation_service.dart';
 export 'generation/batch_generation_notifier.dart';
 export 'generation/stream_generation_notifier.dart';
-export 'generation/metadata_preload_notifier.dart';
 export 'generation/retry_policy_notifier.dart';
 
 part 'image_generation_provider.g.dart';
-
-class _RememberedStreamPreview {
-  const _RememberedStreamPreview({
-    required this.bytes,
-    required this.params,
-    this.focusedPreviewPlacement,
-  });
-
-  final Uint8List bytes;
-  final ImageParams params;
-  final FocusedStreamPreviewPlacement? focusedPreviewPlacement;
-}
 
 @Riverpod(keepAlive: true)
 class ImageGenerationNotifier extends _$ImageGenerationNotifier {
   Future<void>? _historyRestoreInFlight;
   bool _hasRestoredHistory = false;
-  bool _generationInvocationStarting = false;
   Completer<void>? _generationInvocationSettled;
   int _invocationCounter = 0;
   int _activeInvocationId = 0;
@@ -91,11 +83,12 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
   int _activeRunId = 0;
   GenerationRunHandle? _activeRun;
   ImageGenerationCoordinator? _coordinator;
-  final Set<int> _foregroundInvocationIds = <int>{};
   final Map<String, String?> _persistedHistoryFilePaths = <String, String?>{};
-  final Map<String, _RememberedStreamPreview> _streamPreviews = {};
+  final StreamPreviewSnapshotStore _streamPreviews =
+      StreamPreviewSnapshotStore();
   final Set<String> _failedSnapshotKeys = {};
   ImageComparisonSource? _activeComparisonSource;
+  FixedTagUsageSnapshot? _activeFixedTagUsageSnapshot;
   bool _isDisposed = false;
   int _lifecycleEpoch = 0;
 
@@ -104,8 +97,8 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
     ref.onDispose(() {
       _isDisposed = true;
       _lifecycleEpoch++;
-      _generationInvocationStarting = false;
       _activeComparisonSource = null;
+      _streamPreviews.clear();
       final invocationSettled = _generationInvocationSettled;
       _generationInvocationSettled = null;
       if (invocationSettled != null && !invocationSettled.isCompleted) {
@@ -115,12 +108,20 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
       final handle = _activeRun;
       if (coordinator != null && handle != null) coordinator.cancel(handle);
     });
-    Future.microtask(ensureGenerationHistoryRestored);
     return const ImageGenerationState();
   }
 
   bool _isCurrentLifecycle(int epoch) =>
       !_isDisposed && epoch == _lifecycleEpoch;
+
+  /// copyWith 省略 errorMessage 等于清空，切换提交标志时必须原样带回。
+  void _setSubmitting(bool value) {
+    if (state.isSubmitting == value) return;
+    state = state.copyWith(
+      isSubmitting: value,
+      errorMessage: state.errorMessage,
+    );
+  }
 
   GenerationResultLifecycleService _lifecycle() {
     final gallery = ref.read(localGalleryNotifierProvider.notifier);
@@ -132,6 +133,16 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
         addGalleryImages: gallery.addNewlySavedImages,
         refreshGallery: gallery.refresh,
         incrementStatistics: statistics.incrementImageCount,
+        publishToSystemGallery:
+            PlatformCapabilities.operatingSystem.supportsSystemGalleryExport
+            ? (sourcePath, fileName) async {
+                await AndroidMediaStoreService.saveImageFromPath(
+                  sourcePath: sourcePath,
+                  fileName: fileName,
+                  mimeType: 'image/png',
+                );
+              }
+            : null,
       ),
     );
   }
@@ -264,11 +275,12 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
     ImageParams params, {
     int? batchSizeOverride,
     bool preserveCharacterSnapshot = false,
+    GenerationFocusedSnapshot? focusedOverride,
   }) async {
-    if (_isDisposed || _generationInvocationStarting || state.isGenerating) {
+    if (_isDisposed || state.isBusy) {
       return;
     }
-    _generationInvocationStarting = true;
+    _setSubmitting(true);
     final invocationSettled = Completer<void>();
     _generationInvocationSettled = invocationSettled;
     final epoch = _lifecycleEpoch;
@@ -278,7 +290,7 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
         : null;
     final invocationId = ++_invocationCounter;
     _activeInvocationId = invocationId;
-    var foregroundStarted = false;
+    Future<void> Function()? releaseForeground;
 
     try {
       if (!requireAuthenticatedAction(ref, AuthPromptReason.imageGeneration)) {
@@ -318,9 +330,9 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
       }
 
       try {
-        await AndroidGenerationForegroundService.start();
-        foregroundStarted = AndroidGenerationForegroundService.isSupported;
-        if (foregroundStarted) _foregroundInvocationIds.add(invocationId);
+        releaseForeground = await ref
+            .read(androidForegroundTaskServiceProvider)
+            .acquire();
       } catch (error, stackTrace) {
         AppLogger.e(
           'Unable to start Android generation foreground service',
@@ -334,6 +346,7 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
 
       final preparation = _preparationService(
         preserveCharacterSnapshot: preserveCharacterSnapshot,
+        focusedOverride: focusedOverride,
       );
       late final GenerationPreparationResult prepared;
       try {
@@ -358,10 +371,14 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
       }
       final runId = ++_runCounter;
       _activeRunId = runId;
+      _activeFixedTagUsageSnapshot = prepared.fixedTagUsageSnapshot;
       _streamPreviews.clear();
       _failedSnapshotKeys.clear();
+      final dlss = ref.read(dlssProvider);
       final coordinator = ImageGenerationCoordinator(
         apiService: ref.read(naiImageGenerationApiServiceProvider),
+        postprocess: dlss.automaticSnapshot(),
+        onPostprocessError: dlss.reportEnhancementError,
       );
       _coordinator = coordinator;
       final command = GenerationCommand(
@@ -386,10 +403,12 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
         await _reduce(event, epoch);
       }
     } finally {
+      // 归属判断不可省：被取消后新一次提交已经接管标志，这里不能替它复位。
       if (_isCurrentLifecycle(epoch) && _activeInvocationId == invocationId) {
         _activeInvocationId = 0;
-        _generationInvocationStarting = false;
+        _setSubmitting(false);
         _activeComparisonSource = null;
+        _activeFixedTagUsageSnapshot = null;
       }
       if (!invocationSettled.isCompleted) {
         invocationSettled.complete();
@@ -397,18 +416,15 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
       if (identical(_generationInvocationSettled, invocationSettled)) {
         _generationInvocationSettled = null;
       }
-      if (foregroundStarted) {
-        _foregroundInvocationIds.remove(invocationId);
-        if (_foregroundInvocationIds.isEmpty) {
-          try {
-            await AndroidGenerationForegroundService.stop();
-          } catch (error, stackTrace) {
-            AppLogger.e(
-              'Unable to stop Android generation foreground service',
-              error,
-              stackTrace,
-            );
-          }
+      if (releaseForeground != null) {
+        try {
+          await releaseForeground();
+        } catch (error, stackTrace) {
+          AppLogger.e(
+            'Unable to stop Android generation foreground service',
+            error,
+            stackTrace,
+          );
         }
       }
       try {
@@ -428,6 +444,7 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
 
   GenerationRequestPreparationService _preparationService({
     bool preserveCharacterSnapshot = false,
+    GenerationFocusedSnapshot? focusedOverride,
   }) {
     var queueExecuting = false;
     try {
@@ -449,6 +466,9 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
           applyFixedPositiveTags: fixedTags.applyToPrompt,
           applyFixedNegativeTags: fixedTags.applyToNegativePrompt,
           resolvePresets: _resolvePromptPresets,
+          fixedTagUsageSnapshot: FixedTagUsageSnapshot.capture(
+            fixedTags.entries,
+          ),
         ),
         characters: GenerationCharacterPreparation(
           read: (_) {
@@ -461,7 +481,10 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
           },
         ),
         focused: GenerationFocusedPreparation(
+          // 只有生成页会把聚焦状态存在 workflow 里；Agent 等其他提交方必须显式
+          // 传入，否则会继承上一张图残留的聚焦选区。
           read: () {
+            if (focusedOverride != null) return focusedOverride;
             final workflow = ref.read(imageWorkflowControllerProvider);
             return GenerationFocusedSnapshot(
               enabled: workflow.focusedInpaintEnabled,
@@ -496,6 +519,7 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
           totalImages: totalImages,
           batchWidth: params.width,
           batchHeight: params.height,
+          completionPreviews: const {},
           clearStreamPreview: true,
         );
       case GenerationRequestStarted(
@@ -558,42 +582,75 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
             slot,
           ),
         );
+      case GenerationImageFinalizing(:final imageNumber, :final totalImages):
+        state = state.copyWith(
+          currentImage: imageNumber,
+          progress: imageNumber / totalImages,
+          streamPreviewSlots: _replacePreviewSlot(
+            state.streamPreviewSlots,
+            _finalizedPreviewSlot(imageNumber, totalImages),
+          ),
+        );
+      case GenerationPostprocessChanged(
+        :final imageNumber,
+        :final totalImages,
+        :final phase,
+      ):
+        state = state.copyWith(
+          streamPreviewSlots: _replacePreviewSlot(
+            state.streamPreviewSlots,
+            _finalizedPreviewSlot(
+              imageNumber,
+              totalImages,
+            ).copyWith(postprocessPhase: phase),
+          ),
+        );
       case GenerationRequestCompleted(
         :final params,
         :final startImage,
         :final totalImages,
         :final images,
         :final vibeEncodings,
+        :final postprocessErrors,
       ):
-        final generated = images
+        final generated = images.indexed
             .map(
-              (bytes) => GeneratedImage.create(
-                bytes,
+              (entry) => GeneratedImage.create(
+                entry.$2,
+                postprocessError: postprocessErrors[entry.$1],
                 width: params.width,
                 height: params.height,
                 comparisonSource: _activeComparisonSource,
+                fixedTagUsageSnapshot: _activeFixedTagUsageSnapshot,
               ),
             )
             .toList();
         final current = [...state.currentImages, ...generated];
+        final history = [
+          ...generated,
+          ...state.history,
+        ].take(GenerationResultLifecycleService.historyLimit).toList();
         state = state.copyWith(
           currentImages: current,
-          history: [
-            ...generated,
-            ...state.history,
-          ].take(GenerationResultLifecycleService.historyLimit).toList(),
+          history: history,
           progress: (startImage - 1 + images.length) / totalImages,
+          completionPreviews: _captureCompletionPreviews(
+            generated: generated,
+            startImage: startImage,
+            currentImages: current,
+            history: history,
+          ),
           clearStreamPreview: true,
         );
         for (var i = 0; i < max(images.length, params.nSamples); i++) {
-          _streamPreviews.remove(_snapshotKey(event.runId, startImage + i));
+          _streamPreviews.release(event.runId, startImage + i);
         }
         _saveVibeEncodings(vibeEncodings);
         _retainHistoryCaches();
       case GenerationRequestSkipped(:final startImage, :final requestSize):
         _appendFailedSnapshots(event.runId);
         for (var i = 0; i < requestSize; i++) {
-          _streamPreviews.remove(_snapshotKey(event.runId, startImage + i));
+          _streamPreviews.release(event.runId, startImage + i);
         }
         state = state.copyWith(clearStreamPreview: true);
       case GenerationRequestFailed(:final error, :final isTerminal):
@@ -612,6 +669,7 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
       case GenerationCompleted(:final params):
         final images = List<GeneratedImage>.from(state.currentImages);
         _activeComparisonSource = null;
+        _streamPreviews.clear();
         state = state.copyWith(
           status: GenerationStatus.completed,
           displayImages: images,
@@ -635,6 +693,7 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
         }
       case GenerationCancelled():
         _appendFailedSnapshots(event.runId);
+        _streamPreviews.clear();
         _activeComparisonSource = null;
         state = state.copyWith(
           status: GenerationStatus.cancelled,
@@ -645,6 +704,7 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
         );
       case GenerationFailed(:final error):
         _appendFailedSnapshots(event.runId);
+        _streamPreviews.clear();
         _activeComparisonSource = null;
         state = state.copyWith(
           status: GenerationStatus.error,
@@ -657,6 +717,7 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
     }
   }
 
+  // 预览帧字节由解码与协调层逐帧新建，不会被复用，直接持有即可。
   void _rememberPreview(
     int runId,
     int imageNumber,
@@ -664,19 +725,12 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
     ImageParams params,
     FocusedStreamPreviewPlacement? placement,
   ) {
-    if (bytes.isEmpty) return;
-    _streamPreviews[_snapshotKey(
-      runId,
-      imageNumber,
-    )] = _RememberedStreamPreview(
-      bytes: Uint8List.fromList(bytes),
+    _streamPreviews.remember(
+      runId: runId,
+      imageNumber: imageNumber,
+      bytes: bytes,
       params: params,
-      focusedPreviewPlacement: placement?.copyWith(
-        sourceImage: Uint8List.fromList(placement.sourceImage),
-        maskImage: placement.maskImage == null
-            ? null
-            : Uint8List.fromList(placement.maskImage!),
-      ),
+      placement: placement,
     );
   }
 
@@ -690,7 +744,7 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
         : const <int>[];
     for (final number in numbers.reversed) {
       final key = _snapshotKey(runId, number);
-      final preview = _streamPreviews[key];
+      final preview = _streamPreviews.preview(runId, number);
       if (preview == null || !_failedSnapshotKeys.add(key)) continue;
       final bytes = _materializePreview(preview);
       final size =
@@ -701,6 +755,7 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
         width: size.$1,
         height: size.$2,
         kind: GeneratedImageKind.failedStreamSnapshot,
+        fixedTagUsageSnapshot: _activeFixedTagUsageSnapshot,
         metadata: _metadataFromParams(
           preview.params,
           outputWidth: size.$1,
@@ -713,12 +768,12 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
           ...state.history,
         ].take(GenerationResultLifecycleService.historyLimit).toList(),
       );
-      _streamPreviews.remove(key);
+      _streamPreviews.release(runId, number);
     }
     _retainHistoryCaches();
   }
 
-  Uint8List _materializePreview(_RememberedStreamPreview preview) {
+  Uint8List _materializePreview(RememberedStreamPreview preview) {
     final placement = preview.focusedPreviewPlacement;
     if (placement == null || !placement.isValid) return preview.bytes;
     final source = img.decodeImage(placement.sourceImage);
@@ -778,6 +833,58 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
     return Uint8List.fromList(img.encodePng(composed, level: 1));
   }
 
+  StreamPreviewSlot _finalizedPreviewSlot(int imageNumber, int totalImages) {
+    for (final slot in state.streamPreviewSlots) {
+      if (slot.imageNumber == imageNumber) return slot.copyWith(progress: 1);
+    }
+    return StreamPreviewSlot(
+      imageNumber: imageNumber,
+      totalImages: totalImages,
+      progress: 1,
+    );
+  }
+
+  Map<String, StreamPreviewFrame> _captureCompletionPreviews({
+    required List<GeneratedImage> generated,
+    required int startImage,
+    required List<GeneratedImage> currentImages,
+    required List<GeneratedImage> history,
+  }) {
+    final retainedIds = <String>{
+      for (final image in currentImages) image.id,
+      for (final image in history) image.id,
+    };
+    final previews = <String, StreamPreviewFrame>{
+      for (final entry in state.completionPreviews.entries)
+        if (retainedIds.contains(entry.key)) entry.key: entry.value,
+    };
+    for (var i = 0; i < generated.length; i++) {
+      final frame = _completionFrameFor(startImage + i, generated.length);
+      if (frame != null) previews[generated[i].id] = frame;
+    }
+    return previews;
+  }
+
+  /// ImageCache 以字节身份为键，必须交出槽位里的原实例，拷贝会让完成卡片重新解码。
+  StreamPreviewFrame? _completionFrameFor(int imageNumber, int generatedCount) {
+    for (final slot in state.streamPreviewSlots) {
+      if (slot.imageNumber != imageNumber) continue;
+      final bytes = slot.previewBytes;
+      if (bytes == null || bytes.isEmpty) return null;
+      return StreamPreviewFrame(
+        bytes: bytes,
+        placement: slot.focusedPreviewPlacement,
+      );
+    }
+    if (state.streamPreviewSlots.isNotEmpty || generatedCount != 1) return null;
+    final bytes = state.streamPreview;
+    if (bytes == null || bytes.isEmpty) return null;
+    return StreamPreviewFrame(
+      bytes: bytes,
+      placement: state.focusedPreviewPlacement,
+    );
+  }
+
   List<StreamPreviewSlot> _replacePreviewSlot(
     List<StreamPreviewSlot> slots,
     StreamPreviewSlot replacement,
@@ -808,21 +915,33 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
 
   void cancel() {
     if (_isDisposed) return;
+    final processingCoordinator = _coordinator;
+    final processingRun = _activeRun;
+    if (processingCoordinator != null &&
+        processingRun != null &&
+        processingCoordinator.isPostprocessing) {
+      // Keep this run's ownership until its already-arrived originals are reduced.
+      processingCoordinator.cancel(processingRun);
+      return;
+    }
     final runId = _activeRunId;
     _activeInvocationId = 0;
-    _generationInvocationStarting = false;
     _activeComparisonSource = null;
     _appendFailedSnapshots(runId);
+    _streamPreviews.clear();
     final coordinator = _coordinator;
     final handle = _activeRun;
     if (coordinator != null && handle != null) coordinator.cancel(handle);
     _activeRunId = ++_runCounter;
+    // 图已出完、只剩落盘收尾时点取消，不该把已有结果改标成已取消。
+    final settled = state.status == GenerationStatus.completed;
     state = state.copyWith(
-      status: GenerationStatus.cancelled,
-      progress: 0,
+      status: settled ? state.status : GenerationStatus.cancelled,
+      progress: settled ? state.progress : 0,
       currentImage: 0,
       totalImages: 0,
       clearStreamPreview: true,
+      isSubmitting: false,
     );
   }
 
@@ -904,32 +1023,45 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
     if (!_isCurrentLifecycle(epoch)) {
       return GenerationSaveResult(images, const []);
     }
-    final fixed = ref.read(fixedTagsNotifierProvider);
+    final fixedTagUsageSnapshot =
+        (images.isEmpty ? null : images.first.fixedTagUsageSnapshot) ??
+        FixedTagUsageSnapshot.capture(
+          ref.read(fixedTagsNotifierProvider).entries,
+        );
     final lifecycle = _lifecycle();
     final result = await lifecycle.saveImages(
       images,
       params,
       snapshot: GenerationSaveSnapshot(
-        fixedPrefixTags: fixed.enabledPrefixes
-            .sortedByOrder()
-            .map((entry) => entry.weightedContent)
-            .where((content) => content.isNotEmpty)
+        fixedPrefixTags: fixedTagUsageSnapshot
+            .entriesFor(
+              promptType: FixedTagPromptType.positive,
+              position: FixedTagPosition.prefix,
+            )
+            .map((entry) => entry.renderedContent)
             .toList(),
-        fixedSuffixTags: fixed.enabledSuffixes
-            .sortedByOrder()
-            .map((entry) => entry.weightedContent)
-            .where((content) => content.isNotEmpty)
+        fixedSuffixTags: fixedTagUsageSnapshot
+            .entriesFor(
+              promptType: FixedTagPromptType.positive,
+              position: FixedTagPosition.suffix,
+            )
+            .map((entry) => entry.renderedContent)
             .toList(),
-        fixedNegativePrefixTags: fixed.negativeEnabledPrefixes
-            .sortedByOrder()
-            .map((entry) => entry.weightedContent)
-            .where((content) => content.isNotEmpty)
+        fixedNegativePrefixTags: fixedTagUsageSnapshot
+            .entriesFor(
+              promptType: FixedTagPromptType.negative,
+              position: FixedTagPosition.prefix,
+            )
+            .map((entry) => entry.renderedContent)
             .toList(),
-        fixedNegativeSuffixTags: fixed.negativeEnabledSuffixes
-            .sortedByOrder()
-            .map((entry) => entry.weightedContent)
-            .where((content) => content.isNotEmpty)
+        fixedNegativeSuffixTags: fixedTagUsageSnapshot
+            .entriesFor(
+              promptType: FixedTagPromptType.negative,
+              position: FixedTagPosition.suffix,
+            )
+            .map((entry) => entry.renderedContent)
             .toList(),
+        fixedTagUsageSnapshot: fixedTagUsageSnapshot,
         useCoords: params.useCoords,
       ),
       directoryPath: directoryPath,
@@ -958,7 +1090,11 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
   }
 
   void clearCurrent() {
-    state = state.copyWith(currentImages: [], status: GenerationStatus.idle);
+    state = state.copyWith(
+      currentImages: [],
+      status: GenerationStatus.idle,
+      completionPreviews: const {},
+    );
     _retainHistoryCaches();
   }
 
@@ -969,7 +1105,11 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
   }
 
   void clearHistory() {
-    state = state.copyWith(currentImages: [], history: []);
+    state = state.copyWith(
+      currentImages: [],
+      history: [],
+      completionPreviews: const {},
+    );
     _retainHistoryCaches();
   }
 
@@ -1103,6 +1243,35 @@ class ImageGenerationNotifier extends _$ImageGenerationNotifier {
     final comment = ImageSaveUtils.buildCommentJson(
       params: effective,
       actualSeed: effective.seed,
+      fixedTagUsageSnapshot: _activeFixedTagUsageSnapshot,
+      fixedPrefixTags: _activeFixedTagUsageSnapshot
+          ?.entriesFor(
+            promptType: FixedTagPromptType.positive,
+            position: FixedTagPosition.prefix,
+          )
+          .map((entry) => entry.renderedContent)
+          .toList(),
+      fixedSuffixTags: _activeFixedTagUsageSnapshot
+          ?.entriesFor(
+            promptType: FixedTagPromptType.positive,
+            position: FixedTagPosition.suffix,
+          )
+          .map((entry) => entry.renderedContent)
+          .toList(),
+      fixedNegativePrefixTags: _activeFixedTagUsageSnapshot
+          ?.entriesFor(
+            promptType: FixedTagPromptType.negative,
+            position: FixedTagPosition.prefix,
+          )
+          .map((entry) => entry.renderedContent)
+          .toList(),
+      fixedNegativeSuffixTags: _activeFixedTagUsageSnapshot
+          ?.entriesFor(
+            promptType: FixedTagPromptType.negative,
+            position: FixedTagPosition.suffix,
+          )
+          .map((entry) => entry.renderedContent)
+          .toList(),
       charCaptions: charCaptions,
       charNegCaptions: charNegCaptions,
       useCoords: effective.useCoords,

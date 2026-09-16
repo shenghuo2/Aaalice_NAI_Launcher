@@ -2,19 +2,39 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_launcher/core/agent/harness/session/session_jsonl.dart';
 import 'package:nai_launcher/core/agent/agent_types.dart' show ThinkingLevel;
+import 'package:nai_launcher/core/agent/harness/harness_types.dart';
 import 'package:nai_launcher/core/agent/harness/session/session_types.dart';
 import 'package:nai_launcher/core/agent/llm_types.dart';
 import 'package:nai_launcher/core/storage/local_storage_service.dart';
+import 'package:nai_launcher/core/services/android_foreground_task_service.dart';
 import 'package:nai_launcher/core/storage/secure_storage_service.dart';
 import 'package:nai_launcher/data/models/agent/agent_settings.dart';
+import 'package:nai_launcher/data/models/interaction/user_question.dart';
+import '../../../fixtures/user_questions.dart';
+import 'package:nai_launcher/presentation/agent_chat/models/agent_chat_compaction_outcome.dart';
 import 'package:nai_launcher/presentation/agent_chat/providers/agent_chat_notifier.dart';
 import 'package:nai_launcher/presentation/agent_settings/providers/agent_settings_provider.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/models/agent_protocol.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/models/prompt_assistant_models.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/providers/prompt_assistant_config_provider.dart';
+
+const _testSkill = HarnessSkill(
+  name: 'test-skill',
+  description: 'A skill used by the slash command tests',
+  content: 'SKILL BODY',
+  filePath: '/skills/test-skill/SKILL.md',
+);
+
+const _mixedCaseSkill = HarnessSkill(
+  name: 'Mixed-Case',
+  description: 'A skill whose directory name carries capitals',
+  content: 'MIXED BODY',
+  filePath: '/skills/Mixed-Case/SKILL.md',
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -270,6 +290,8 @@ User instructions.
     late JsonlSessionRepo sessionRepo;
     late List<AgentChatRequest> requests;
     late AgentWireCompletion wireCompletion;
+    late List<String> foregroundCalls;
+    const foregroundChannel = MethodChannel('test/agent-foreground');
 
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp(
@@ -278,6 +300,12 @@ User instructions.
       storage = _MemoryLocalStorage();
       sessionRepo = JsonlSessionRepo(tempDir);
       requests = [];
+      foregroundCalls = [];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(foregroundChannel, (call) async {
+            foregroundCalls.add(call.method);
+            return null;
+          });
       wireCompletion = (request) {
         requests.add(request);
         return Stream<AgentWireEvent>.fromIterable(const [
@@ -292,13 +320,20 @@ User instructions.
           ref,
           supportDir: tempDir,
           workspaceDir: tempDir,
-          presetSkills: const [],
+          presetSkills: const [_testSkill, _mixedCaseSkill],
           sessionRepo: sessionRepo,
           completeRequest: (request) => wireCompletion(request),
         );
       });
       container = ProviderContainer(
         overrides: [
+          androidForegroundTaskServiceProvider.overrideWithValue(
+            AndroidForegroundTaskService(
+              supported: true,
+              channel: foregroundChannel,
+              requestNotificationPermission: () async {},
+            ),
+          ),
           localStorageServiceProvider.overrideWithValue(storage),
           agentSettingsProvider.overrideWith(
             (ref) => AgentSettingsNotifier(
@@ -319,10 +354,182 @@ User instructions.
 
     tearDown(() async {
       container.dispose();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(foregroundChannel, null);
       if (await tempDir.exists()) {
         await tempDir.delete(recursive: true);
       }
     });
+
+    for (final resolution in ['submit', 'abort', 'dispose']) {
+      test(
+        'registered question tool settles correctly on $resolution',
+        () async {
+          final config = container.read(promptAssistantConfigProvider.notifier);
+          await config.upsertProvider(ProviderPreset.deepseek.createConfig());
+          await config.upsertModel(
+            const ModelConfig(
+              providerId: 'deepseek',
+              name: 'deepseek-chat',
+              displayName: 'DeepSeek Chat',
+              forTask: AssistantTaskType.chat,
+            ),
+          );
+          await container
+              .read(agentSettingsProvider.notifier)
+              .setModelReference(
+                const AgentModelReference(
+                  providerId: 'deepseek',
+                  model: 'deepseek-chat',
+                ),
+              );
+          var calls = 0;
+          wireCompletion = (request) async* {
+            requests.add(request);
+            calls++;
+            if (calls == 1) {
+              yield AgentWireToolCallDone(
+                id: 'ask-directions',
+                name: 'ask_user_question',
+                arguments: {
+                  'questions': [questionJson('appearance')],
+                },
+              );
+              yield const AgentWireFinish(stopReason: StopReason.toolUse);
+            } else {
+              yield const AgentWireTextDelta('采用经典造型');
+              yield const AgentWireFinish(stopReason: StopReason.stop);
+            }
+          };
+          final questionReady = Completer<void>();
+          final subscription = container.listen(provider, (_, next) {
+            if (next.questionRequest != null && !questionReady.isCompleted) {
+              questionReady.complete();
+            }
+          });
+          addTearDown(subscription.close);
+          final notifier = container.read(provider.notifier);
+          final run = notifier.send('帮我选择角色造型');
+          await questionReady.future.timeout(const Duration(seconds: 5));
+          expect(calls, 1);
+          expect(container.read(provider).approvalRequest, isNull);
+          if (resolution == 'abort') {
+            await notifier.abort();
+            await run;
+            expect(calls, 1);
+            expect(container.read(provider).questionRequest, isNull);
+            return;
+          }
+          if (resolution == 'dispose') {
+            subscription.close();
+            container.invalidate(provider);
+            await run;
+            expect(calls, 1);
+            return;
+          }
+
+          expect(
+            notifier.resolveUserQuestions('stale', [
+              const UserQuestionAnswer.option('classic'),
+            ]),
+            isFalse,
+          );
+          expect(
+            notifier.resolveUserQuestions('ask-directions', [
+              const UserQuestionAnswer.option('classic'),
+            ]),
+            isTrue,
+          );
+          await run;
+          expect(calls, 2);
+          expect(container.read(provider).questionRequest, isNull);
+          expect(container.read(provider).status, AgentChatRunStatus.idle);
+        },
+      );
+    }
+
+    for (final outcome in ['success', 'error', 'cancelled', 'start_failure']) {
+      test(
+        'Agent holds foreground execution until response settles: $outcome',
+        () async {
+          final config = container.read(promptAssistantConfigProvider.notifier);
+          await config.upsertProvider(ProviderPreset.deepseek.createConfig());
+          await config.upsertModel(
+            const ModelConfig(
+              providerId: 'deepseek',
+              name: 'deepseek-chat',
+              displayName: 'DeepSeek Chat',
+              forTask: AssistantTaskType.chat,
+            ),
+          );
+          await container
+              .read(agentSettingsProvider.notifier)
+              .setModelReference(
+                const AgentModelReference(
+                  providerId: 'deepseek',
+                  model: 'deepseek-chat',
+                ),
+              );
+          if (outcome == 'start_failure') {
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+                .setMockMethodCallHandler(foregroundChannel, (call) async {
+                  foregroundCalls.add(call.method);
+                  throw PlatformException(code: 'foreground_start_failed');
+                });
+            await container.read(provider.notifier).send('start task');
+            expect(foregroundCalls, ['start']);
+            expect(requests, isEmpty);
+            expect(
+              container.read(provider).error,
+              contains('foreground_start_failed'),
+            );
+            expect(container.read(provider).status, AgentChatRunStatus.idle);
+            return;
+          }
+          final entered = Completer<void>();
+          final response = Completer<void>();
+          wireCompletion = (request) async* {
+            expect(foregroundCalls, ['start']);
+            entered.complete();
+            await response.future;
+            if (outcome == 'error') throw StateError('test network failure');
+            yield const AgentWireTextDelta('background response');
+            yield const AgentWireFinish(stopReason: StopReason.stop);
+          };
+          final send = container
+              .read(provider.notifier)
+              .send('continue in background');
+          await entered.future;
+          expect(foregroundCalls, ['start']);
+          final cancellation = outcome == 'cancelled'
+              ? container.read(provider.notifier).abort()
+              : null;
+          response.complete();
+          await cancellation;
+          await send;
+          expect(foregroundCalls, ['start', 'stop']);
+          final messages = container
+              .read(provider)
+              .messages
+              .whereType<AssistantMessage>();
+          if (outcome == 'error') {
+            expect(
+              container.read(provider).error,
+              contains('test network failure'),
+            );
+          } else if (outcome == 'success') {
+            expect(
+              messages.last.content
+                  .whereType<AssistantTextContent>()
+                  .single
+                  .text,
+              'background response',
+            );
+          }
+          expect(container.read(provider).status, AgentChatRunStatus.idle);
+        },
+      );
+    }
 
     test('配置新增服务商后立即刷新聊天路由', () async {
       final configNotifier = container.read(
@@ -399,7 +606,7 @@ User instructions.
           AgentReasoningApi.deepSeek,
         );
         expect(requests.single.reasoningRequest?.enabled, isTrue);
-        expect(requests.single.reasoningRequest?.effort, isNull);
+        expect(requests.single.reasoningRequest?.effort, 'high');
         expect(requests.single.maxOutputTokens, 384000);
         expect(requests.single.modelMaxOutputTokens, 384000);
         expect(
@@ -454,6 +661,64 @@ User instructions.
       await notifier.send('still reason');
       expect(requests.single.reasoning, 'high');
     });
+
+    test(
+      'switching models refreshes supported thinking levels and corrects state',
+      () async {
+        final configNotifier = container.read(
+          promptAssistantConfigProvider.notifier,
+        );
+        await configNotifier.upsertProvider(
+          ProviderPreset.deepseek.createConfig(),
+        );
+        await configNotifier.upsertModel(
+          const ModelConfig(
+            providerId: 'deepseek',
+            name: 'deepseek-v4-pro',
+            displayName: 'DeepSeek V4 Pro',
+            forTask: AssistantTaskType.chat,
+          ),
+        );
+        await configNotifier.upsertProvider(
+          ProviderPreset.gemini.createConfig(),
+        );
+        await configNotifier.upsertModel(
+          const ModelConfig(
+            providerId: 'gemini',
+            name: 'gemini-1.5-pro',
+            displayName: 'Gemini 1.5 Pro',
+            forTask: AssistantTaskType.chat,
+          ),
+        );
+        await container
+            .read(agentSettingsProvider.notifier)
+            .setModelReference(
+              const AgentModelReference(
+                providerId: 'deepseek',
+                model: 'deepseek-v4-pro',
+              ),
+            );
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        final notifier = container.read(provider.notifier);
+        await notifier.setThinkingLevel(ThinkingLevel.high);
+        expect(container.read(provider).thinkingLevel, ThinkingLevel.high);
+
+        await notifier.selectChatModel('gemini', 'gemini-1.5-pro');
+
+        final state = container.read(provider);
+        expect(state.routeReady, isTrue);
+        expect(state.availableThinkingLevels, isEmpty);
+        expect(state.thinkingLevel, ThinkingLevel.off);
+        expect(
+          container.read(agentSettingsProvider).settings.chat.modelReference,
+          const AgentModelReference(
+            providerId: 'gemini',
+            model: 'gemini-1.5-pro',
+          ),
+        );
+      },
+    );
 
     test(
       'new sessions inherit and persist the current thinking level',
@@ -575,6 +840,45 @@ User instructions.
       );
     });
 
+    test('publishes provider text deltas before the stream finishes', () async {
+      await _selectChatModel(container);
+      final stream = StreamController<AgentWireEvent>();
+      wireCompletion = (request) {
+        requests.add(request);
+        return stream.stream;
+      };
+      final notifier = container.read(provider.notifier);
+      final send = notifier.send('stream this');
+      await _waitForCondition(
+        () => requests.isNotEmpty,
+        'Agent run did not reach the provider',
+      );
+
+      stream.add(const AgentWireTextDelta('first'));
+      await _waitForCondition(
+        () => container.read(provider).streamingMessage?.text == 'first',
+        'First provider delta was not published',
+      );
+      expect(container.read(provider).workPhase, AgentChatWorkPhase.responding);
+
+      stream
+        ..add(const AgentWireTextDelta(' second'))
+        ..add(const AgentWireFinish(stopReason: StopReason.stop));
+      await stream.close();
+      await send;
+
+      expect(container.read(provider).streamingMessage, isNull);
+      expect(
+        container
+            .read(provider)
+            .messages
+            .whereType<AssistantMessage>()
+            .last
+            .text,
+        'first second',
+      );
+    });
+
     test('persists steering and follow-up input before delivery', () async {
       final configNotifier = container.read(
         promptAssistantConfigProvider.notifier,
@@ -667,7 +971,7 @@ User instructions.
     });
 
     test(
-      'override is the exact outbound prompt for new and restored sessions',
+      'override preserves custom body and runtime context across sessions',
       () async {
         final configNotifier = container.read(
           promptAssistantConfigProvider.notifier,
@@ -708,8 +1012,16 @@ User instructions.
 
         expect(requests, hasLength(3));
         for (final request in requests) {
-          expect(request.systemPrompt, 'EXACT_OVERRIDE');
-          expect(request.systemPrompt, isNot(contains('Aaalice')));
+          expect(
+            request.systemPrompt,
+            startsWith('EXACT_OVERRIDE\n\n<aaalice_runtime_context>'),
+          );
+          expect(request.systemPrompt, contains(tempDir.path));
+          expect(request.systemPrompt, contains('Web access is disabled.'));
+          expect(
+            request.systemPrompt,
+            isNot(contains('You are the AI agent inside Aaalice')),
+          );
           expect(request.systemPrompt, isNot(contains('<skills>')));
           expect(request.tools, isNotEmpty);
         }
@@ -866,6 +1178,123 @@ User instructions.
       expect(reopened.findEntriesOnBranch(), completion(hasLength(2)));
     });
 
+    test('a leading skill command injects the skill instructions', () async {
+      final notifier = container.read(provider.notifier);
+      await _selectChatModel(container);
+
+      await notifier.send('/test-skill draw a cat');
+
+      // The skill body leads and the typed text closes the message, so the
+      // model reads the instructions before the request.
+      final sent = requests.single.messages.whereType<UserMessage>().single;
+      expect(sent.text, contains('<skill name="test-skill"'));
+      expect(sent.text, contains('SKILL BODY'));
+      expect(sent.text, endsWith('/test-skill draw a cat'));
+    });
+
+    test('a bare skill command still carries the instructions', () async {
+      final notifier = container.read(provider.notifier);
+      await _selectChatModel(container);
+
+      await notifier.send('/test-skill');
+
+      final sent = requests.single.messages.whereType<UserMessage>().single;
+      expect(sent.text, contains('SKILL BODY'));
+      expect(sent.text, endsWith('/test-skill'));
+    });
+
+    test('a skill command ignores the case of the directory name', () async {
+      final notifier = container.read(provider.notifier);
+      await _selectChatModel(container);
+
+      await notifier.send('/mixed-case draw a cat');
+
+      final sent = requests.single.messages.whereType<UserMessage>().single;
+      expect(sent.text, contains('<skill name="Mixed-Case"'));
+      expect(sent.text, contains('MIXED BODY'));
+    });
+
+    test('an unknown command is sent as plain text', () async {
+      final notifier = container.read(provider.notifier);
+      await _selectChatModel(container);
+
+      await notifier.send('/not-a-skill hello');
+
+      final sent = requests.single.messages.whereType<UserMessage>().single;
+      expect(sent.text, '/not-a-skill hello');
+      expect(sent.text, isNot(contains('SKILL BODY')));
+    });
+
+    test(
+      'manual compaction reports that a short session has nothing to fold',
+      () async {
+        final notifier = container.read(provider.notifier);
+        await _selectChatModel(container);
+        await notifier.send('draw a cat');
+        requests.clear();
+
+        final outcome = await notifier.compactNow();
+
+        expect(outcome, isA<AgentChatCompactionSkipped>());
+        expect(
+          (outcome as AgentChatCompactionSkipped).reason,
+          AgentChatCompactionSkipReason.nothingToCompact,
+        );
+        // The whole point of the guard: summarizing an empty history would burn a
+        // request and then overwrite the context with the result.
+        expect(requests, isEmpty);
+        expect(container.read(provider).compacting, isFalse);
+      },
+    );
+
+    test('a manual context window unlocks an unplaceable model', () async {
+      final notifier = container.read(provider.notifier);
+      final configNotifier = container.read(
+        promptAssistantConfigProvider.notifier,
+      );
+      await configNotifier.upsertProvider(
+        const ProviderConfig(
+          id: 'relay',
+          name: 'Relay station',
+          protocol: ProviderProtocol.openaiChatCompletions,
+          baseUrl: 'https://api.my-relay.test/v1',
+        ),
+      );
+      await configNotifier.upsertModel(
+        const ModelConfig(
+          providerId: 'relay',
+          name: 'private-v9',
+          displayName: 'Private v9',
+          forTask: AssistantTaskType.chat,
+        ),
+      );
+      final settings = container.read(agentSettingsProvider.notifier);
+      await settings.setModelReference(
+        const AgentModelReference(providerId: 'relay', model: 'private-v9'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      // Neither the host nor the model name is in the catalog, so nothing can
+      // infer a window and compaction has to refuse.
+      expect(container.read(provider).contextUsage.available, isFalse);
+      final refused = await notifier.compactNow();
+      expect(
+        (refused as AgentChatCompactionSkipped).reason,
+        AgentChatCompactionSkipReason.unavailable,
+      );
+
+      await settings.setContextWindowOverride(
+        providerId: 'relay',
+        model: 'private-v9',
+        window: 64000,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      final usage = container.read(provider).contextUsage;
+      expect(usage.contextWindow, 64000);
+      expect(usage.available, isTrue);
+    });
+
     test('serializes concurrent session creation', () async {
       final notifier = container.read(provider.notifier);
       final before = container.read(provider).sessions.length;
@@ -896,6 +1325,28 @@ User instructions.
       expect((await file.readAsLines()).first, contains('"op":"header"'));
     });
   });
+}
+
+Future<void> _selectChatModel(ProviderContainer container) async {
+  final configNotifier = container.read(promptAssistantConfigProvider.notifier);
+  await configNotifier.upsertProvider(ProviderPreset.deepseek.createConfig());
+  await configNotifier.upsertModel(
+    const ModelConfig(
+      providerId: 'deepseek',
+      name: 'deepseek-chat',
+      displayName: 'DeepSeek Chat',
+      forTask: AssistantTaskType.chat,
+    ),
+  );
+  await container
+      .read(agentSettingsProvider.notifier)
+      .setModelReference(
+        const AgentModelReference(
+          providerId: 'deepseek',
+          model: 'deepseek-chat',
+        ),
+      );
+  await Future<void>.delayed(const Duration(milliseconds: 10));
 }
 
 Future<void> _writeProjectSkill(Directory project, String name) async {
@@ -929,17 +1380,45 @@ AssistantMessage _assistant(Usage usage) {
   );
 }
 
+// Chat can report initialized while agent settings are still loading, and
+// settings reject every write until their own load finishes.
 Future<void> _waitForInitialized(
   ProviderContainer container,
   StateNotifierProvider<AgentChatNotifier, AgentChatState> provider,
 ) async {
-  for (var attempt = 0; attempt < 200; attempt++) {
-    if (container.read(provider).initialized) {
-      return;
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+  await _waitForProviderState<AgentChatState>(
+    container,
+    provider,
+    (state) => state.initialized,
+    'AgentChatNotifier did not initialize',
+  );
+  await _waitForProviderState<AgentSettingsState>(
+    container,
+    agentSettingsProvider,
+    (state) => state.initialized,
+    'AgentSettingsNotifier did not initialize',
+  );
+  expect(container.read(agentSettingsProvider).error, isEmpty);
+}
+
+Future<void> _waitForProviderState<T>(
+  ProviderContainer container,
+  ProviderListenable<T> provider,
+  bool Function(T state) isReady,
+  String failureMessage,
+) async {
+  final ready = Completer<void>();
+  final subscription = container.listen<T>(provider, (_, next) {
+    if (isReady(next) && !ready.isCompleted) ready.complete();
+  }, fireImmediately: true);
+  try {
+    await ready.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => fail(failureMessage),
+    );
+  } finally {
+    subscription.close();
   }
-  fail('AgentChatNotifier did not initialize');
 }
 
 Future<void> _waitForCondition(
@@ -957,15 +1436,12 @@ Future<void> _waitForSkill(
   ProviderContainer container,
   StateNotifierProvider<AgentChatNotifier, AgentChatState> provider,
   String name,
-) async {
-  for (var attempt = 0; attempt < 200; attempt++) {
-    if (container.read(provider).skills.any((skill) => skill.name == name)) {
-      return;
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-  }
-  fail('AgentChatNotifier did not inject enabled Skill $name');
-}
+) => _waitForProviderState<AgentChatState>(
+  container,
+  provider,
+  (state) => state.skills.any((skill) => skill.name == name),
+  'AgentChatNotifier did not inject enabled Skill $name',
+);
 
 class _MemoryLocalStorage extends LocalStorageService {
   final Map<String, Object?> _values = {};

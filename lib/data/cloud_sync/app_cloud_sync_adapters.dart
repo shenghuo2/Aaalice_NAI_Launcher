@@ -1,27 +1,47 @@
 import 'dart:convert';
 
+import 'package:nai_launcher/core/database/datasources/gallery_data_source.dart';
+
 import '../../core/constants/storage_keys.dart';
+import '../../core/cloud_sync/content_selection.dart';
 import '../../core/shortcuts/shortcut_config.dart';
 import '../../core/storage/local_storage_service.dart';
-import '../models/prompt/prompt_config.dart';
+import '../models/gallery/gallery_album.dart';
 import '../models/prompt/random_preset.dart';
 import '../models/prompt/tag_favorite.dart';
 import '../models/prompt/tag_template.dart';
+import '../repositories/gallery_folder_repository.dart';
 import '../services/precise_ref_library_storage_service.dart';
 import '../services/tag_library_io_service.dart';
 import '../services/vibe_library_storage_service.dart';
 import '../repositories/online_gallery_local_favorites_repository.dart';
 import '../repositories/online_gallery_blacklist_repository.dart';
+import '../services/gallery/gallery_album_sidecar_service.dart';
 import 'cloud_sync_data_adapter.dart';
 import 'cloud_sync_data_adapter_registry.dart';
 import 'agent_cloud_sync_adapters.dart';
 import 'ffdkj_install_intent_adapter.dart';
+import 'gallery_album_cloud_sync_adapter.dart';
 import 'online_favorites_cloud_sync_adapter.dart';
 import 'portable_sync_record.dart';
 import 'precise_ref_cloud_sync_adapter.dart';
 import 'strict_hive_cloud_sync_adapter.dart';
 import 'vibe_library_cloud_sync_adapter.dart';
 import 'user_tag_library_cloud_sync_adapter.dart';
+
+GalleryAlbum galleryAlbumFromRecord(GalleryAlbumRecord record) {
+  return GalleryAlbum(
+    id: record.id,
+    name: record.name,
+    description: record.description,
+    parentId: record.parentId,
+    sortOrder: record.sortOrder,
+    coverPath: record.coverPath,
+    pendingPaths: record.pendingPaths,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  );
+}
 
 CloudSyncDataAdapterRegistry createAppCloudSyncAdapterRegistry({
   required LocalStorageService localStorage,
@@ -31,16 +51,31 @@ CloudSyncDataAdapterRegistry createAppCloudSyncAdapterRegistry({
   required TagLibraryIOService tagLibraryIO,
   required bool Function() isFfdkjInstalled,
   required Future<void> Function() recordPendingFfdkjInstallIntent,
+  required CloudSyncContentSelection contentSelection,
   AgentSkillsCloudSyncAdapter? agentSkills,
 }) {
+  final galleryDataSource = GalleryDataSource();
+  Future<List<GalleryAlbumRecord>> galleryAlbumRecords() =>
+      galleryDataSource.albums.getAlbums();
+
   return CloudSyncDataAdapterRegistry([
-    SettingsCloudSyncAdapter(localStorage),
+    SettingsCloudSyncAdapter(
+      localStorage,
+      includeAppSettings: contentSelection.includeSettings,
+      includePromptsAndTags: contentSelection.includePromptsAndTags,
+      includeOnlineGallerySettings:
+          contentSelection.includeOnlineGallerySettings,
+    ),
     AgentSystemPromptCloudSyncAdapter(localStorage),
     if (agentSkills != null) agentSkills,
     GalleryBlacklistCloudSyncAdapter(
       OnlineGalleryBlacklistRepository(localStorage),
     ),
-    UserTagLibraryCloudSyncAdapter(localStorage, tagLibraryIO),
+    UserTagLibraryCloudSyncAdapter(
+      localStorage,
+      tagLibraryIO,
+      includeThumbnails: contentSelection.includeTagThumbnails,
+    ),
     StrictHiveCloudSyncAdapter(
       id: 'tag-favorites',
       boxName: StorageKeys.tagFavoritesBox,
@@ -65,14 +100,6 @@ CloudSyncDataAdapterRegistry createAppCloudSyncAdapterRegistry({
       plainStringKeys: const {'selected_preset_id'},
     ),
     StrictHiveCloudSyncAdapter(
-      id: 'prompt-presets',
-      boxName: 'prompt_configs',
-      allowedKeys: const {'presets', 'selected_preset_id'},
-      valueNormalizer: _normalizePromptPresetSetting,
-      modelIdOf: (key, _) => key,
-      plainStringKeys: const {'selected_preset_id'},
-    ),
-    StrictHiveCloudSyncAdapter(
       id: 'shortcuts',
       boxName: 'shortcuts',
       allowedKeys: const {'shortcut_config'},
@@ -81,6 +108,79 @@ CloudSyncDataAdapterRegistry createAppCloudSyncAdapterRegistry({
     ),
     PromptAssistantProfileCloudSyncAdapter(localStorage),
     OnlineFavoritesCloudSyncAdapter(onlineFavorites),
+    GalleryAlbumCloudSyncAdapter(
+      readAlbums: () async => [
+        for (final record in await galleryAlbumRecords())
+          galleryAlbumFromRecord(record),
+      ],
+      readMemberPaths: galleryDataSource.albums.getAllAlbumMemberPaths,
+      applyAlbums: (imports, deletedAlbumIds) async {
+        final rootPath = await GalleryFolderRepository.instance.getRootPath();
+        final absolutePathByRelative = <String, String>{};
+        if (rootPath != null && rootPath.isNotEmpty) {
+          for (final import in imports) {
+            for (final path in import.imagePaths) {
+              absolutePathByRelative[path] =
+                  GalleryAlbumSidecarService.toAbsolutePath(rootPath, path);
+            }
+          }
+        }
+        final idMap = absolutePathByRelative.isEmpty
+            ? const <String, int?>{}
+            : await galleryDataSource.getImageIdsByPaths(
+                absolutePathByRelative.values.toList(growable: false),
+              );
+
+        final albums = <GalleryAlbumRecord>[];
+        final imageIdsByAlbumId = <String, List<int>>{};
+        final pendingPathsByAlbumId = <String, List<String>>{};
+        for (final import in imports) {
+          final imageIds = <int>[];
+          final pendingPaths = <String>[];
+          for (final path in import.imagePaths) {
+            final absolutePath = absolutePathByRelative[path];
+            final imageId = absolutePath == null ? null : idMap[absolutePath];
+            if (imageId != null) {
+              imageIds.add(imageId);
+            } else {
+              pendingPaths.add(path);
+            }
+          }
+          final album = import.album;
+          albums.add(
+            GalleryAlbumRecord(
+              id: album.id,
+              name: album.name,
+              description: album.description,
+              parentId: album.parentId,
+              sortOrder: album.sortOrder,
+              coverPath:
+                  album.coverPath == null ||
+                      rootPath == null ||
+                      rootPath.isEmpty
+                  ? album.coverPath
+                  : GalleryAlbumSidecarService.toAbsolutePath(
+                      rootPath,
+                      album.coverPath!,
+                    ),
+              pendingPaths: pendingPaths,
+              createdAt: album.createdAt,
+              updatedAt: album.updatedAt,
+            ),
+          );
+          imageIdsByAlbumId[album.id] = imageIds;
+          pendingPathsByAlbumId[album.id] = pendingPaths;
+        }
+
+        await galleryDataSource.albums.applyCloudSyncAlbums(
+          albums,
+          imageIdsByAlbumId,
+          pendingPathsByAlbumId: pendingPathsByAlbumId,
+          deletedAlbumIds: deletedAlbumIds,
+        );
+      },
+      getRootPath: GalleryFolderRepository.instance.getRootPath,
+    ),
     VibeLibraryCloudSyncAdapter(vibeLibrary),
     PreciseRefCloudSyncAdapter(preciseRefLibrary),
     FfdkjInstallIntentAdapter(
@@ -92,10 +192,12 @@ CloudSyncDataAdapterRegistry createAppCloudSyncAdapterRegistry({
 
 /// Explicit portable settings. Absence from this set means local-only.
 const portableSettingKeys = <String>{
+  'dlss_options',
   StorageKeys.themeType,
   StorageKeys.fontFamily,
   StorageKeys.fontScale,
   StorageKeys.locale,
+  StorageKeys.watermarkConfigV1,
   StorageKeys.historyClickBehavior,
   StorageKeys.previewTransparencyBackground,
   StorageKeys.compositionGuideMode,
@@ -111,6 +213,7 @@ const portableSettingKeys = <String>{
   StorageKeys.autoSaveImages,
   StorageKeys.imageStraightAlpha,
   StorageKeys.shareStripMetadata,
+  StorageKeys.shareWatermark,
   StorageKeys.addQualityTags,
   StorageKeys.ucPresetType,
   StorageKeys.qualityPresetMode,
@@ -122,7 +225,6 @@ const portableSettingKeys = <String>{
   StorageKeys.randomPromptMode,
   StorageKeys.showRandomPromptTools,
   StorageKeys.generationStreamPreviewEnabled,
-  StorageKeys.randomGenerationMode,
   StorageKeys.imagesPerRequest,
   StorageKeys.enableAutocomplete,
   StorageKeys.autocompleteResultLimit,
@@ -165,8 +267,6 @@ const portableSettingKeys = <String>{
   StorageKeys.danbooruCopyrightThreshold,
   StorageKeys.danbooruMetaThreshold,
   StorageKeys.cooccurrenceRefreshInterval,
-  StorageKeys.quickTagCloudContentAccessV1,
-  StorageKeys.quickTagCloudBrowsingFiltersV1,
   StorageKeys.workflowEnhanceLevel,
   StorageKeys.workflowEnhanceMaxScale,
   StorageKeys.workflowEnhanceShowIndividualSettings,
@@ -183,12 +283,17 @@ const portableSettingKeys = <String>{
   StorageKeys.protectionGenerationIntervalSeconds,
 };
 
-const portableBusinessSettingKeys = <String>{
+const portablePromptSettingKeys = <String>{
   StorageKeys.fixedTagsData,
   StorageKeys.fixedTagLinksData,
   StorageKeys.fixedTagCategoriesData,
+};
+
+const portableOnlineGallerySettingKeys = <String>{
   StorageKeys.onlineGalleryOutputFilterTags,
   StorageKeys.onlineGalleryPromptTagCategories,
+  StorageKeys.quickTagCloudContentAccessV1,
+  StorageKeys.quickTagCloudBrowsingFiltersV1,
 };
 
 class GalleryBlacklistCloudSyncAdapter extends ValidatingCloudSyncDataAdapter {
@@ -217,10 +322,19 @@ class GalleryBlacklistCloudSyncAdapter extends ValidatingCloudSyncDataAdapter {
 
   @override
   void validateRecord(PortableSyncRecord record) {
+    if (record.deleted) {
+      if (record.id != 'unified' ||
+          record.resource != null ||
+          record.data.isNotEmpty) {
+        throw const CloudSyncPreflightException(
+          'Invalid unified blacklist tombstone',
+        );
+      }
+      return;
+    }
     bool strings(Object? value) =>
         value is List && value.every((item) => item is String);
-    if (record.deleted ||
-        record.id != 'unified' ||
+    if (record.id != 'unified' ||
         record.data['revision'] is! int ||
         !strings(record.data['desiredTags']) ||
         !strings(record.data['tombstones'])) {
@@ -234,13 +348,17 @@ class GalleryBlacklistCloudSyncAdapter extends ValidatingCloudSyncDataAdapter {
       final current = _repository.load();
       await _repository.save(
         current.copyWith(
-          revision: record.data['revision']! as int,
-          desiredTags: Set.unmodifiable(
-            (record.data['desiredTags']! as List).cast<String>(),
-          ),
-          tombstones: Set.unmodifiable(
-            (record.data['tombstones']! as List).cast<String>(),
-          ),
+          revision: record.deleted ? 0 : record.data['revision']! as int,
+          desiredTags: record.deleted
+              ? const <String>{}
+              : Set.unmodifiable(
+                  (record.data['desiredTags']! as List).cast<String>(),
+                ),
+          tombstones: record.deleted
+              ? const <String>{}
+              : Set.unmodifiable(
+                  (record.data['tombstones']! as List).cast<String>(),
+                ),
         ),
       );
     }
@@ -248,8 +366,16 @@ class GalleryBlacklistCloudSyncAdapter extends ValidatingCloudSyncDataAdapter {
 }
 
 class SettingsCloudSyncAdapter extends ValidatingCloudSyncDataAdapter {
-  SettingsCloudSyncAdapter(this._storage);
+  SettingsCloudSyncAdapter(
+    this._storage, {
+    this.includeAppSettings = true,
+    this.includePromptsAndTags = true,
+    this.includeOnlineGallerySettings = true,
+  });
   final LocalStorageService _storage;
+  final bool includeAppSettings;
+  final bool includePromptsAndTags;
+  final bool includeOnlineGallerySettings;
 
   @override
   String get id => 'portable-settings';
@@ -258,12 +384,19 @@ class SettingsCloudSyncAdapter extends ValidatingCloudSyncDataAdapter {
 
   Set<String> get keys => {
     ...portableSettingKeys,
-    ...portableBusinessSettingKeys,
+    ...portablePromptSettingKeys,
+    ...portableOnlineGallerySettingKeys,
+  };
+
+  Set<String> get exportedKeys => {
+    if (includeAppSettings) ...portableSettingKeys,
+    if (includePromptsAndTags) ...portablePromptSettingKeys,
+    if (includeOnlineGallerySettings) ...portableOnlineGallerySettingKeys,
   };
 
   @override
   Stream<PortableSyncRecord> exportRecords() async* {
-    for (final key in keys) {
+    for (final key in exportedKeys) {
       final value = _storage.getSetting<Object?>(key);
       if (value == null) continue;
       final portable = jsonDecode(jsonEncode(value)) as Object?;
@@ -289,6 +422,9 @@ class SettingsCloudSyncAdapter extends ValidatingCloudSyncDataAdapter {
   @override
   Future<void> apply(List<PortableSyncRecord> records) async {
     for (final record in records) {
+      // One adapter owns three independently selectable groups. Records from
+      // an older remote snapshot must not bypass the current user's choice.
+      if (!exportedKeys.contains(record.id)) continue;
       if (record.deleted) {
         if (!keys.contains(record.id)) {
           throw const CloudSyncPreflightException('Setting is not portable');
@@ -351,32 +487,6 @@ Object? _normalizeRandomPreset(String key, Object? value) {
   return preset.toJson();
 }
 
-Object? _normalizePromptPresetSetting(String key, Object? value) {
-  if (key == 'selected_preset_id') {
-    if (value is! String || !_isPortableModelId(value)) {
-      throw const CloudSyncPreflightException(
-        'Selected prompt preset ID is invalid',
-      );
-    }
-    return value;
-  }
-  if (value is! List) {
-    throw const CloudSyncPreflightException('Prompt presets must be a list');
-  }
-  final seen = <String>{};
-  return value
-      .map((item) {
-        final preset = RandomPromptPreset.fromJson(_portableMap(item));
-        if (!_isPortableModelId(preset.id) || !seen.add(preset.id)) {
-          throw const CloudSyncPreflightException(
-            'Prompt preset IDs must be unique UUIDs',
-          );
-        }
-        return preset.toJson();
-      })
-      .toList(growable: false);
-}
-
 Object? _normalizeShortcutConfig(String _, Object? value) {
   final config = ShortcutConfig.fromJson(_portableMap(value));
   for (final entry in config.bindings.entries) {
@@ -416,9 +526,17 @@ class PromptAssistantProfileCloudSyncAdapter
 
   @override
   void validateRecord(PortableSyncRecord record) {
-    if (record.deleted ||
-        record.id != 'user-rules' ||
-        record.data['rules'] is! List) {
+    if (record.deleted) {
+      if (record.id != 'user-rules' ||
+          record.resource != null ||
+          record.data.isNotEmpty) {
+        throw const CloudSyncPreflightException(
+          'Invalid Prompt Assistant profile tombstone',
+        );
+      }
+      return;
+    }
+    if (record.id != 'user-rules' || record.data['rules'] is! List) {
       throw const CloudSyncPreflightException(
         'Invalid Prompt Assistant profile',
       );
@@ -434,7 +552,7 @@ class PromptAssistantProfileCloudSyncAdapter
         ? <String, dynamic>{'schemaVersion': 2}
         : jsonDecode(currentRaw) as Map<String, dynamic>;
     for (final record in records) {
-      current['rules'] = record.data['rules'];
+      current['rules'] = record.deleted ? const [] : record.data['rules'];
     }
     // providers/baseUrl/models/routing and secure keys remain target-local.
     await _storage.setSetting(

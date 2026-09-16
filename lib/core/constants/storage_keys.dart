@@ -8,19 +8,18 @@ class StorageKeys {
   static const String userEmail = 'nai_user_email';
   static const String discordShareSession = 'discord_share_session_v1';
   static const String picManagerPushToken = 'pic_manager_push_token_v1';
-  static const String cloudSyncMasterKey = 'cloud_sync_master_key_v1';
   static const String cloudSyncCredentials = 'cloud_sync_credentials_v1';
-  static const String cloudSyncKeyEnvelope = 'cloud_sync_key_envelope_v1';
   static const String cloudSyncPendingFfdkjInstall =
       'cloud_sync_pending_ffdkj_install_v1';
   static const String cloudSyncConfiguration = 'cloud_sync_configuration_v1';
+  static const String cloudDriveConfiguration = 'cloud_drive_configuration_v1';
   static const String cloudSyncDeviceId = 'cloud_sync_device_id_v1';
-  static const String cloudSyncLastMaintenanceAt =
-      'cloud_sync_last_maintenance_at_v1';
   static const String cloudSyncContentSelection =
       'cloud_sync_content_selection_v1';
   static const String picManagerPushConfiguration =
       'pic_manager_push_configuration_v1';
+  static const String cloudDriveOAuthSessionPrefix =
+      'cloud_drive_oauth_session_v1_';
 
   // Token 存储（按账号ID）
   static const String accountTokenPrefix = 'nai_account_token_';
@@ -32,14 +31,12 @@ class StorageKeys {
   static const String settingsBox = 'settings';
   static const String historyBox = 'history';
   static const String cacheBox = 'cache';
-  static const String tagCacheBox = 'tag_cache';
   static const String galleryBox = 'gallery';
   static const String localMetadataCacheBox = 'local_metadata_cache';
   static const String warmupMetricsBox = 'warmup_metrics';
   static const String tagFavoritesBox = 'tag_favorites';
   static const String tagTemplatesBox = 'tag_templates';
   static const String localFavoritesBox = 'local_favorites';
-  static const String searchIndexBox = 'search_index';
   static const String favoritesBox = 'favorites';
   static const String tagsBox = 'tags';
   static const String collectionsBox = 'collections';
@@ -50,18 +47,46 @@ class StorageKeys {
   static const String fontScale = 'font_scale';
   static const String locale = 'locale';
   static const String fileLoggingEnabled = 'file_logging_enabled';
+  static const String watermarkConfigV1 = 'watermark_config_v1';
+  static const String watermarkLogoPathV1 = 'watermark_logo_path_v1';
+  static const String watermarkDerivativeRegistryV1 =
+      'watermark_derivative_registry_v1';
+  static const String mosaicConfigV1 = 'mosaic_config_v1';
+  static const String mosaicDerivativeRegistryV1 =
+      'mosaic_derivative_registry_v1';
+
+  // Gallery album migration flag (图库相簿一次性导入标记)
+  static const String galleryAlbumImportDone = 'gallery_album_import_done_v1';
 
   // Window State Keys (窗口状态)
   static const String windowWidth = 'window_width';
   static const String windowHeight = 'window_height';
   static const String windowX = 'window_x';
   static const String windowY = 'window_y';
+  static const String windowStateV2 = 'window_state_v2';
 
   // UI Layout State Keys (UI布局状态)
   static const String leftPanelExpanded = 'left_panel_expanded';
   static const String rightPanelExpanded = 'right_panel_expanded';
+  // Sidebar geometry belongs to this device and is absent from the sync allowlist.
+  static const String localGallerySidebarWidth = 'local_gallery_sidebar_width';
+  static const String vibeLibrarySidebarWidth = 'vibe_library_sidebar_width';
+  static const String preciseRefSidebarWidth = 'precise_ref_sidebar_width';
+  static const String tagLibrarySidebarWidth = 'tag_library_sidebar_width';
+  // Sidebar display order stays on this device, outside the sync allowlist.
+  static const String localGalleryFolderSort = 'local_gallery_folder_sort';
+  static const String localGalleryAlbumSort = 'local_gallery_album_sort';
+  static const String vibeLibraryCategorySort = 'vibe_library_category_sort';
+  static const String tagLibraryCategorySort = 'tag_library_category_sort';
   static const String leftPanelWidth = 'left_panel_width';
   static const String promptAreaHeight = 'prompt_area_height';
+
+  // Device-local editor preferences; intentionally absent from cloud sync.
+  static const String promptTagMode = 'prompt_tag_mode';
+  // Mouse interaction preference stays local to the device's input setup.
+  static const String imageComparisonFollowMouse =
+      'image_comparison_follow_mouse';
+  static const String promptEditorManualHeight = 'prompt_editor_manual_height';
   static const String promptMaximized = 'prompt_maximized';
   static const String generationLayoutMode = 'generation_layout_mode';
   static const String mobileGenerationGestureHintCompleted =
@@ -106,6 +131,7 @@ class StorageKeys {
   static const String autoSaveImages = 'auto_save_images';
   static const String imageStraightAlpha = 'image_straight_alpha';
   static const String shareStripMetadata = 'share_strip_metadata';
+  static const String shareWatermark = 'share_watermark';
   static const String addQualityTags = 'add_quality_tags';
   static const String ucPresetType = 'uc_preset_type';
 
@@ -123,7 +149,6 @@ class StorageKeys {
   static const String showRandomPromptTools = 'show_random_prompt_tools';
   static const String generationStreamPreviewEnabled =
       'generation_stream_preview_enabled';
-  static const String randomGenerationMode = 'random_generation_mode';
   static const String imagesPerRequest = 'images_per_request';
   static const String enableAutocomplete = 'enable_autocomplete';
   static const String autocompleteResultLimit = 'autocomplete_result_limit';
@@ -169,9 +194,6 @@ class StorageKeys {
   static const String generationHistory = 'generation_history';
   static const String historyIndex = 'history_index';
   static const String favoriteImages = 'favorite_images';
-
-  // Tag Cache Keys (标签缓存相关)
-  static const String tagCacheData = 'tag_cache_data';
 
   // Tag Favorites Keys (标签收藏相关)
   static const String tagFavoritesData = 'tag_favorites_data';
@@ -303,9 +325,6 @@ class StorageKeys {
   // 共现数据刷新间隔
   static const String cooccurrenceRefreshInterval =
       'cooccurrence_refresh_interval';
-
-  // 数据源后台刷新相关
-  static const String pendingDataSourceRefresh = 'pending_data_source_refresh';
 
   // 在线画廊黑名单设置
   static const String onlineGalleryBlacklistTags =

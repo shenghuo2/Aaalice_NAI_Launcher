@@ -1,13 +1,16 @@
+import '../../../selection/card_selection_scope.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../../core/platform/platform_capabilities.dart';
 import '../../../../core/utils/localization_extension.dart';
 import '../../../../data/models/tag_library/tag_library_entry.dart';
+import '../../../adaptive/interaction_policy.dart';
 import '../../../widgets/common/app_toast.dart';
+import '../../../widgets/common/library_card_badges.dart';
 import '../../../widgets/common/thumbnail_display.dart';
+import '../../../widgets/common/translated_tag_text.dart';
 
-enum _EntryListAction { select, edit, favorite, copy, delete }
+enum _EntryListAction { select, edit, favorite, classify, copy, delete }
 
 /// 词库条目列表项
 class EntryListItem extends StatefulWidget {
@@ -16,12 +19,10 @@ class EntryListItem extends StatefulWidget {
   final VoidCallback onDelete;
   final VoidCallback onToggleFavorite;
   final VoidCallback? onEdit;
+  final VoidCallback? onClassify;
 
   /// 所属分类名称
   final String? categoryName;
-
-  /// 是否启用拖拽到分类功能
-  final bool enableDrag;
 
   // ===== 批量选择相关属性 =====
   /// 是否处于选择模式
@@ -40,8 +41,8 @@ class EntryListItem extends StatefulWidget {
     required this.onDelete,
     required this.onToggleFavorite,
     this.onEdit,
+    this.onClassify,
     this.categoryName,
-    this.enableDrag = false,
     this.isSelectionMode = false,
     this.isSelected = false,
     this.onToggleSelection,
@@ -52,24 +53,29 @@ class EntryListItem extends StatefulWidget {
 }
 
 class _EntryListItemState extends State<EntryListItem> {
+  static const double _desktopActionsWidth = 132;
+
   bool _isHovering = false;
-  bool _isDragging = false;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final entry = widget.entry;
-    final isTouch = PlatformCapabilities.current.hasTouchInput;
+    final isTouch = context.interactionPolicy.shouldExposeTouchAlternatives;
+    final restingBackground = theme.colorScheme.surfaceContainerLow;
 
     final backgroundColor = widget.isSelected
         ? theme.colorScheme.primary.withValues(alpha: 0.12)
         : (_isHovering && !widget.isSelectionMode
-              ? theme.colorScheme.surfaceContainer
-              : theme.colorScheme.surfaceContainerLow);
+              ? Color.alphaBlend(
+                  theme.colorScheme.primary.withValues(alpha: 0.08),
+                  restingBackground,
+                )
+              : restingBackground);
 
     final itemContent = MouseRegion(
       onEnter: (_) {
-        if (!_isDragging && !widget.isSelectionMode) {
+        if (!widget.isSelectionMode) {
           setState(() => _isHovering = true);
         }
       },
@@ -77,7 +83,11 @@ class _EntryListItemState extends State<EntryListItem> {
       cursor: SystemMouseCursors.click,
       child: GestureDetector(
         // 选择模式下点击切换选择，否则打开详情
-        onTap: widget.isSelectionMode ? widget.onToggleSelection : widget.onTap,
+        onTap: () {
+          if (CardSelectionScope.handleTap(context, entry.id)) return;
+          (widget.isSelectionMode ? widget.onToggleSelection : widget.onTap)
+              ?.call();
+        },
         // 长按进入选择模式并选中
         onLongPress: widget.isSelectionMode
             ? null
@@ -86,15 +96,12 @@ class _EntryListItemState extends State<EntryListItem> {
                 widget.onToggleSelection?.call();
               },
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 200),
           curve: Curves.easeOutCubic,
           margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           padding: const EdgeInsets.all(12),
-          // 悬停时微微上移（非选择模式）
-          transform: widget.isSelectionMode
-              ? null
-              : (Matrix4.identity()
-                  ..translateByDouble(0.0, _isHovering ? -2.0 : 0.0, 0, 1)),
           decoration: BoxDecoration(
             color: backgroundColor,
             borderRadius: BorderRadius.circular(12),
@@ -102,143 +109,68 @@ class _EntryListItemState extends State<EntryListItem> {
                 ? Border.all(color: theme.colorScheme.primary)
                 : null,
           ),
-          child: Row(
+          child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              // 选择模式下的复选框
-              if (widget.isSelectionMode) ...[
-                _SelectionCheckbox(
-                  isSelected: widget.isSelected,
-                  onTap: widget.onToggleSelection,
+              Row(
+                children: [
+                  // 选择模式下的复选框
+                  if (widget.isSelectionMode) ...[
+                    _SelectionCheckbox(
+                      isSelected: widget.isSelected,
+                      onTap: widget.onToggleSelection,
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+
+                  // 预览图
+                  _buildThumbnail(theme, entry),
+                  const SizedBox(width: 16),
+
+                  // 信息
+                  Expanded(child: _buildInfo(theme, entry)),
+
+                  // 为桌面悬浮操作保留固定几何空间，避免提示词翻译因可用宽度
+                  // 改变而重新换行，造成整行高度抖动。
+                  if (!widget.isSelectionMode) ...[
+                    const SizedBox(width: 12),
+                    if (isTouch)
+                      _buildActions(theme)
+                    else
+                      SizedBox(
+                        width: _desktopActionsWidth,
+                        child: IgnorePointer(
+                          ignoring: !_isHovering,
+                          child: AnimatedOpacity(
+                            duration: MediaQuery.disableAnimationsOf(context)
+                                ? Duration.zero
+                                : const Duration(milliseconds: 120),
+                            opacity: _isHovering ? 1 : 0,
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: _buildActions(theme),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+              if (entry.isFavorite)
+                Positioned(
+                  top: -8,
+                  left: -8,
+                  child: LibraryCardFavoriteBadge(
+                    semanticLabel: context.l10n.common_favorite,
+                  ),
                 ),
-                const SizedBox(width: 12),
-              ],
-
-              // 预览图
-              _buildThumbnail(theme, entry),
-              const SizedBox(width: 16),
-
-              // 信息
-              Expanded(child: _buildInfo(theme, entry)),
-
-              // 精确指针悬浮时显示完整操作；触屏始终显示菜单入口。
-              if (!widget.isSelectionMode && (isTouch || _isHovering)) ...[
-                const SizedBox(width: 12),
-                _buildActions(theme),
-              ],
             ],
           ),
         ),
       ),
     );
 
-    // 保持根节点稳定，避免切换多选模式时重建缩略图子树。
-    return Draggable<TagLibraryEntry>(
-      data: entry,
-      maxSimultaneousDrags: widget.enableDrag && !isTouch ? null : 0,
-      feedback: widget.enableDrag && !isTouch
-          ? _buildDragFeedback(theme, entry)
-          : const SizedBox.shrink(),
-      childWhenDragging: Opacity(opacity: 0.4, child: itemContent),
-      onDragStarted: () {
-        HapticFeedback.mediumImpact();
-        setState(() {
-          _isDragging = true;
-          _isHovering = false;
-        });
-      },
-      onDragEnd: (_) {
-        setState(() {
-          _isDragging = false;
-        });
-      },
-      child: itemContent,
-    );
-  }
-
-  /// 构建拖拽反馈UI
-  Widget _buildDragFeedback(ThemeData theme, TagLibraryEntry entry) {
-    return Material(
-      elevation: 12,
-      borderRadius: BorderRadius.circular(10),
-      color: theme.colorScheme.surfaceContainerHigh,
-      shadowColor: Colors.black54,
-      child: Container(
-        width: 280,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: theme.colorScheme.primary.withValues(alpha: 0.5),
-            width: 2,
-          ),
-        ),
-        child: Row(
-          children: [
-            // 缩略图
-            if (entry.hasThumbnail && entry.thumbnail != null)
-              ThumbnailDisplay(
-                imagePath: entry.thumbnail!,
-                offsetX: entry.thumbnailOffsetX,
-                offsetY: entry.thumbnailOffsetY,
-                scale: entry.thumbnailScale,
-                width: 48,
-                height: 48,
-                borderRadius: BorderRadius.circular(6),
-              )
-            else
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Icon(
-                  Icons.library_books,
-                  size: 20,
-                  color: theme.colorScheme.primary,
-                ),
-              ),
-            const SizedBox(width: 12),
-            // 信息
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    entry.displayName,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.drive_file_move_outline,
-                        size: 12,
-                        color: theme.colorScheme.outline,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        context.l10n.tagLibrary_dragToCategoryHint,
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: theme.colorScheme.outline,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return itemContent;
   }
 
   Widget _buildThumbnail(ThemeData theme, TagLibraryEntry entry) {
@@ -258,7 +190,12 @@ class _EntryListItemState extends State<EntryListItem> {
 
   Widget _buildPlaceholder(ThemeData theme) {
     return Container(
-      color: theme.colorScheme.surfaceContainerHighest,
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Center(
         child: Icon(
           Icons.image_outlined,
@@ -274,49 +211,25 @@ class _EntryListItemState extends State<EntryListItem> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 名称行
-        Row(
-          children: [
-            // 收藏图标 - 红心徽章
-            if (entry.isFavorite)
-              Container(
-                margin: const EdgeInsets.only(right: 6),
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade400,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.favorite,
-                  size: 12,
-                  color: Colors.white,
-                ),
-              ),
-
-            // 名称
-            Expanded(
-              child: Text(
-                entry.displayName,
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
+        Text(
+          entry.displayName,
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
 
         const SizedBox(height: 4),
 
         // 内容预览
-        Text(
-          entry.contentPreview,
+        TranslatedPromptText(
+          entry.content,
+          selectable: false,
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
           maxLines: 2,
-          overflow: TextOverflow.ellipsis,
         ),
 
         const SizedBox(height: 6),
@@ -397,7 +310,7 @@ class _EntryListItemState extends State<EntryListItem> {
   }
 
   Widget _buildActions(ThemeData theme) {
-    if (PlatformCapabilities.current.hasTouchInput) {
+    if (context.interactionPolicy.shouldExposeTouchAlternatives) {
       final l10n = context.l10n;
       return PopupMenuButton<_EntryListAction>(
         tooltip: l10n.common_moreActions,
@@ -412,6 +325,9 @@ class _EntryListItemState extends State<EntryListItem> {
               break;
             case _EntryListAction.favorite:
               widget.onToggleFavorite();
+              break;
+            case _EntryListAction.classify:
+              widget.onClassify?.call();
               break;
             case _EntryListAction.copy:
               _copyToClipboard(widget.entry.content);
@@ -457,6 +373,15 @@ class _EntryListItemState extends State<EntryListItem> {
               ),
             ),
           ),
+          if (widget.onClassify != null)
+            PopupMenuItem(
+              value: _EntryListAction.classify,
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.drive_file_move_outline),
+                title: Text(l10n.tagLibrary_moveToCategoryTitle),
+              ),
+            ),
           PopupMenuItem(
             value: _EntryListAction.copy,
             child: ListTile(
@@ -587,7 +512,7 @@ class _TagChip extends StatelessWidget {
         color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Text(
+      child: TranslatedTagText(
         tag,
         style: TextStyle(
           fontSize: 10,
@@ -612,7 +537,9 @@ class _SelectionCheckbox extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 150),
         width: 24,
         height: 24,
         decoration: BoxDecoration(

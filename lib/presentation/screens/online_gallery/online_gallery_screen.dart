@@ -1,5 +1,7 @@
+import '../../widgets/common/image_card_batch_scope.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/cache/cancellable_gallery_image_loader.dart';
@@ -43,15 +45,14 @@ class _OnlineGalleryScreenState extends ConsumerState<OnlineGalleryScreen>
   late final OnlineGallerySelectionActions _selectionActions;
   late final OnlineGalleryScreenCommands _commands;
   late final ProviderSubscription<OnlineGalleryState> _gallerySubscription;
+  late final OnlineGalleryNotifier _galleryNotifier;
   bool _appForeground = true;
+  bool _backgroundNetworkSyncScheduled = false;
+  bool _disposed = false;
   int _pageJumpRevision = 0;
 
   @override
   bool get wantKeepAlive => true;
-
-  /// 获取 Gallery Notifier（简化重复代码）
-  OnlineGalleryNotifier get _galleryNotifier =>
-      ref.read(onlineGalleryNotifierProvider.notifier);
 
   /// 获取 Selection Notifier（简化重复代码）
   OnlineGallerySelectionNotifier get _selectionNotifier =>
@@ -63,6 +64,7 @@ class _OnlineGalleryScreenState extends ConsumerState<OnlineGalleryScreen>
     WidgetsBinding.instance.addObserver(this);
     final lifecycleState = WidgetsBinding.instance.lifecycleState;
     _appForeground = _isForegroundLifecycleState(lifecycleState);
+    _galleryNotifier = ref.read(onlineGalleryNotifierProvider.notifier);
     _imageLoader = CancellableGalleryImageLoader();
     _controller = OnlineGalleryScreenController(
       prefetchCoordinator: OnlineGalleryPrefetchCoordinator(
@@ -95,7 +97,14 @@ class _OnlineGalleryScreenState extends ConsumerState<OnlineGalleryScreen>
     );
     _gallerySubscription = ref.listenManual<OnlineGalleryState>(
       onlineGalleryNotifierProvider,
-      (_, next) => _handleGalleryStateChanged(next),
+      (previous, next) {
+        if (previous != null &&
+            (previous.currentCacheKey != next.currentCacheKey ||
+                previous.randomEnabled != next.randomEnabled)) {
+          _selectionNotifier.exit();
+        }
+        _handleGalleryStateChanged(next);
+      },
     );
     _controller.scrollController.addListener(_scrollCoordinator.onScroll);
     // 添加页码焦点监听
@@ -165,6 +174,23 @@ class _OnlineGalleryScreenState extends ConsumerState<OnlineGalleryScreen>
   }
 
   void _syncBackgroundNetworkActivity() {
+    if (_disposed) return;
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      if (_backgroundNetworkSyncScheduled) return;
+      _backgroundNetworkSyncScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _backgroundNetworkSyncScheduled = false;
+        if (!mounted || _disposed) return;
+        _applyBackgroundNetworkActivity();
+      });
+      return;
+    }
+    _applyBackgroundNetworkActivity();
+  }
+
+  void _applyBackgroundNetworkActivity() {
+    if (_disposed) return;
     _galleryNotifier.setBackgroundNetworkPaused(
       !_controller.branchVisible ||
           !_appForeground ||
@@ -302,6 +328,7 @@ class _OnlineGalleryScreenState extends ConsumerState<OnlineGalleryScreen>
 
   @override
   void dispose() {
+    _disposed = true;
     _pageJumpRevision++;
     WidgetsBinding.instance.removeObserver(this);
     CriticalNetworkActivityCoordinator.instance.removeListener(
@@ -385,49 +412,56 @@ class _OnlineGalleryScreenState extends ConsumerState<OnlineGalleryScreen>
         _galleryNotifier.clearNotice();
       },
     );
-    return PopScope<void>(
-      canPop: !viewModel.isSelectionMode,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && viewModel.isSelectionMode) {
-          _selectionNotifier.exit();
-        }
-      },
-      child: Scaffold(
-        backgroundColor: theme.scaffoldBackgroundColor,
-        body: Column(
-          children: [
-            OnlineGalleryToolbarFeature(
-              controller: _controller,
-              data: OnlineGalleryToolbarViewData(
-                gallery: state,
-                danbooruAuth: authState,
-                gelbooruAuth: gelbooruAuthState,
-                selection: selectionState,
+    return ImageCardBatchScope(
+      targetIds: selectionState.selectedIds,
+      actions: _commands.selectionActions.buildActions(
+        state,
+        selectionState.selectedIds,
+      ),
+      child: PopScope<void>(
+        canPop: !viewModel.isSelectionMode,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop && viewModel.isSelectionMode) {
+            _selectionNotifier.exit();
+          }
+        },
+        child: Scaffold(
+          backgroundColor: theme.scaffoldBackgroundColor,
+          body: Column(
+            children: [
+              OnlineGalleryToolbarFeature(
+                controller: _controller,
+                data: OnlineGalleryToolbarViewData(
+                  gallery: state,
+                  danbooruAuth: authState,
+                  gelbooruAuth: gelbooruAuthState,
+                  selection: selectionState,
+                ),
+                commands: OnlineGalleryToolbarCommands(
+                  gallery: _galleryNotifier,
+                  selection: _selectionNotifier,
+                  actions: _commands,
+                  saveScrollOffset: _scrollCoordinator.saveScrollOffset,
+                ),
               ),
-              commands: OnlineGalleryToolbarCommands(
-                gallery: _galleryNotifier,
-                selection: _selectionNotifier,
-                actions: _commands,
-                saveScrollOffset: _scrollCoordinator.saveScrollOffset,
+              // 图片网格
+              Expanded(
+                child: OnlineGalleryContent(
+                  state: state,
+                  controller: _controller,
+                  scrollCoordinator: _scrollCoordinator,
+                  commands: _commands,
+                ),
               ),
-            ),
-            // 图片网格
-            Expanded(
-              child: OnlineGalleryContent(
+              // 底部分页条
+              OnlineGalleryPagination(
                 state: state,
                 controller: _controller,
-                scrollCoordinator: _scrollCoordinator,
-                commands: _commands,
+                notifier: _galleryNotifier,
+                onGoToPage: _goToPage,
               ),
-            ),
-            // 底部分页条
-            OnlineGalleryPagination(
-              state: state,
-              controller: _controller,
-              notifier: _galleryNotifier,
-              onGoToPage: _goToPage,
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

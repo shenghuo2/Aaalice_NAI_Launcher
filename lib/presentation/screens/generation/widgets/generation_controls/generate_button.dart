@@ -17,6 +17,7 @@ class GenerateButtonWithCost extends ConsumerWidget {
   final VoidCallback onSkipCurrent;
   final bool showCost;
   final bool requiresLogin;
+  final bool compact;
 
   /// 按钮高度（紧凑布局可压低）
   final double height;
@@ -32,6 +33,7 @@ class GenerateButtonWithCost extends ConsumerWidget {
     required this.onSkipCurrent,
     this.showCost = true,
     this.requiresLogin = false,
+    this.compact = false,
     this.height = 48,
   });
 
@@ -39,6 +41,11 @@ class GenerateButtonWithCost extends ConsumerWidget {
       showCancel &&
       generationState.currentImage > 0 &&
       generationState.totalImages > generationState.currentImage;
+
+  /// 已提交但还没开跑，此时按钮必须立刻反馈，否则点击会被静默吞掉。
+  bool get _isPreparing => generationState.isPreparing;
+
+  bool get _showCancelAction => showCancel || _isPreparing;
 
   String _progressText() =>
       '${generationState.currentImage}/${generationState.totalImages}';
@@ -64,25 +71,40 @@ class GenerateButtonWithCost extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final primaryButton = _buildPrimaryButton(context);
 
-    return SizedBox(
-      height: height,
-      child: _canSkipCurrentBatch
-          ? Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ThemedButton(
-                  onPressed: onSkipCurrent,
-                  icon: const Icon(Icons.skip_next),
-                  label: Text(
-                    '${context.l10n.generation_skipCurrentBatch} ${_progressText()}',
-                  ),
-                  style: ThemedButtonStyle.outlined,
-                ),
-                const SizedBox(width: 8),
-                primaryButton,
-              ],
+    final skipButton = ThemedButton(
+      onPressed: onSkipCurrent,
+      icon: const Icon(Icons.skip_next),
+      label: Text(
+        '${context.l10n.generation_skipCurrentBatch} ${_progressText()}',
+        textAlign: TextAlign.center,
+      ),
+      style: ThemedButtonStyle.outlined,
+    );
+    final largeText = MediaQuery.textScalerOf(context).scale(14) > 18.2;
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: height),
+      child: !_canSkipCurrentBatch
+          ? primaryButton
+          : largeText
+          ? LayoutBuilder(
+              builder: (context, constraints) => Column(
+                mainAxisSize: MainAxisSize.min,
+                // 控制栏先测量自然宽度，再分配最终宽度；测量时不能横向拉伸。
+                crossAxisAlignment: constraints.hasBoundedWidth
+                    ? CrossAxisAlignment.stretch
+                    : CrossAxisAlignment.center,
+                children: [
+                  skipButton,
+                  const SizedBox(height: 8),
+                  primaryButton,
+                ],
+              ),
             )
-          : primaryButton,
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [skipButton, const SizedBox(width: 8), primaryButton],
+            ),
     );
   }
 
@@ -96,14 +118,36 @@ class GenerateButtonWithCost extends ConsumerWidget {
         onPrimaryContainer: theme.colorScheme.onError,
       ),
     );
-    final isLoading = isGenerating && !showCancel;
+    // Krita 占用时启动器自身没有可取消的任务，只能转圈禁用等待。
+    final isLoading = isGenerating && !_showCancelAction;
+
+    final buttonTheme = _showCancelAction ? cancelTheme : theme;
+    final effectiveTheme = compact
+        ? buttonTheme.copyWith(
+            filledButtonTheme: FilledButtonThemeData(
+              style:
+                  buttonTheme.filledButtonTheme.style?.copyWith(
+                    padding: const WidgetStatePropertyAll(
+                      EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  ) ??
+                  const ButtonStyle(
+                    padding: WidgetStatePropertyAll(
+                      EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                  ),
+            ),
+          )
+        : buttonTheme;
 
     return AnimatedTheme(
-      data: showCancel ? cancelTheme : theme,
-      duration: const Duration(milliseconds: 160),
+      data: effectiveTheme,
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 160),
       curve: Curves.easeOut,
       child: ThemedButton(
-        onPressed: showCancel
+        onPressed: _showCancelAction
             ? onCancel
             : requiresLogin
             ? onGenerate
@@ -112,7 +156,7 @@ class GenerateButtonWithCost extends ConsumerWidget {
             : onGenerate,
         isLoading: isLoading,
         label: IndexedStack(
-          index: showCancel ? 1 : 0,
+          index: _showCancelAction ? 1 : 0,
           alignment: Alignment.center,
           children: [
             Row(
@@ -140,7 +184,10 @@ class GenerateButtonWithCost extends ConsumerWidget {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.stop_circle_outlined),
+                if (_isPreparing)
+                  const GenerateButtonSpinner()
+                else
+                  const Icon(Icons.stop_circle_outlined),
                 const SizedBox(width: 8),
                 Text(context.l10n.common_cancel),
               ],
@@ -148,6 +195,22 @@ class GenerateButtonWithCost extends ConsumerWidget {
           ],
         ),
         style: ThemedButtonStyle.filled,
+      ),
+    );
+  }
+}
+
+/// 跟随按钮前景色的小转圈，供准备期的可取消态复用。
+class GenerateButtonSpinner extends StatelessWidget {
+  const GenerateButtonSpinner({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: 16,
+      child: CircularProgressIndicator(
+        strokeWidth: 2,
+        color: IconTheme.of(context).color,
       ),
     );
   }

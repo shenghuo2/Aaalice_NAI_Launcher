@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:nai_launcher/core/storage/local_storage_service.dart';
 import 'package:nai_launcher/core/storage/secure_storage_service.dart';
 import 'package:nai_launcher/core/agent/skill_catalog.dart';
+import 'package:nai_launcher/core/windowing/desktop_window_controller.dart';
 import 'package:nai_launcher/data/models/user/user_subscription.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:nai_launcher/presentation/providers/account_manager_provider.dart';
@@ -20,8 +21,38 @@ import 'package:nai_launcher/presentation/screens/settings/sections/account_sett
 import 'package:nai_launcher/presentation/screens/settings/sections/appearance_settings_section.dart';
 import 'package:nai_launcher/presentation/screens/settings/sections/integrations_settings_section.dart';
 import 'package:nai_launcher/presentation/screens/settings/sections/prompt_assistant_settings_section.dart';
+import 'package:nai_launcher/presentation/screens/settings/sections/shortcut_settings_section.dart';
 import 'package:nai_launcher/presentation/screens/settings/settings_screen.dart';
 import 'package:nai_launcher/presentation/screens/settings/settings_section.dart';
+import 'package:nai_launcher/presentation/themes/core/layered_surface_style.dart';
+import 'package:nai_launcher/presentation/widgets/common/desktop_window_frame.dart';
+import 'package:window_manager/window_manager.dart';
+
+class _NoopDesktopWindowController implements DesktopWindowController {
+  @override
+  void addListener(WindowListener listener) {}
+
+  @override
+  void removeListener(WindowListener listener) {}
+
+  @override
+  Future<bool> isMaximized() async => false;
+
+  @override
+  Future<void> startDragging() async {}
+
+  @override
+  Future<void> minimize() async {}
+
+  @override
+  Future<void> maximize() async {}
+
+  @override
+  Future<void> unmaximize() async {}
+
+  @override
+  Future<void> close() async {}
+}
 
 class _MemoryLocalStorage extends LocalStorageService {
   final Map<String, Object?> _values = {};
@@ -125,6 +156,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    _expectSettingsLayeredChrome(tester, hasNavigation: true);
     final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
     expect(rail.destinations.length, 11);
 
@@ -153,9 +185,11 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(1280, 900));
     await tester.pumpAndSettle();
 
-    final labels = rail.destinations
-        .map((destination) => (destination.label as Text).data)
-        .toList();
+    // 标签按等宽包装以避免导航项横向抖动，取文本要穿过包装层。
+    final labels = rail.destinations.map((destination) {
+      final label = destination.label;
+      return ((label is SizedBox ? label.child : label) as Text).data;
+    }).toList();
     expect(labels, const [
       '账户',
       '外观',
@@ -238,18 +272,107 @@ void main() {
     expect(promptAssistantSection, findsOneWidget);
     expect(
       tester
+          .getTopLeft(
+            find.byKey(const ValueKey('prompt-assistant-provider-section')),
+          )
+          .dy,
+      lessThan(
+        tester
+            .getTopLeft(
+              find.byKey(const ValueKey('prompt-assistant-routing-section')),
+            )
+            .dy,
+      ),
+    );
+    expect(
+      tester
           .widget<Text>(find.byKey(const ValueKey('settings-page-title')))
           .data,
       '集成',
     );
-    expect(segmentLabels, const ['提示词助手', 'ComfyUI', 'Krita', 'Pic Manager']);
+    expect(
+      segmentLabels,
+      const ['提示词助手', 'ComfyUI', 'Krita', 'Pic Manager', 'DLSSNR'],
+    );
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('导航项在长短标签混排的语言下保持左缘对齐', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    // 中文标签长度接近，抖动只在英文/日文这类长短悬殊的语言下暴露。
+    for (final locale in const [Locale('en'), Locale('ja')]) {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localStorageServiceProvider.overrideWithValue(storage),
+            secureStorageServiceProvider.overrideWithValue(
+              _MemorySecureStorage(),
+            ),
+            agentSettingsProvider.overrideWith(
+              (ref) => AgentSettingsNotifier(
+                ref,
+                supportDirectory: Directory.systemTemp,
+                workspaceDirectory: Directory.systemTemp,
+                environment: const {},
+                skillCatalogService: const _EmptySkillCatalogService(),
+              ),
+            ),
+            authNotifierProvider.overrideWith(_FakeAuthNotifier.new),
+            accountManagerNotifierProvider.overrideWith(
+              _FakeAccountManagerNotifier.new,
+            ),
+            subscriptionNotifierProvider.overrideWith(
+              _FakeSubscriptionNotifier.new,
+            ),
+          ],
+          child: MaterialApp(
+            locale: locale,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const SettingsScreen(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final railFinder = find.byType(NavigationRail);
+      final iconLefts = tester
+          .widgetList<Icon>(
+            find.descendant(of: railFinder, matching: find.byType(Icon)),
+          )
+          .map(
+            (icon) => tester
+                .getTopLeft(
+                  find.descendant(
+                    of: railFinder,
+                    matching: find.byWidget(icon),
+                  ),
+                )
+                .dx,
+          )
+          .toList();
+
+      expect(iconLefts.length, 11, reason: '$locale');
+      for (final left in iconLefts) {
+        expect(
+          left,
+          closeTo(iconLefts.first, 0.01),
+          reason: '$locale 导航项图标未对齐：$iconLefts',
+        );
+      }
+      expect(tester.takeException(), isNull, reason: '$locale');
+    }
     debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('新增服务商弹窗在移动端完整适配窄屏', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    await tester.binding.setSurfaceSize(const Size(390, 700));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 700);
+    addTearDown(tester.view.reset);
 
     await tester.pumpWidget(
       ProviderScope(
@@ -275,11 +398,17 @@ void main() {
             _FakeSubscriptionNotifier.new,
           ),
         ],
-        child: const MaterialApp(
-          locale: Locale('zh'),
+        child: MaterialApp(
+          locale: const Locale('zh'),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
-          home: SettingsScreen(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(1.6)),
+            child: child!,
+          ),
+          home: const SettingsScreen(),
         ),
       ),
     );
@@ -310,23 +439,58 @@ void main() {
       const ValueKey('prompt-assistant-provider-dialog'),
     );
     expect(dialog, findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget.key == const ValueKey('adaptive-bottom-sheet') ||
+            widget.key == const ValueKey('adaptive-centered-form'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('OpenAI Chat Completions'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     final selectedProtocolRect = tester.getRect(
       find.text('OpenAI Chat Completions'),
     );
-    expect(selectedProtocolRect.left, greaterThanOrEqualTo(36));
-    expect(selectedProtocolRect.right, lessThanOrEqualTo(330));
+    expect(selectedProtocolRect.left, greaterThanOrEqualTo(16));
+    expect(selectedProtocolRect.right, lessThanOrEqualTo(374));
 
+    tester.view.viewInsets = const FakeViewPadding(bottom: 240);
+    await tester.pumpAndSettle();
+    expect(find.text('保存'), findsOneWidget);
+    final dialogContext = tester.element(dialog);
+    final visibleBottom =
+        MediaQuery.sizeOf(dialogContext).height -
+        MediaQuery.viewInsetsOf(dialogContext).bottom;
+    expect(
+      tester.getBottomRight(find.text('保存')).dy,
+      lessThanOrEqualTo(visibleBottom),
+    );
+    expect(tester.takeException(), isNull);
+
+    tester.view.viewInsets = const FakeViewPadding();
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'test-key');
     await tester.tap(find.text('保存'));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
     await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const ValueKey('prompt-assistant-provider-openai_chat')),
-      findsOneWidget,
+    final providerCard = find.byKey(
+      const ValueKey('prompt-assistant-provider-openai_chat'),
     );
+    expect(providerCard, findsOneWidget);
     expect(find.text('连接配置'), findsOneWidget);
+    expect(
+      find.descendant(of: providerCard, matching: find.byIcon(Icons.key)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: providerCard, matching: find.byIcon(Icons.key_off)),
+      findsNothing,
+    );
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -369,9 +533,29 @@ void main() {
     );
     await pumpTransition();
 
+    _expectSettingsLayeredChrome(tester);
     expect(find.byType(NavigationRail), findsNothing);
     expect(find.text('账户'), findsOneWidget);
     expect(find.text('关于'), findsOneWidget);
+
+    final shortcutsTile = find.ancestor(
+      of: find.text('快捷键'),
+      matching: find.byType(ListTile),
+    );
+    expect(shortcutsTile, findsOneWidget);
+    expect(tester.widget<ListTile>(shortcutsTile).enabled, isFalse);
+    expect(tester.widget<ListTile>(shortcutsTile).onTap, isNull);
+    expect(
+      find.descendant(
+        of: shortcutsTile,
+        matching: find.byIcon(Icons.chevron_right),
+      ),
+      findsNothing,
+    );
+    await tester.tap(shortcutsTile);
+    await pumpTransition();
+    expect(find.byKey(const ValueKey('settings-section-list')), findsOneWidget);
+    expect(find.byType(ShortcutSettingsSection), findsNothing);
 
     await tester.tap(find.text('外观'));
     await pumpTransition();
@@ -433,7 +617,6 @@ void main() {
     expect(segmentedButton.segments.map((segment) => segment.enabled), [
       isTrue,
       isFalse,
-      isTrue,
     ]);
     expect(find.text('桌面浮层交互'), findsNothing);
 
@@ -511,6 +694,23 @@ void main() {
         break;
       }
     }
+    expect(
+      find.byKey(const ValueKey('agent-custom-system-prompt')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('agent-settings-open-integrations')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(IntegrationsSettingsSection), findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationRail),
+        matching: find.byIcon(Icons.smart_toy_outlined),
+      ),
+    );
+    await tester.pumpAndSettle();
     expect(
       find.byKey(const ValueKey('agent-custom-system-prompt')),
       findsOneWidget,
@@ -611,6 +811,101 @@ void main() {
     await tester.binding.setSurfaceSize(null);
   });
 
+  testWidgets('桌面与紧凑布局切换保持当前设置浏览位置', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await tester.binding.setSurfaceSize(const Size(1280, 700));
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      return tester.binding.setSurfaceSize(null);
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localStorageServiceProvider.overrideWithValue(storage),
+          secureStorageServiceProvider.overrideWithValue(
+            _MemorySecureStorage(),
+          ),
+          authNotifierProvider.overrideWith(_FakeAuthNotifier.new),
+          accountManagerNotifierProvider.overrideWith(
+            _FakeAccountManagerNotifier.new,
+          ),
+          subscriptionNotifierProvider.overrideWith(
+            _FakeSubscriptionNotifier.new,
+          ),
+        ],
+        child: MaterialApp(
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) => DesktopWindowFrame(
+            enabled: true,
+            controller: _NoopDesktopWindowController(),
+            child: child!,
+          ),
+          home: const SettingsScreen(
+            initialSection: SettingsSection.integrations,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    Finder contentScrollable() => find.descendant(
+      of: find.byKey(const ValueKey('settings-section-scroll-view')),
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is Scrollable && widget.axisDirection == AxisDirection.down,
+      ),
+    );
+    await tester.drag(contentScrollable(), const Offset(0, -360));
+    await tester.pumpAndSettle();
+    final desktopOffset = tester
+        .state<ScrollableState>(contentScrollable())
+        .position
+        .pixels;
+    expect(desktopOffset, greaterThan(0));
+
+    for (final minimizedSize in [Size.zero, const Size(144, 19)]) {
+      await tester.binding.setSurfaceSize(minimizedSize);
+      await tester.pump();
+      expect(find.byType(NavigationRail), findsOneWidget);
+      expect(find.byType(IntegrationsSettingsSection), findsOneWidget);
+      expect(
+        tester.state<ScrollableState>(contentScrollable()).position.pixels,
+        closeTo(desktopOffset, 1),
+      );
+      expect(tester.takeException(), isNull);
+    }
+
+    await tester.binding.setSurfaceSize(const Size(1280, 700));
+    await tester.pump();
+    expect(find.byType(NavigationRail), findsOneWidget);
+    expect(find.byType(IntegrationsSettingsSection), findsOneWidget);
+    expect(
+      tester.state<ScrollableState>(contentScrollable()).position.pixels,
+      closeTo(desktopOffset, 1),
+    );
+
+    // A real manual resize still crosses the responsive breakpoint normally.
+    await tester.binding.setSurfaceSize(const Size(390, 700));
+    await tester.pumpAndSettle();
+    expect(
+      tester.state<ScrollableState>(contentScrollable()).position.pixels,
+      closeTo(desktopOffset, 1),
+    );
+
+    await tester.binding.setSurfaceSize(const Size(1280, 700));
+    await tester.pumpAndSettle();
+    expect(
+      tester.state<ScrollableState>(contentScrollable()).position.pixels,
+      closeTo(desktopOffset, 1),
+    );
+    expect(tester.takeException(), isNull);
+    debugDefaultTargetPlatformOverride = null;
+    await tester.binding.setSurfaceSize(null);
+  });
+
   testWidgets('取消外部 section 切换会恢复 URL 与智能体页面', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     await tester.binding.setSurfaceSize(const Size(1280, 900));
@@ -693,4 +988,46 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
     await tester.binding.setSurfaceSize(null);
   });
+}
+
+void _expectSettingsLayeredChrome(
+  WidgetTester tester, {
+  bool hasNavigation = false,
+}) {
+  final appBarFinder = find.byType(AppBar);
+  final appBar = tester.widget<AppBar>(appBarFinder);
+  final theme = Theme.of(tester.element(appBarFinder));
+
+  expect(appBar.shape, isNull);
+  expect(appBar.backgroundColor, sectionSurfaceColor(theme.colorScheme));
+  expect(
+    find.descendant(
+      of: appBarFinder,
+      matching: find.byIcon(Icons.settings_outlined),
+    ),
+    findsOneWidget,
+  );
+  expect(find.byType(VerticalDivider), findsNothing);
+
+  final navigationSurface = find.byKey(
+    const ValueKey('settings-navigation-tonal-surface'),
+  );
+  if (!hasNavigation) {
+    expect(navigationSurface, findsNothing);
+    for (final element in find.byType(ListTile).evaluate()) {
+      final tile = element.widget as ListTile;
+      expect(tile.tileColor, sectionSurfaceColor(theme.colorScheme));
+      expect(
+        element.findAncestorWidgetOfExactType<Material>()?.type,
+        MaterialType.transparency,
+      );
+    }
+    return;
+  }
+
+  final decoration =
+      tester.widget<Container>(navigationSurface).decoration! as BoxDecoration;
+  expect(decoration.color, sectionSurfaceColor(theme.colorScheme));
+  expect(decoration.border, isNull);
+  expect(decoration.borderRadius, isNotNull);
 }

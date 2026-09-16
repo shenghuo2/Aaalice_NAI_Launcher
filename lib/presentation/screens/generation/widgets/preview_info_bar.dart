@@ -1,17 +1,23 @@
+import 'package:nai_launcher/presentation/widgets/common/horizontal_action_strip.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/utils/localization_extension.dart';
+import '../../../../data/models/image/image_params.dart'
+    show ImageParamsExtension;
+import '../../../adaptive/interaction_policy.dart';
 import '../../../providers/generation/generated_image_metadata_provider.dart';
 import '../../../providers/image_generation_provider.dart';
 import '../../../providers/preview_transparency_provider.dart';
 import '../../../widgets/common/transparency_background.dart';
 import '../../../widgets/image_editor/widgets/color_picker.dart';
+import 'generation_toggle_button.dart';
 
 /// 预览图下方的信息条（对齐官网结果区底部的 display/save 工具条）
 ///
 /// 自左向右：分辨率胶囊 → 透明底色入口 → 可选对比开关 → 种子胶囊。
-/// 透明底色入口向上弹出档位浮层。
+/// 透明底色入口向上弹出档位浮层；触屏设备在支持的模型下把生成用的
+/// 透明背景开关固定在最右侧，避免用户必须进入提示词编辑页。
 class PreviewInfoBar extends ConsumerWidget {
   final GeneratedImage image;
   final bool comparisonEnabled;
@@ -26,9 +32,15 @@ class PreviewInfoBar extends ConsumerWidget {
 
   static const double barHeight = 44;
 
+  static double heightFor(BuildContext context) {
+    final scaledLine = MediaQuery.textScalerOf(context).scale(14) + 20;
+    return scaledLine < barHeight ? barHeight : scaledLine;
+  }
+
   /// 低于该宽度就收起分辨率胶囊（官网在窄容器下同样隐藏它）
   static const double _resolutionMinWidth = 300;
   static const double _comparisonResolutionMinWidth = 400;
+  static const double _transparentToggleResolutionMinWidth = 400;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -37,52 +49,101 @@ class PreviewInfoBar extends ConsumerWidget {
         .watch(generatedImageMetadataProvider(image))
         .valueOrNull
         ?.seed;
+    final transparentBackground = ref.watch(
+      generationParamsNotifierProvider.select(
+        (params) => (
+          supported: params.capabilities.supportsTransparentBackground,
+          enabled: params.transparentBackground,
+        ),
+      ),
+    );
+    final showTransparentBackground =
+        context.interactionPolicy.touchAvailable &&
+        transparentBackground.supported;
 
     return SizedBox(
-      height: barHeight,
+      height: heightFor(context),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final resolutionMinWidth = onComparisonChanged == null
+          final resolutionMinWidth = showTransparentBackground
+              ? _transparentToggleResolutionMinWidth
+              : onComparisonChanged == null
               ? _resolutionMinWidth
               : _comparisonResolutionMinWidth;
           final showResolution =
               !constraints.maxWidth.isFinite ||
               constraints.maxWidth >= resolutionMinWidth;
 
-          return ClipRect(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (showResolution) ...[
-                  _InfoPill(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text('${image.width}'),
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 6),
-                          child: Icon(Icons.close_rounded, size: 11),
+          final compactInfo = !showResolution && onComparisonChanged == null;
+          final info = compactInfo
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const _TransparencyBackgroundButton(),
+                    if (seed != null && seed >= 0)
+                      Flexible(child: _SeedPill(seed: seed, compact: true)),
+                  ],
+                )
+              : HorizontalActionStrip(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (showResolution) ...[
+                        _InfoPill(
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text('${image.width}'),
+                              const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 6),
+                                child: Icon(Icons.close_rounded, size: 11),
+                              ),
+                              Text('${image.height}'),
+                            ],
+                          ),
                         ),
-                        Text('${image.height}'),
+                        const _PillDivider(),
                       ],
+                      const _TransparencyBackgroundButton(),
+                      if (onComparisonChanged != null) ...[
+                        const _PillDivider(),
+                        _ComparisonToggle(
+                          enabled: comparisonEnabled,
+                          onChanged: onComparisonChanged!,
+                        ),
+                      ],
+                      if (seed != null && seed >= 0) ...[
+                        const SizedBox(width: 6),
+                        _SeedPill(seed: seed),
+                      ],
+                    ],
+                  ),
+                );
+          if (!showTransparentBackground) return info;
+
+          return Row(
+            children: [
+              Expanded(child: info),
+              const SizedBox(width: 6),
+              Semantics(
+                button: true,
+                toggled: transparentBackground.enabled,
+                label: context.l10n.generation_transparentBackground,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: barHeight),
+                  child: GenerationToggleButton(
+                    key: const ValueKey(
+                      'generation_preview_transparent_background_toggle',
                     ),
+                    label: context.l10n.generation_transparentBackground,
+                    isEnabled: transparentBackground.enabled,
+                    onChanged: (value) => ref
+                        .read(generationParamsNotifierProvider.notifier)
+                        .updateTransparentBackground(value),
                   ),
-                  const _PillDivider(),
-                ],
-                const _TransparencyBackgroundButton(),
-                if (onComparisonChanged != null) ...[
-                  const _PillDivider(),
-                  _ComparisonToggle(
-                    enabled: comparisonEnabled,
-                    onChanged: onComparisonChanged!,
-                  ),
-                ],
-                if (seed != null && seed >= 0) ...[
-                  const SizedBox(width: 6),
-                  Flexible(child: _SeedPill(seed: seed)),
-                ],
-              ],
-            ),
+                ),
+              ),
+            ],
           );
         },
       ),
@@ -96,12 +157,14 @@ class _InfoPill extends StatelessWidget {
   final VoidCallback? onTap;
   final String? tooltip;
   final bool selected;
+  final EdgeInsetsGeometry padding;
 
   const _InfoPill({
     required this.child,
     this.onTap,
     this.tooltip,
     this.selected = false,
+    this.padding = const EdgeInsets.symmetric(horizontal: 10),
   });
 
   @override
@@ -109,17 +172,17 @@ class _InfoPill extends StatelessWidget {
     final theme = Theme.of(context);
 
     Widget pill = Material(
-      color: selected
-          ? theme.colorScheme.primaryContainer
-          : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+      color: selected ? theme.colorScheme.primaryContainer : Colors.transparent,
       borderRadius: BorderRadius.circular(6),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
         child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 44),
+          constraints: const BoxConstraints(
+            minHeight: PreviewInfoBar.barHeight,
+          ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
+            padding: padding,
             // widthFactor 让胶囊按内容收窄：种子胶囊在 Flexible 里拿到的是有界宽度，
             // 普通 Center 会撑满剩余空间，把胶囊拉成一条长条
             child: Align(
@@ -206,12 +269,14 @@ class _PillDivider extends StatelessWidget {
 /// 种子胶囊：点击把这张图的种子写回生成参数
 class _SeedPill extends ConsumerWidget {
   final int seed;
+  final bool compact;
 
-  const _SeedPill({required this.seed});
+  const _SeedPill({required this.seed, this.compact = false});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return _InfoPill(
+      padding: EdgeInsets.symmetric(horizontal: compact ? 2 : 10),
       tooltip: context.l10n.generation_previewApplySeed,
       onTap: () =>
           ref.read(generationParamsNotifierProvider.notifier).updateSeed(seed),
@@ -219,7 +284,7 @@ class _SeedPill extends ConsumerWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           const Icon(Icons.eco_outlined, size: 13),
-          const SizedBox(width: 6),
+          SizedBox(width: compact ? 4 : 6),
           Flexible(
             child: Text('$seed', maxLines: 1, overflow: TextOverflow.ellipsis),
           ),
@@ -242,15 +307,36 @@ class _TransparencyBackgroundButtonState
     extends State<_TransparencyBackgroundButton> {
   final OverlayPortalController _controller = OverlayPortalController();
   final LayerLink _link = LayerLink();
+  bool _alignPanelToLeft = false;
 
   void _close() {
     if (_controller.isShowing) _controller.hide();
   }
 
+  void _togglePanel() {
+    if (!_controller.isShowing) {
+      final targetBox = context.findRenderObject() as RenderBox?;
+      final overlayBox =
+          Overlay.of(context).context.findRenderObject() as RenderBox?;
+      if (targetBox != null && overlayBox != null) {
+        final targetOrigin = targetBox.localToGlobal(
+          Offset.zero,
+          ancestor: overlayBox,
+        );
+        final fitsOnRight =
+            targetOrigin.dx + _TransparencyBackgroundPanel.width <=
+            overlayBox.size.width;
+        _alignPanelToLeft = fitsOnRight;
+      }
+    }
+
+    setState(_controller.toggle);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // 只在浮层打开时高亮，平时与两侧胶囊保持同一套底色
+    // 浮层打开时保留状态高亮，常态透明不影响 InkWell 的交互反馈。
     final selected = _controller.isShowing;
 
     return CompositedTransformTarget(
@@ -269,8 +355,12 @@ class _TransparencyBackgroundButtonState
               ),
               CompositedTransformFollower(
                 link: _link,
-                targetAnchor: Alignment.topRight,
-                followerAnchor: Alignment.bottomRight,
+                targetAnchor: _alignPanelToLeft
+                    ? Alignment.topLeft
+                    : Alignment.topRight,
+                followerAnchor: _alignPanelToLeft
+                    ? Alignment.bottomLeft
+                    : Alignment.bottomRight,
                 offset: const Offset(0, -5),
                 child: const _TransparencyBackgroundPanel(),
               ),
@@ -283,18 +373,16 @@ class _TransparencyBackgroundButtonState
           child: Material(
             color: selected
                 ? theme.colorScheme.primary.withValues(alpha: 0.18)
-                : theme.colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.6,
-                  ),
+                : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
             clipBehavior: Clip.antiAlias,
             child: InkWell(
-              onTap: () {
-                setState(() => _controller.toggle());
-              },
-              child: SizedBox(
-                width: PreviewInfoBar.barHeight,
-                height: PreviewInfoBar.barHeight,
+              onTap: _togglePanel,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  minWidth: PreviewInfoBar.barHeight,
+                  minHeight: PreviewInfoBar.barHeight,
+                ),
                 child: Center(
                   child: TransparencyBackgroundIcon(
                     size: 16,
@@ -315,6 +403,8 @@ class _TransparencyBackgroundButtonState
 /// 透明底色档位浮层
 class _TransparencyBackgroundPanel extends ConsumerStatefulWidget {
   const _TransparencyBackgroundPanel();
+
+  static const double width = 232;
 
   @override
   ConsumerState<_TransparencyBackgroundPanel> createState() =>
@@ -362,12 +452,13 @@ class _TransparencyBackgroundPanelState
     };
 
     return Material(
+      key: const ValueKey('generation_transparency_background_panel'),
       elevation: 8,
       borderRadius: BorderRadius.circular(6),
       clipBehavior: Clip.antiAlias,
       color: theme.colorScheme.surfaceContainerHigh,
       child: Container(
-        width: 232,
+        width: _TransparencyBackgroundPanel.width,
         padding: const EdgeInsets.all(10),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -434,6 +525,10 @@ class _TransparencyBackgroundPanelState
                   color:
                       TransparencyBackgrounds.parseCustomColor(style) ??
                       const Color(0xFF808080),
+                  hexLabel: context.l10n.editor_colorHex,
+                  saturationBrightnessLabel:
+                      context.l10n.editor_colorSaturationBrightness,
+                  hueLabel: context.l10n.editor_colorHue,
                   onColorChanged: (color) => notifier.setStyle(
                     TransparencyBackgrounds.encodeCustomColor(color),
                   ),

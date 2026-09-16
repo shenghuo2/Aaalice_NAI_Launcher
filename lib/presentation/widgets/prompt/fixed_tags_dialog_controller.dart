@@ -19,6 +19,7 @@ class FixedTagsDialogController extends ChangeNotifier {
   RenderBox? _linkLayer;
   String positiveSearchQuery = '';
   String negativeSearchQuery = '';
+  bool enabledOnly = false;
   FixedTagPromptType mobilePromptType = FixedTagPromptType.positive;
   int? _scheduledGeometryHash;
   bool _scrollRepaintScheduled = false;
@@ -39,6 +40,15 @@ class FixedTagsDialogController extends ChangeNotifier {
       ? positiveListController
       : negativeListController;
 
+  double scrollOffsetFor(FixedTagPromptType promptType) {
+    final positions = listControllerFor(promptType).positions;
+    if (positions.isEmpty) return 0;
+    // A responsive rebuild can briefly keep the outgoing list attached while
+    // mounting its replacement. The newest position belongs to the incoming
+    // layout; reading ScrollController.offset would assert during that frame.
+    return positions.last.pixels;
+  }
+
   void setSearchQuery(FixedTagPromptType promptType, String value) {
     if (promptType == FixedTagPromptType.positive) {
       positiveSearchQuery = value;
@@ -51,6 +61,11 @@ class FixedTagsDialogController extends ChangeNotifier {
   void clearSearch(FixedTagPromptType promptType) {
     searchControllerFor(promptType).clear();
     setSearchQuery(promptType, '');
+  }
+
+  void toggleEnabledOnly() {
+    enabledOnly = !enabledOnly;
+    notifyListeners();
   }
 
   void selectMobilePromptType(FixedTagPromptType promptType) {

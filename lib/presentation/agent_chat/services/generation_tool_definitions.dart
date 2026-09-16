@@ -1,4 +1,5 @@
 import '../../../core/agent/agent_types.dart';
+import '../../../core/agent/resources/agent_chat_resource_reference_codec.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/utils/nai_resolution_adapter.dart';
 import '../../providers/replication_queue_provider.dart';
@@ -42,18 +43,28 @@ class GenerationToolDefinitions {
             'current chat model directly when it supports image input; '
             'the dedicated "reverse" vision model (Settings > '
             'Integrations) is only a fallback and is NOT required. '
-            'Requirements: "path" must be an existing local image file '
-            '(workspace-relative or absolute).',
+            'Provide exactly one source: attachment_index for an inline image '
+            'in the latest user message (1-based in message order), '
+            'resource_ref for an application image, or path for an existing '
+            'local image file. Inline attachments have no file path; never '
+            'invent a path for them.',
         parameters: const {
           'type': 'object',
           'properties': {
+            'attachment_index': {
+              'type': 'integer',
+              'minimum': 1,
+              'description': '1-based image index in the latest user message.',
+            },
+            'resource_ref': AgentChatResourceReferenceCodec.jsonSchema,
             'path': {
               'type': 'string',
               'description':
                   'Image file path (workspace-relative or absolute).',
             },
           },
-          'required': ['path'],
+          'required': <String>[],
+          'additionalProperties': false,
         },
         executeWithControl: _interrogation.interrogate,
       ),
@@ -64,8 +75,8 @@ class GenerationToolDefinitions {
             'Prepare an image generation transaction without submitting it. '
             'Returns a persistent preparation_id and the exact estimated '
             'Anlas cost. operation is generate (synchronous) or queue. '
-            'After inspection or updates, submit_generation must be called '
-            'with confirmed=true.',
+            'Submit exact zero-cost preparations directly. Paid submissions '
+            'use confirmed=true and the application permission approval UI.',
         parameters: {
           'type': 'object',
           'properties': generationPreparationProperties(includeOperation: true),
@@ -121,15 +132,17 @@ class GenerationToolDefinitions {
         name: 'submit_generation',
         label: 'Submit Generation',
         description:
-            'Submit a previously prepared transaction. confirmed must be '
-            'explicitly true; otherwise no provider or queue is called.',
+            'Submit a previously prepared transaction. Exact zero-cost '
+            'preparations need no confirmation flag. Paid preparations require '
+            'confirmed=true; the application then obtains permission through '
+            'its approval UI. Do not ask for duplicate confirmation in chat.',
         parameters: const {
           'type': 'object',
           'properties': {
             'preparation_id': {'type': 'string'},
             'confirmed': {'type': 'boolean', 'const': true},
           },
-          'required': ['preparation_id', 'confirmed'],
+          'required': ['preparation_id'],
         },
         executeWithControl: _preparation.submitPreparation,
       ),
@@ -170,7 +183,10 @@ class GenerationToolDefinitions {
             'switch to inpaint with "inpaint_strength" (0-0.99); "noise" '
             '(0-0.99) adds variation. Without "source_image" this is plain '
             'text-to-image regardless of the generation page img2img '
-            'state. '
+            'state. These arguments apply to this single transaction only and '
+            'never change the generation page Image2Image panel; use '
+            'set_generation_source_image when the user should see the image '
+            'loaded there. '
             'If a generation is already running, this waits up to 300s and '
             'runs in order. Each saved image returns path as the exact '
             'workspace-relative argument for read plus an application-owned '
@@ -224,7 +240,9 @@ class GenerationToolDefinitions {
             },
             'source_image': {
               'type': 'string',
-              'description': 'Local image file path to use as img2img base.',
+              'description':
+                  'Local image file path to use as img2img base for this '
+                  'call only; the generation page panel is left unchanged.',
             },
             'mask_image': {
               'type': 'string',
@@ -260,7 +278,8 @@ class GenerationToolDefinitions {
             },
             'confirmed': {
               'type': 'boolean',
-              'description': 'Must be true on the second call.',
+              'description':
+                  'Required only for paid preparations; exact zero-cost submissions omit this.',
             },
           },
           'required': ['prompt'],
@@ -315,7 +334,8 @@ class GenerationToolDefinitions {
             },
             'confirmed': {
               'type': 'boolean',
-              'description': 'Must be true on the second call.',
+              'description':
+                  'Required only for paid preparations; exact zero-cost submissions omit this.',
             },
           },
           'required': ['prompt'],
@@ -362,24 +382,6 @@ class GenerationToolDefinitions {
           'required': ['limit'],
         },
         executeFn: (_, params) => _history.recentImages(params),
-      ),
-      DefinedAgentTool(
-        name: 'preview_generated_image',
-        label: 'Preview Generated Image',
-        description:
-            'Resolve one generated image by stable resource_ref (preferred) '
-            'or stable image_id and return a bounded preview without exposing '
-            'its saved file path. List indexes and paths are not accepted.',
-        parameters: const {
-          'type': 'object',
-          'properties': {
-            'resource_ref': {'type': 'object'},
-            'image_id': {'type': 'string'},
-          },
-          'required': <String>[],
-          'additionalProperties': false,
-        },
-        executeFn: (_, params) => _history.previewGeneratedImage(params),
       ),
       DefinedAgentTool(
         name: 'get_generation_settings',

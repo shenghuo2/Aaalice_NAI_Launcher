@@ -5,11 +5,19 @@ import 'package:nai_launcher/presentation/widgets/common/themed_input.dart';
 class HSVColorPicker extends StatefulWidget {
   final Color color;
   final ValueChanged<Color> onColorChanged;
+  final String hexLabel;
+  final String saturationBrightnessLabel;
+  final String hueLabel;
+  final double hueHeight;
 
   const HSVColorPicker({
     super.key,
     required this.color,
     required this.onColorChanged,
+    required this.hexLabel,
+    required this.saturationBrightnessLabel,
+    required this.hueLabel,
+    this.hueHeight = 20,
   });
 
   @override
@@ -70,11 +78,9 @@ class _HSVColorPickerState extends State<HSVColorPicker> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        // Hex 输入框
-        Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final hexInput = Row(
           children: [
             Container(
               width: 32,
@@ -89,53 +95,72 @@ class _HSVColorPickerState extends State<HSVColorPicker> {
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: ThemedInput(
-                controller: _hexController,
-                borderRadius: 4,
-                style: TextStyle(
-                  color: colorScheme.onSurface,
-                  fontSize: 12,
-                  fontFamily: 'monospace',
-                ),
-                decoration: const InputDecoration(
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 8,
+              child: Semantics(
+                textField: true,
+                label: widget.hexLabel,
+                child: ThemedInput(
+                  controller: _hexController,
+                  borderRadius: 4,
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontSize: 12,
+                    fontFamily: 'monospace',
                   ),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
+                  ),
+                  onSubmitted: (value) {
+                    final color = _hexToColor(value);
+                    if (color != null) {
+                      _onColorChanged(HSVColor.fromColor(color));
+                    }
+                  },
                 ),
-                onSubmitted: (value) {
-                  final color = _hexToColor(value);
-                  if (color != null) {
-                    _onColorChanged(HSVColor.fromColor(color));
-                  }
-                },
               ),
             ),
           ],
-        ),
-
-        const SizedBox(height: 12),
-
-        // SV 面板
-        SizedBox(
+        );
+        final saturationValuePanel = SizedBox(
+          key: const ValueKey('hsv-color-picker-sv-panel'),
           height: 120,
-          child: _SVPanel(hsvColor: _hsvColor, onChanged: _onColorChanged),
-        ),
-
-        const SizedBox(height: 8),
-
-        // Hue 滑块
-        SizedBox(
-          height: 20,
+          child: _SVPanel(
+            hsvColor: _hsvColor,
+            semanticLabel: widget.saturationBrightnessLabel,
+            onChanged: _onColorChanged,
+          ),
+        );
+        final hueSlider = SizedBox(
+          key: const ValueKey('hsv-color-picker-hue-slider'),
+          height: widget.hueHeight,
           child: _HueSlider(
             hue: _hsvColor.hue,
+            semanticLabel: widget.hueLabel,
             onChanged: (hue) {
               _onColorChanged(_hsvColor.withHue(hue));
             },
           ),
-        ),
-      ],
+        );
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            hexInput,
+            const SizedBox(height: 12),
+            // 浮层可能给出短而有界的高度；保留 Hex 与 Hue 操作，
+            // 由二维色板吸收剩余空间，避免任一控制被裁掉。
+            if (constraints.hasBoundedHeight)
+              Expanded(child: saturationValuePanel)
+            else
+              saturationValuePanel,
+            const SizedBox(height: 8),
+            hueSlider,
+          ],
+        );
+      },
     );
   }
 }
@@ -143,22 +168,38 @@ class _HSVColorPickerState extends State<HSVColorPicker> {
 /// SV 面板
 class _SVPanel extends StatelessWidget {
   final HSVColor hsvColor;
+  final String semanticLabel;
   final ValueChanged<HSVColor> onChanged;
 
-  const _SVPanel({required this.hsvColor, required this.onChanged});
+  const _SVPanel({
+    required this.hsvColor,
+    required this.semanticLabel,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
-      builder: (context, constraints) {
-        return GestureDetector(
+      builder: (context, constraints) => Semantics(
+        label: semanticLabel,
+        value:
+            '${(hsvColor.saturation * 100).round()}%, ${(hsvColor.value * 100).round()}%',
+        increasedValue:
+            '${(hsvColor.saturation * 100).round()}%, ${((hsvColor.value + 0.05).clamp(0, 1) * 100).round()}%',
+        decreasedValue:
+            '${(hsvColor.saturation * 100).round()}%, ${((hsvColor.value - 0.05).clamp(0, 1) * 100).round()}%',
+        onIncrease: () =>
+            onChanged(hsvColor.withValue((hsvColor.value + 0.05).clamp(0, 1))),
+        onDecrease: () =>
+            onChanged(hsvColor.withValue((hsvColor.value - 0.05).clamp(0, 1))),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onPanStart: (details) =>
               _handleTouch(details.localPosition, constraints),
           onPanUpdate: (details) =>
               _handleTouch(details.localPosition, constraints),
           child: Stack(
             children: [
-              // 背景渐变
               Container(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(4),
@@ -172,7 +213,6 @@ class _SVPanel extends StatelessWidget {
                   ),
                 ),
               ),
-              // 暗度渐变
               Container(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(4),
@@ -183,7 +223,6 @@ class _SVPanel extends StatelessWidget {
                   ),
                 ),
               ),
-              // 选择指示器
               Positioned(
                 left: hsvColor.saturation * constraints.maxWidth - 8,
                 top: (1 - hsvColor.value) * constraints.maxHeight - 8,
@@ -204,8 +243,8 @@ class _SVPanel extends StatelessWidget {
               ),
             ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -219,22 +258,33 @@ class _SVPanel extends StatelessWidget {
 /// Hue 滑块
 class _HueSlider extends StatelessWidget {
   final double hue;
+  final String semanticLabel;
   final ValueChanged<double> onChanged;
 
-  const _HueSlider({required this.hue, required this.onChanged});
+  const _HueSlider({
+    required this.hue,
+    required this.semanticLabel,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
-      builder: (context, constraints) {
-        return GestureDetector(
+      builder: (context, constraints) => Semantics(
+        label: semanticLabel,
+        value: '${hue.round()}°',
+        increasedValue: '${(hue + 5).clamp(0, 360).round()}°',
+        decreasedValue: '${(hue - 5).clamp(0, 360).round()}°',
+        onIncrease: () => onChanged((hue + 5).clamp(0, 360)),
+        onDecrease: () => onChanged((hue - 5).clamp(0, 360)),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onPanStart: (details) =>
               _handleTouch(details.localPosition, constraints),
           onPanUpdate: (details) =>
               _handleTouch(details.localPosition, constraints),
           child: Stack(
             children: [
-              // 色相渐变
               Container(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(4),
@@ -251,7 +301,6 @@ class _HueSlider extends StatelessWidget {
                   ),
                 ),
               ),
-              // 选择指示器
               Positioned(
                 left: (hue / 360) * constraints.maxWidth - 4,
                 top: 0,
@@ -272,8 +321,8 @@ class _HueSlider extends StatelessWidget {
               ),
             ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 

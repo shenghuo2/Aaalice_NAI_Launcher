@@ -39,10 +39,21 @@ trap restore_config EXIT
 printf '\n// Set by scripts/build_macos_arch.sh for this build only.\nEXCLUDED_ARCHS = %s\n' \
   "$excluded_arch" >> "$release_config"
 
-flutter build macos \
-  --release \
-  --no-pub \
+flutter_args=(
+  build macos
+  --release
+  --no-pub
   --dart-define="APP_SEMVER=$app_semver"
+)
+for define_name in \
+  GOOGLE_DRIVE_MACOS_CLIENT_ID \
+  GOOGLE_DRIVE_MACOS_REDIRECT_URI \
+  ONEDRIVE_MACOS_CLIENT_ID \
+  ONEDRIVE_MACOS_REDIRECT_URI \
+  ONEDRIVE_TENANT_ID; do
+  flutter_args+=(--dart-define="$define_name=${!define_name:-}")
+done
+flutter "${flutter_args[@]}"
 
 if [[ ! -d "$app_path" ]]; then
   echo "macOS application bundle was not produced: $app_path" >&2

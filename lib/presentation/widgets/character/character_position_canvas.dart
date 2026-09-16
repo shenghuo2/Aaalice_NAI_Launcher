@@ -1,11 +1,14 @@
+import 'package:nai_launcher/presentation/widgets/common/horizontal_action_strip.dart';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/character/character_prompt.dart';
+import '../../adaptive/interaction_policy.dart';
 import '../../providers/character_position_canvas_provider.dart';
 import '../../providers/character_prompt_provider.dart';
 import '../../providers/composition_guide_provider.dart';
@@ -297,36 +300,94 @@ class _CharacterPositionCanvasViewState
       key: ValueKey('canvas-anchor-${character.id}'),
       left: centerX - diameter / 2,
       top: centerY - diameter / 2,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: (_) {
-          ref.read(selectedCharacterIdProvider.notifier).select(character.id);
-          setState(() {
-            _draggingId = character.id;
-            _dragRow = position.row;
-            _dragColumn = position.column;
-          });
+      child: FocusableActionDetector(
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.arrowLeft): _MoveAnchorIntent(
+            dx: -0.02,
+          ),
+          SingleActivator(LogicalKeyboardKey.arrowRight): _MoveAnchorIntent(
+            dx: 0.02,
+          ),
+          SingleActivator(LogicalKeyboardKey.arrowUp): _MoveAnchorIntent(
+            dy: -0.02,
+          ),
+          SingleActivator(LogicalKeyboardKey.arrowDown): _MoveAnchorIntent(
+            dy: 0.02,
+          ),
         },
-        onPanUpdate: (details) {
-          setState(() {
-            _dragColumn = (_dragColumn + details.delta.dx / canvasSize.width)
-                .clamp(0.0, 1.0);
-            _dragRow = (_dragRow + details.delta.dy / canvasSize.height).clamp(
-              0.0,
-              1.0,
-            );
-          });
+        actions: {
+          _MoveAnchorIntent: CallbackAction<_MoveAnchorIntent>(
+            onInvoke: (intent) {
+              _moveAnchorWithKeyboard(character, position, intent);
+              return null;
+            },
+          ),
         },
-        onPanEnd: (_) => _commitDrag(character),
-        onPanCancel: () => _commitDrag(character),
-        child: _AnchorDot(
-          character: character,
-          index: index,
-          diameter: diameter,
-          emphasized: isSelected || isDragging,
+        child: Semantics(
+          button: true,
+          selected: isSelected,
+          label:
+              '${character.name}, ${(position.column * 100).round()}%, '
+              '${(position.row * 100).round()}%',
+          onTap: () => ref
+              .read(selectedCharacterIdProvider.notifier)
+              .select(character.id),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanStart: (_) {
+              ref
+                  .read(selectedCharacterIdProvider.notifier)
+                  .select(character.id);
+              setState(() {
+                _draggingId = character.id;
+                _dragRow = position.row;
+                _dragColumn = position.column;
+              });
+            },
+            onPanUpdate: (details) {
+              setState(() {
+                _dragColumn =
+                    (_dragColumn + details.delta.dx / canvasSize.width).clamp(
+                      0.0,
+                      1.0,
+                    );
+                _dragRow = (_dragRow + details.delta.dy / canvasSize.height)
+                    .clamp(0.0, 1.0);
+              });
+            },
+            onPanEnd: (_) => _commitDrag(character),
+            onPanCancel: () => _commitDrag(character),
+            child: _AnchorDot(
+              character: character,
+              index: index,
+              diameter: diameter,
+              emphasized: isSelected || isDragging,
+            ),
+          ),
         ),
       ),
     );
+  }
+
+  void _moveAnchorWithKeyboard(
+    CharacterPrompt character,
+    ({double row, double column}) position,
+    _MoveAnchorIntent intent,
+  ) {
+    final next = CharacterPosition(
+      mode: CharacterPositionMode.custom,
+      row: (position.row + intent.dy).clamp(0.0, 1.0),
+      column: (position.column + intent.dx).clamp(0.0, 1.0),
+    );
+    ref.read(selectedCharacterIdProvider.notifier).select(character.id);
+    ref
+        .read(characterPromptNotifierProvider.notifier)
+        .updateCharacter(
+          character.copyWith(
+            positionMode: CharacterPositionMode.custom,
+            customPosition: next,
+          ),
+        );
   }
 
   void _commitDrag(CharacterPrompt character) {
@@ -345,6 +406,13 @@ class _CharacterPositionCanvasViewState
         );
     setState(() => _draggingId = null);
   }
+}
+
+class _MoveAnchorIntent extends Intent {
+  const _MoveAnchorIntent({this.dx = 0, this.dy = 0});
+
+  final double dx;
+  final double dy;
 }
 
 /// 位置模式分段（AI 选择 / 自定义 / 画布入口）
@@ -394,6 +462,7 @@ class CharacterPositionModeSegments extends ConsumerWidget {
         ),
         // 位置画布入口
         Tooltip(
+          key: const ValueKey('character-position-canvas-entry'),
           message: l10n.characterCanvas_title,
           waitDuration: const Duration(milliseconds: 500),
           child: _ModeSegment(
@@ -443,19 +512,32 @@ class _ModeSegment extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final controlExtent = context.interactionPolicy.minimumControlExtent;
+    final horizontalPadding = context.interactionPolicy.touchAvailable
+        ? 5.0
+        : 10.0;
 
-    return InkWell(
-      onTap: onTap,
+    return Material(
+      color: selected
+          ? colorScheme.primary.withValues(alpha: 0.14)
+          : colorScheme.surfaceContainer,
       borderRadius: radius,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: selected
-              ? colorScheme.primary.withValues(alpha: 0.14)
-              : colorScheme.surfaceContainer,
-          borderRadius: radius,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: radius,
+        child: Container(
+          constraints: BoxConstraints(
+            minWidth: controlExtent,
+            minHeight: controlExtent,
+          ),
+          alignment: Alignment.center,
+          padding: EdgeInsets.symmetric(
+            horizontal: horizontalPadding,
+            vertical: 5,
+          ),
+          child: child,
         ),
-        child: child,
       ),
     );
   }
@@ -472,8 +554,7 @@ class _ChipBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return SizedBox(
       height: 34,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
+      child: HorizontalActionStrip(
         padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Row(
           children: [
@@ -522,7 +603,9 @@ class _CharacterChip extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           color: selected
@@ -596,7 +679,9 @@ class _AnchorDot extends StatelessWidget {
         character.thumbnailPath != null && character.thumbnailPath!.isNotEmpty;
 
     final anchor = AnimatedContainer(
-      duration: const Duration(milliseconds: 120),
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 120),
       width: diameter,
       height: diameter,
       decoration: BoxDecoration(
@@ -645,7 +730,9 @@ class _AnchorDot extends StatelessWidget {
       message: character.name,
       waitDuration: const Duration(milliseconds: 600),
       child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 150),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 150),
         opacity: character.enabled ? 1.0 : 0.45,
         child: anchor,
       ),

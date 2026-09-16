@@ -2,10 +2,12 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+
 import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/services.dart'
     show KeyDownEvent, KeyEvent, KeyRepeatEvent, KeyUpEvent, LogicalKeyboardKey;
 
+import '../../widgets/common/image_viewport_surface.dart';
 import '../../../core/agent/agent_types.dart';
 import '../../../core/utils/app_logger.dart';
 import '../../../core/utils/nai_resolution_adapter.dart';
@@ -317,6 +319,32 @@ class AgentChatPanelController extends ChangeNotifier {
     );
   }
 
+  /// 用选中的命令替换开头正在编辑的 `/片段`，光标落到名称之后。
+  void applySlashCommand(String name, int queryEnd) {
+    final value = inputController.value;
+    final end = queryEnd.clamp(0, value.text.length);
+    final rest = value.text.substring(end);
+    final insertion = rest.isEmpty || !RegExp(r'^\s').hasMatch(rest)
+        ? '/$name '
+        : '/$name';
+    inputController.value = TextEditingValue(
+      text: '$insertion$rest',
+      selection: TextSelection.collapsed(offset: insertion.length),
+    );
+    inputFocus.requestFocus();
+  }
+
+  /// 会话命令即时执行后清掉开头片段，保留用户已写的其余内容。
+  void removeLeadingSlashToken(int queryEnd) {
+    final value = inputController.value;
+    final end = queryEnd.clamp(0, value.text.length);
+    final text = value.text.substring(end).trimLeft();
+    inputController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
   void insertNewline() {
     final value = inputController.value;
     final selection = value.selection;
@@ -408,7 +436,7 @@ class AgentChatPanelController extends ChangeNotifier {
             elevation: 8,
             borderRadius: BorderRadius.circular(6),
             clipBehavior: Clip.antiAlias,
-            color: Theme.of(overlayContext).colorScheme.surface,
+            color: ImageViewportSurface.background,
             child: Image.memory(
               image.bytes,
               fit: BoxFit.contain,

@@ -1,12 +1,15 @@
+import '../../../widgets/common/image_card_inline_actions.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 
+import '../../../widgets/common/image_viewport_surface.dart';
 import '../../../../../core/enums/precise_ref_type.dart';
 import '../../../../../core/extensions/precise_ref_type_extensions.dart';
 import '../../../../core/utils/localization_extension.dart';
@@ -15,7 +18,8 @@ import '../../../../data/services/precise_ref_library_storage_service.dart';
 import '../../../providers/generation/generation_panel_expansion_provider.dart';
 import '../../../providers/image_generation_provider.dart';
 import '../../../providers/precise_ref_library_provider.dart';
-import '../../../utils/dropped_file_reader.dart';
+import '../../../utils/card_drop_reader.dart';
+import '../../../widgets/common/image_card_action.dart';
 import '../../../utils/precise_ref_library_import_helper.dart';
 import '../../../widgets/common/app_toast.dart';
 import '../../../widgets/common/editable_double_field.dart';
@@ -309,13 +313,14 @@ class _PreciseReferencePanelState extends ConsumerState<PreciseReferencePanel> {
     }
 
     return DropRegion(
-      formats: Formats.standardFormats,
+      formats: cardDropFormats,
       hitTestBehavior: HitTestBehavior.opaque,
       onDropOver: (event) {
         if (_isProcessingDroppedFiles) {
           return DropOperation.none;
         }
-        if (event.session.allowedOperations.contains(DropOperation.copy)) {
+        if (event.session.allowedOperations.contains(DropOperation.copy) &&
+            const CardDropPolicy().accepts(event.session.items)) {
           if (!_isFileDraggingOver) {
             setState(() => _isFileDraggingOver = true);
           }
@@ -330,10 +335,12 @@ class _PreciseReferencePanelState extends ConsumerState<PreciseReferencePanel> {
       },
       onPerformDrop: (event) async {
         setState(() => _isFileDraggingOver = false);
-        unawaited(_handleDroppedReferences(event));
+        await _handleDroppedReferences(event);
       },
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 150),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
           border: _isFileDraggingOver
@@ -492,70 +499,61 @@ class _PreciseReferencePanelState extends ConsumerState<PreciseReferencePanel> {
   }
 
   Future<void> _handleDroppedReferences(PerformDropEvent event) async {
-    if (_isProcessingDroppedFiles) {
-      return;
-    }
-
+    if (_isProcessingDroppedFiles) return;
     setState(() => _isProcessingDroppedFiles = true);
     try {
-      final files = <DroppedFileData>[];
-      for (final item in event.session.items) {
-        final reader = item.dataReader;
-        if (reader == null) {
-          continue;
-        }
+      final resources = await readCardDrop(context, event.session.items);
+      // The type chooser opens only after the native read session returns.
+      unawaited(Future<void>(() => _applyDroppedReferences(resources)));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isProcessingDroppedFiles = false);
+      AppToast.error(context, context.l10n.img2img_selectFailed('$error'));
+    }
+  }
 
-        final file = await DroppedFileReader.read(
-          reader,
-          logTag: 'PreciseReferenceDrop',
-        );
-        if (file != null) {
-          files.add(file);
-        }
-      }
-
-      if (!mounted) {
-        return;
-      }
-
-      if (files.isEmpty) {
-        AppToast.warning(context, context.l10n.preciseRef_dropNoReadableImage);
-        return;
-      }
-
-      final selectedType = await PreciseReferenceTypeDialog.show(context);
-      if (selectedType == null || !mounted) {
-        return;
-      }
-
-      final notifier = ref.read(generationParamsNotifierProvider.notifier);
-      final addOperations = files.map(
-        (file) => notifier.addPreciseReferenceFromImage(
-          file.bytes,
-          type: selectedType,
-          strength: 1.0,
-          fidelity: 1.0,
-        ),
+  Future<void> _applyDroppedReferences(
+    List<CardDroppedResource> resources,
+  ) async {
+    if (!mounted) return;
+    final notifier = ref.read(generationParamsNotifierProvider.notifier);
+    final library = ref.read(preciseRefLibraryNotifierProvider.notifier);
+    try {
+      final needsType = resources.any(
+        (resource) => resource.preciseReference == null,
       );
-      await Future.wait(addOperations);
-
-      if (mounted) {
-        AppToast.success(
-          context,
-          context.l10n.preciseRef_addedCount(files.length),
+      final type = needsType
+          ? await PreciseReferenceTypeDialog.show(context)
+          : null;
+      if (!mounted || needsType && type == null) return;
+      final result = await ImageCardBatchResult.execute(resources, (
+        resource,
+      ) async {
+        final entry = resource.preciseReference;
+        await notifier.addPreciseReferenceFromImage(
+          resource.image.bytes,
+          type: entry?.type ?? type!,
+          strength: entry?.strength ?? 1,
+          fidelity: entry?.fidelity ?? 1,
+        );
+        if (entry != null) await library.recordUsage(entry.id);
+      });
+      if (!mounted) return;
+      if (result.failures.isNotEmpty) {
+        throw StateError(
+          '${result.failures.length}/${resources.length}: ${result.failures.values.map((failure) => failure.error).join('; ')}',
         );
       }
-    } catch (e) {
+      AppToast.success(
+        context,
+        context.l10n.preciseRef_addedCount(result.succeeded.length),
+      );
+    } catch (error) {
       if (mounted) {
-        AppToast.error(
-          context,
-          context.l10n.img2img_selectFailed(e.toString()),
-        );
+        AppToast.error(context, context.l10n.img2img_selectFailed('$error'));
       }
     } finally {
-      if (mounted) {
-        setState(() => _isProcessingDroppedFiles = false);
-      }
+      if (mounted) setState(() => _isProcessingDroppedFiles = false);
     }
   }
 
@@ -621,7 +619,7 @@ class _PreciseReferenceCard extends StatelessWidget {
   final int index;
   final PreciseReference reference;
   final VoidCallback onRemove;
-  final VoidCallback onSaveToLibrary;
+  final ImageCardCallback onSaveToLibrary;
   final ValueChanged<bool> onEnabledChanged;
   final ValueChanged<PreciseRefType> onTypeChanged;
   final ValueChanged<double> onStrengthChanged;
@@ -652,7 +650,9 @@ class _PreciseReferenceCard extends StatelessWidget {
       child: AnimatedOpacity(
         key: ValueKey('precise-reference-enabled-opacity-$index'),
         opacity: reference.enabled ? 1.0 : _disabledPreciseReferenceCardOpacity,
-        duration: const Duration(milliseconds: 160),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 160),
         curve: Curves.easeOut,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -678,33 +678,24 @@ class _PreciseReferenceCard extends StatelessWidget {
                 ),
 
                 // 纵向排列保留 48dp 触控范围，同时避免压缩窄屏参数区。
-                Column(
-                  children: [
-                    SizedBox.square(
-                      dimension: 48,
-                      child: IconButton(
-                        key: Key('precise-reference-save-to-library-$index'),
-                        icon: Icon(
-                          Icons.bookmark_add_outlined,
-                          size: 18,
-                          color: theme.colorScheme.primary,
-                        ),
-                        onPressed: onSaveToLibrary,
-                        tooltip:
-                            context.l10n.preciseRefLib_saveCurrentToLibrary,
-                      ),
+                ImageCardInlineActions(
+                  direction: Axis.vertical,
+                  actions: [
+                    ImageCardAction(
+                      id: ImageCardActionId.saveToLibrary,
+                      key: Key('precise-reference-save-to-library-$index'),
+                      icon: Icons.bookmark_add_outlined,
+                      iconColor: theme.colorScheme.primary,
+                      label: context.l10n.preciseRefLib_saveCurrentToLibrary,
+                      invoke: onSaveToLibrary,
                     ),
-                    SizedBox.square(
-                      dimension: 48,
-                      child: IconButton(
-                        icon: Icon(
-                          Icons.delete_outline,
-                          size: 18,
-                          color: theme.colorScheme.error,
-                        ),
-                        onPressed: onRemove,
-                        tooltip: context.l10n.preciseRef_remove,
-                      ),
+                    ImageCardAction(
+                      id: ImageCardActionId.delete,
+                      icon: Icons.delete_outline,
+                      iconColor: theme.colorScheme.error,
+                      label: context.l10n.preciseRef_remove,
+                      invoke: onRemove,
+                      isDanger: true,
                     ),
                   ],
                 ),
@@ -742,7 +733,7 @@ class _PreciseReferenceCard extends StatelessWidget {
       child: Container(
         width: 64,
         height: 64,
-        color: theme.colorScheme.surfaceContainerHighest,
+        color: ImageViewportSurface.background,
         child: DecodedMemoryImage(
           bytes: reference.image,
           fit: BoxFit.cover,
@@ -759,8 +750,12 @@ class _PreciseReferenceCard extends StatelessWidget {
   }
 
   Widget _buildPlaceholder(ThemeData theme) {
-    return Center(
-      child: Icon(Icons.person, size: 24, color: theme.colorScheme.outline),
+    return const Center(
+      child: Icon(
+        Icons.person,
+        size: 24,
+        color: ImageViewportSurface.mutedForeground,
+      ),
     );
   }
 

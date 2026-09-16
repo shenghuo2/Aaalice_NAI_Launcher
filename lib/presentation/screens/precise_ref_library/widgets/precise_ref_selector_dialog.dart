@@ -1,3 +1,4 @@
+import 'package:nai_launcher/presentation/widgets/common/horizontal_action_strip.dart';
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -9,26 +10,52 @@ import '../../../../core/enums/precise_ref_type.dart';
 import '../../../../core/extensions/precise_ref_type_extensions.dart';
 import '../../../../data/models/precise_ref/precise_ref_library_entry.dart';
 import '../../../../data/services/precise_ref_library_storage_service.dart';
+import '../../../adaptive/adaptive_presenter.dart';
 import '../../../providers/precise_ref_library_provider.dart';
 import 'precise_ref_type_filter_chips.dart';
 
+enum PreciseRefSelectorPurpose { add, export }
+
 /// 精准参考库条目选择器对话框
 ///
-/// 供生成页「从库导入」使用：网格 + 搜索 + 类型过滤。
+/// 供生成页「从库导入」及精准参考库导出使用：网格 + 搜索 + 类型过滤。
 /// [multiSelect] 为 false 时点击条目直接返回单个条目。
+/// 导出用途默认全选，并提供当前筛选结果的全选与全不选操作。
 /// 搜索与类型过滤为对话框内部状态，不影响库页面的过滤条件。
 class PreciseRefSelectorDialog extends ConsumerStatefulWidget {
-  const PreciseRefSelectorDialog({super.key, this.multiSelect = true});
+  const PreciseRefSelectorDialog({
+    super.key,
+    this.multiSelect = true,
+    this.purpose = PreciseRefSelectorPurpose.add,
+    this.scrollController,
+  });
 
   final bool multiSelect;
+  final PreciseRefSelectorPurpose purpose;
+  final ScrollController? scrollController;
 
   static Future<List<PreciseRefLibraryEntry>?> show(
     BuildContext context, {
     bool multiSelect = true,
+    PreciseRefSelectorPurpose purpose = PreciseRefSelectorPurpose.add,
   }) {
-    return showDialog<List<PreciseRefLibraryEntry>>(
+    return AdaptivePresenter.showForm<List<PreciseRefLibraryEntry>>(
       context: context,
-      builder: (context) => PreciseRefSelectorDialog(multiSelect: multiSelect),
+      titleBuilder: (panelContext) => Text(
+        purpose == PreciseRefSelectorPurpose.export
+            ? panelContext.l10n.preciseRefLib_exportTitle
+            : panelContext.l10n.preciseRefLib_selectorTitle,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(panelContext).textTheme.titleLarge,
+      ),
+      dialogWidth: 720,
+      expandCompact: true,
+      builder: (panelContext, scrollController) => PreciseRefSelectorDialog(
+        multiSelect: multiSelect,
+        purpose: purpose,
+        scrollController: scrollController,
+      ),
     );
   }
 
@@ -47,6 +74,7 @@ class _PreciseRefSelectorDialogState
   String? _cachedQuery;
   PreciseRefType? _cachedTypeFilter;
   List<PreciseRefLibraryEntry> _cachedVisibleEntries = const [];
+  bool _initializedExportSelection = false;
 
   @override
   void initState() {
@@ -103,115 +131,212 @@ class _PreciseRefSelectorDialogState
     final theme = Theme.of(context);
     final state = ref.watch(preciseRefLibraryNotifierProvider);
     final entries = _visibleEntries(state.entries);
+    if (widget.purpose == PreciseRefSelectorPurpose.export &&
+        !_initializedExportSelection &&
+        !state.isLoading) {
+      _selectedIds.addAll(state.entries.map((entry) => entry.id));
+      _initializedExportSelection = true;
+    }
 
-    final mediaQuery = MediaQuery.of(context);
-    final dialogWidth = (mediaQuery.size.width - 48).clamp(280.0, 560.0);
-    final dialogHeight =
-        ((mediaQuery.size.height - mediaQuery.viewInsets.bottom) * 0.62).clamp(
-          280.0,
-          520.0,
-        );
-
-    return AlertDialog(
-      title: Text(l10n.preciseRefLib_selectorTitle),
-      content: SizedBox(
-        width: dialogWidth,
-        height: dialogHeight,
-        child: Column(
+    return LayoutBuilder(
+      key: const Key('precise-ref-selector-dialog'),
+      builder: (context, constraints) {
+        final crossAxisCount = constraints.maxWidth < 340
+            ? 2
+            : constraints.maxWidth < 500
+            ? 3
+            : constraints.maxWidth < 680
+            ? 4
+            : 5;
+        final shrinkWrapContent =
+            MediaQuery.sizeOf(context).width >= 600 &&
+            entries.length <= crossAxisCount * 2;
+        final actions = Wrap(
+          alignment: WrapAlignment.end,
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            TextField(
-              key: const Key('precise-ref-selector-search'),
-              textAlignVertical: TextAlignVertical.center,
-              decoration: InputDecoration(
-                hintText: l10n.preciseRefLib_searchHint,
-                prefixIcon: const Icon(Icons.search, size: 20),
-                isDense: true,
-                border: const OutlineInputBorder(),
-              ),
-              onChanged: _onSearchChanged,
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(l10n.common_cancel),
             ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: PreciseRefTypeFilterChips(
-                value: _typeFilter,
-                onChanged: (type) => setState(() => _typeFilter = type),
+            if (widget.multiSelect)
+              FilledButton(
+                key: const Key('precise-ref-selector-confirm'),
+                onPressed: _selectedIds.isEmpty
+                    ? null
+                    : () => _confirm(state.entries),
+                child: Text(
+                  widget.purpose == PreciseRefSelectorPurpose.export
+                      ? l10n.preciseRefLib_exportConfirm(_selectedIds.length)
+                      : l10n.preciseRefLib_selectorConfirm(_selectedIds.length),
+                ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: state.isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : state.error != null
-                  ? _buildErrorView(state.error!)
-                  : entries.isEmpty
-                  ? Center(
-                      child: Text(
-                        l10n.preciseRefLib_emptyTouch,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
+          ],
+        );
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              fit: FlexFit.loose,
+              child: CustomScrollView(
+                controller: widget.scrollController,
+                shrinkWrap: shrinkWrapContent,
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    sliver: SliverList.list(
+                      children: [
+                        if (widget.purpose ==
+                            PreciseRefSelectorPurpose.export) ...[
+                          Text(
+                            l10n.preciseRefLib_exportSelectionHint,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        TextField(
+                          key: const Key('precise-ref-selector-search'),
+                          textAlignVertical: TextAlignVertical.center,
+                          decoration: InputDecoration(
+                            hintText: l10n.preciseRefLib_searchHint,
+                            prefixIcon: const Icon(Icons.search, size: 20),
+                            isDense: true,
+                            border: const OutlineInputBorder(),
+                          ),
+                          onChanged: _onSearchChanged,
+                        ),
+                        const SizedBox(height: 8),
+                        HorizontalActionStrip(
+                          scrollKey: const Key(
+                            'precise-ref-selector-type-scroll',
+                          ),
+
+                          child: PreciseRefTypeFilterChips(
+                            value: _typeFilter,
+                            onChanged: (type) =>
+                                setState(() => _typeFilter = type),
+                          ),
+                        ),
+                        if (widget.purpose ==
+                            PreciseRefSelectorPurpose.export) ...[
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              TextButton(
+                                key: const Key('precise-ref-export-select-all'),
+                                onPressed: entries.isEmpty
+                                    ? null
+                                    : () => setState(
+                                        () => _selectedIds.addAll(
+                                          entries.map((entry) => entry.id),
+                                        ),
+                                      ),
+                                child: Text(l10n.common_selectAll),
+                              ),
+                              TextButton(
+                                key: const Key(
+                                  'precise-ref-export-deselect-all',
+                                ),
+                                onPressed: _selectedIds.isEmpty
+                                    ? null
+                                    : () => setState(_selectedIds.clear),
+                                child: Text(l10n.common_deselectAll),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (state.isLoading)
+                    SliverToBoxAdapter(
+                      child: SizedBox(
+                        height: 160,
+                        child: Center(
+                          child: CircularProgressIndicator(
+                            value: MediaQuery.disableAnimationsOf(context)
+                                ? 0.72
+                                : null,
+                          ),
                         ),
                       ),
                     )
-                  : LayoutBuilder(
-                      builder: (context, constraints) {
-                        final crossAxisCount = constraints.maxWidth < 340
-                            ? 2
-                            : constraints.maxWidth < 500
-                            ? 3
-                            : 4;
-                        return GridView.builder(
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: crossAxisCount,
-                                mainAxisSpacing: 8,
-                                crossAxisSpacing: 8,
-                                childAspectRatio: 0.85,
-                              ),
-                          itemCount: entries.length,
-                          itemBuilder: (context, index) {
-                            final entry = entries[index];
-                            return _SelectorItem(
-                              entry: entry,
-                              selected:
-                                  widget.multiSelect &&
-                                  _selectedIds.contains(entry.id),
-                              onTap: () {
-                                if (!widget.multiSelect) {
-                                  Navigator.of(context).pop([entry]);
-                                  return;
+                  else if (state.error != null)
+                    SliverToBoxAdapter(
+                      child: SizedBox(
+                        height: 160,
+                        child: _buildErrorView(state.error!),
+                      ),
+                    )
+                  else if (entries.isEmpty)
+                    SliverToBoxAdapter(
+                      child: SizedBox(
+                        height: 160,
+                        child: Center(
+                          child: Text(
+                            l10n.preciseRefLib_emptyTouch,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      sliver: SliverGrid.builder(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxisCount,
+                          mainAxisSpacing: 8,
+                          crossAxisSpacing: 8,
+                          childAspectRatio: 0.85,
+                        ),
+                        itemCount: entries.length,
+                        itemBuilder: (context, index) {
+                          final entry = entries[index];
+                          return _SelectorItem(
+                            entry: entry,
+                            selected:
+                                widget.multiSelect &&
+                                _selectedIds.contains(entry.id),
+                            onTap: () {
+                              if (!widget.multiSelect) {
+                                Navigator.of(context).pop([entry]);
+                                return;
+                              }
+                              setState(() {
+                                if (!_selectedIds.remove(entry.id)) {
+                                  _selectedIds.add(entry.id);
                                 }
-                                setState(() {
-                                  if (!_selectedIds.remove(entry.id)) {
-                                    _selectedIds.add(entry.id);
-                                  }
-                                });
-                              },
-                            );
-                          },
-                        );
-                      },
+                              });
+                            },
+                          );
+                        },
+                      ),
                     ),
+                  const SliverPadding(padding: EdgeInsets.only(bottom: 12)),
+                  if (!shrinkWrapContent)
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                      sliver: SliverToBoxAdapter(child: actions),
+                    ),
+                ],
+              ),
             ),
+            if (shrinkWrapContent)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: actions,
+              ),
           ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.common_cancel),
-        ),
-        if (widget.multiSelect)
-          FilledButton(
-            key: const Key('precise-ref-selector-confirm'),
-            onPressed: _selectedIds.isEmpty
-                ? null
-                : () => _confirm(state.entries),
-            child: Text(
-              l10n.preciseRefLib_selectorConfirm(_selectedIds.length),
-            ),
-          ),
-      ],
+        );
+      },
     );
   }
 
@@ -275,13 +400,17 @@ class _SelectorItemState extends ConsumerState<_SelectorItem> {
     if (_requested) return;
     _requested = true;
     final id = widget.entry.id;
-    ref
-        .read(preciseRefLibraryStorageServiceProvider)
-        .getDisplayThumbnail(id)
-        .then((bytes) {
-          if (!mounted || widget.entry.id != id) return;
-          setState(() => _thumbnail = bytes);
-        });
+    final storage = ref.read(preciseRefLibraryStorageServiceProvider);
+    // 内存缓存同步命中时直接赋值，让卡片重建后的首帧就有图
+    final cached = storage.peekDisplayThumbnail(id);
+    if (cached != null && cached.isNotEmpty) {
+      _thumbnail = cached;
+      return;
+    }
+    storage.getDisplayThumbnail(id).then((bytes) {
+      if (!mounted || widget.entry.id != id) return;
+      setState(() => _thumbnail = bytes);
+    });
   }
 
   @override

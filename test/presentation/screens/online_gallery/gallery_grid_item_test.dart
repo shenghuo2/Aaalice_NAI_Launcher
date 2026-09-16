@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_launcher/core/cache/online_gallery_detail_coordinator.dart';
 import 'package:nai_launcher/data/models/online_gallery/gallery_item.dart';
@@ -265,10 +266,11 @@ void main() {
     },
   );
 
-  testWidgets('AI TAG resolved media is revealed using its real dimensions', (
+  testWidgets('AI TAG resolved media keeps the masonry snapshot aspect ratio', (
     tester,
   ) async {
-    final resolved = _item.copyWith(
+    final initial = _item.copyWith(imageWidth: 400, imageHeight: 800);
+    final resolved = initial.copyWith(
       imageWidth: 1200,
       imageHeight: 800,
       previewFileUrl: 'https://example.test/ai-tag-resolved.jpg',
@@ -278,6 +280,8 @@ void main() {
     final layoutAspectRatios = <double>[];
     await tester.pumpWidget(
       _app(
+        post: initial,
+        containerHeight: 600,
         detailRequestScope: 1,
         loadDetail: (_, {required priority, forceRefresh = false}) =>
             Future.value(GalleryDetail(item: resolved, media: const [])),
@@ -302,8 +306,7 @@ void main() {
 
     expect(loadMediaValues.last, isTrue);
     expect(mediaRequestActiveValues.last, isTrue);
-    expect(layoutAspectRatios.last, 1.5);
-
+    expect(layoutAspectRatios.last, 0.5);
     final buildsAfterResolve = mediaRequestActiveValues.length;
     detector.onVisibilityChanged?.call(
       VisibilityInfo(
@@ -440,44 +443,47 @@ Widget _app({
   ValueChanged<bool>? onBuildCard,
   ValueChanged<bool>? onMediaRequestActive,
   ValueChanged<double>? onLayoutAspectRatio,
+  double containerHeight = 200,
 }) {
-  return MaterialApp(
-    locale: const Locale('en'),
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    home: Scaffold(
-      body: SizedBox(
-        width: 200,
-        height: 200,
-        child: GalleryGridItem(
-          post: post,
-          index: 0,
-          itemWidth: 200,
-          columnCount: 1,
-          scrolling: const AlwaysStoppedAnimation(false),
-          anchorKey: null,
-          onVisibilityChanged: (_) {},
-          viewportGeneration: viewportGeneration,
-          detailRequestScope: detailRequestScope,
-          loadDetail: loadDetail,
-          buildCard:
-              (
-                context,
-                item,
-                itemWidth, {
-                required layoutAspectRatio,
-                required loadMedia,
-                required mediaRequestActive,
-                detail,
-              }) {
-                onBuildCard?.call(loadMedia);
-                onMediaRequestActive?.call(mediaRequestActive);
-                onLayoutAspectRatio?.call(layoutAspectRatio);
-                return SizedBox(
-                  key: const ValueKey('resolved-card'),
-                  height: itemWidth / layoutAspectRatio,
-                );
-              },
+  return ProviderScope(
+    child: MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: SizedBox(
+          width: 200,
+          height: containerHeight,
+          child: GalleryGridItem(
+            post: post,
+            index: 0,
+            itemWidth: 200,
+            columnCount: 1,
+            scrolling: const AlwaysStoppedAnimation(false),
+            anchorKey: null,
+            onVisibilityChanged: (_) {},
+            viewportGeneration: viewportGeneration,
+            detailRequestScope: detailRequestScope,
+            loadDetail: loadDetail,
+            buildCard:
+                (
+                  context,
+                  item,
+                  itemWidth, {
+                  required layoutAspectRatio,
+                  required loadMedia,
+                  required mediaRequestActive,
+                  detail,
+                }) {
+                  onBuildCard?.call(loadMedia);
+                  onMediaRequestActive?.call(mediaRequestActive);
+                  onLayoutAspectRatio?.call(layoutAspectRatio);
+                  return SizedBox(
+                    key: const ValueKey('resolved-card'),
+                    height: itemWidth / layoutAspectRatio,
+                  );
+                },
+          ),
         ),
       ),
     ),

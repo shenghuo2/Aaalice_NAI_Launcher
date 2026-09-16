@@ -10,10 +10,13 @@ import 'package:nai_launcher/data/models/character/character_prompt.dart';
 import 'package:nai_launcher/data/models/online_gallery/danbooru_post.dart';
 import 'package:nai_launcher/data/models/queue/replication_task.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
+import 'package:nai_launcher/presentation/adaptive/interaction_policy.dart';
 import 'package:nai_launcher/presentation/providers/character_prompt_provider.dart';
 import 'package:nai_launcher/presentation/providers/image_generation_provider.dart';
 import 'package:nai_launcher/presentation/providers/replication_queue_provider.dart';
+import 'package:nai_launcher/presentation/widgets/common/image_card_actions.dart';
 import 'package:nai_launcher/presentation/widgets/common/image_card_hover_motion.dart';
+import 'package:nai_launcher/presentation/widgets/common/image_hover_preview.dart';
 import 'package:nai_launcher/presentation/widgets/danbooru_post_card.dart';
 
 void main() {
@@ -27,13 +30,117 @@ void main() {
     PlatformCapabilities.debugOverride = null;
   });
 
-  testWidgets('touch action menu does not overlap the rating badge', (
+  testWidgets('hover actions expose the Agent reference callback', (
     tester,
   ) async {
-    PlatformCapabilities.debugOverride = PlatformCapabilities.forPlatform(
-      TargetPlatform.android,
+    var addCount = 0;
+    const post = DanbooruPost(
+      id: 120,
+      width: 600,
+      height: 900,
+      previewFileUrl: 'https://example.com/portrait.jpg',
+      tagString: 'test_tag',
     );
 
+    await tester.pumpWidget(
+      ProviderScope(
+        child: _pointerPolicy(
+          MaterialApp(
+            locale: const Locale('zh'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: ImageCardActionScope(
+                onAddToAgent: () => addCount++,
+                child: DanbooruPostCard(
+                  post: post,
+                  itemWidth: 200,
+                  isFavorited: false,
+                  onTap: () {},
+                  onTagTap: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(find.byType(DanbooruPostCard)));
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送到智能体'));
+    expect(addCount, 1);
+  });
+
+  testWidgets('portrait hover actions use at most two balanced columns', (
+    tester,
+  ) async {
+    const post = DanbooruPost(
+      id: 134,
+      width: 600,
+      height: 900,
+      previewFileUrl: 'https://example.com/portrait.jpg',
+      tagString: 'test_tag',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: _pointerPolicy(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.topLeft,
+                child: ImageCardActionScope(
+                  onAddToAgent: () {},
+                  child: DanbooruPostCard(
+                    post: post,
+                    itemWidth: 220,
+                    isFavorited: false,
+                    onFavoriteToggle: () {},
+                    onTap: () {},
+                    onTagTap: (_) {},
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final cardFinder = find.byKey(const ValueKey('online-gallery-card-layout'));
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(cardFinder));
+    await tester.pump();
+
+    final actionsFinder = find.descendant(
+      of: find.byKey(const ValueKey('online-gallery-card-action-buttons')),
+      matching: find.byType(IconButton),
+    );
+    final actionRects = [
+      for (var index = 0; index < actionsFinder.evaluate().length; index++)
+        tester.getRect(actionsFinder.at(index)),
+    ];
+
+    expect(actionRects, hasLength(7));
+    expect(actionRects.take(4).map((rect) => rect.left).toSet(), hasLength(1));
+    expect(actionRects.skip(4).map((rect) => rect.left).toSet(), hasLength(1));
+    expect(actionRects[4].left - actionRects[0].right, closeTo(4, 0.01));
+    expect(actionRects[4].top, actionRects[0].top);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('active touch keeps action menu clear of rating badge', (
+    tester,
+  ) async {
+    var addCount = 0;
     const post = DanbooruPost(
       id: 121,
       width: 600,
@@ -45,18 +152,28 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
-        child: MaterialApp(
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: Scaffold(
-            body: Align(
-              alignment: Alignment.topLeft,
-              child: DanbooruPostCard(
-                post: post,
-                itemWidth: 150,
-                isFavorited: false,
-                onTap: () {},
-                onTagTap: (_) {},
+        child: InteractionPolicyScope(
+          initialPolicy: const InteractionPolicy(
+            modality: InteractionModality.touch,
+            touchAvailable: true,
+            precisePointerAvailable: true,
+          ),
+          child: MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.topLeft,
+                child: ImageCardActionScope(
+                  onAddToAgent: () => addCount++,
+                  child: DanbooruPostCard(
+                    post: post,
+                    itemWidth: 150,
+                    isFavorited: false,
+                    onTap: () {},
+                    onTagTap: (_) {},
+                  ),
+                ),
               ),
             ),
           ),
@@ -73,6 +190,130 @@ void main() {
 
     expect(actions.overlaps(rating), isFalse);
     expect(rating.right, lessThanOrEqualTo(actions.left));
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send to Agent'));
+    expect(addCount, 1);
+  });
+
+  testWidgets('QuickTagCloud codex badges stay at the top-left', (
+    tester,
+  ) async {
+    for (final badgeLabel in const ['常规', '角色', '超长法典分类标签用于验证']) {
+      final post = GalleryItem(
+        id: badgeLabel.hashCode,
+        sourceId: GallerySourceId.quickTagCloud,
+        width: 600,
+        height: 900,
+        title: '社区精选 006',
+        author: '梦神',
+        previewFileUrl: 'https://example.com/codex.jpg',
+        tagString: 'test_tag',
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          child: InteractionPolicyScope(
+            initialPolicy: const InteractionPolicy(
+              modality: InteractionModality.touch,
+              touchAvailable: true,
+              precisePointerAvailable: false,
+            ),
+            child: MaterialApp(
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: Align(
+                  alignment: Alignment.topLeft,
+                  child: DanbooruPostCard(
+                    post: post,
+                    itemWidth: 180,
+                    badgeLabel: badgeLabel,
+                    isFavorited: false,
+                    onTap: () {},
+                    onTagTap: (_) {},
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final card = tester.getRect(
+        find.byKey(const ValueKey('online-gallery-card-layout')),
+      );
+      final badge = tester.getRect(
+        find.byKey(const ValueKey('online-gallery-card-source-badge')),
+      );
+      final actions = tester.getRect(
+        find.byKey(const ValueKey('online-gallery-card-action-buttons')),
+      );
+      final title = tester.getRect(find.text('社区精选 006'));
+      final author = tester.getRect(find.text('梦神'));
+
+      expect(badge.left, closeTo(card.left + 4, 0.01));
+      expect(badge.top, closeTo(card.top + 4, 0.01));
+      expect(badge.overlaps(actions), isFalse);
+      expect(badge.bottom, lessThanOrEqualTo(title.top));
+      expect(badge.bottom, lessThanOrEqualTo(author.top));
+      expect(tester.takeException(), isNull, reason: badgeLabel);
+    }
+  });
+
+  testWidgets('rating and video badges do not overlap at text scale 3', (
+    tester,
+  ) async {
+    const post = DanbooruPost(
+      id: 130,
+      width: 600,
+      height: 900,
+      rating: 'g',
+      fileExt: 'mp4',
+      fileUrl: 'https://example.com/video.mp4',
+      previewFileUrl: 'https://example.com/video.jpg',
+      tagString: 'test_tag',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(3)),
+            child: child!,
+          ),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.topLeft,
+              child: DanbooruPostCard(
+                post: post,
+                itemWidth: 200,
+                isFavorited: false,
+                onTap: () {},
+                onTagTap: (_) {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final rating = tester.getRect(
+      find.byKey(const ValueKey('online-gallery-card-rating-badge')),
+    );
+    final mediaType = tester.getRect(
+      find.byKey(const ValueKey('online-gallery-card-media-type-badge')),
+    );
+
+    expect(rating.overlaps(mediaType), isFalse);
+    expect(rating.bottom, lessThanOrEqualTo(mediaType.top));
     expect(tester.takeException(), isNull);
   });
 
@@ -123,6 +364,7 @@ void main() {
         UncontrolledProviderScope(
           container: container,
           child: MaterialApp.router(
+            builder: (context, child) => _pointerPolicy(child!),
             routerConfig: router,
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
@@ -133,6 +375,7 @@ void main() {
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       addTearDown(mouse.removePointer);
       await mouse.addPointer(location: tester.getCenter(card));
+      await mouse.moveTo(tester.getCenter(card));
       await tester.pump();
       await tester.tap(find.byTooltip('Send to Text to Image'));
       await tester.pump(const Duration(milliseconds: 500));
@@ -255,6 +498,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         child: MaterialApp(
+          builder: (context, child) => _pointerPolicy(child!),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
@@ -277,11 +521,16 @@ void main() {
     await tester.pump();
 
     final motion = find.byType(ImageCardHoverMotion);
-    expect(tester.widget<ImageCardHoverMotion>(motion).hovered, isTrue);
+    expect(tester.widget<ImageCardHoverMotion>(motion.first).hovered, isTrue);
     expect(
       tester
           .widget<AnimatedScale>(
-            find.descendant(of: motion, matching: find.byType(AnimatedScale)),
+            find
+                .descendant(
+                  of: motion.first,
+                  matching: find.byType(AnimatedScale),
+                )
+                .first,
           )
           .scale,
       ImageCardHoverMotion.hoverScale,
@@ -289,6 +538,81 @@ void main() {
 
     await mouse.moveTo(Offset.zero);
     await tester.pump();
+  });
+
+  testWidgets('landscape cards keep every hover action inside the image', (
+    tester,
+  ) async {
+    const post = DanbooruPost(
+      id: 131,
+      width: 900,
+      height: 600,
+      rating: 'g',
+      previewFileUrl: 'https://example.com/landscape.jpg',
+      tagString: 'test_tag',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          builder: (context, child) => _pointerPolicy(child!),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 240,
+                child: DanbooruPostCard(
+                  post: post,
+                  itemWidth: 240,
+                  isFavorited: false,
+                  onFavoriteToggle: () {},
+                  onTap: () {},
+                  onTagTap: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final cardFinder = find.byKey(const ValueKey('online-gallery-card-layout'));
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    addTearDown(mouse.removePointer);
+    await mouse.addPointer(location: Offset.zero);
+    await mouse.moveTo(tester.getCenter(cardFinder));
+    await tester.pump();
+
+    final cardRect = tester.getRect(cardFinder);
+    final actionsFinder = find.descendant(
+      of: find.byKey(const ValueKey('online-gallery-card-action-buttons')),
+      matching: find.byType(IconButton),
+    );
+    final actionRects = [
+      for (var index = 0; index < actionsFinder.evaluate().length; index++)
+        tester.getRect(actionsFinder.at(index)),
+    ];
+
+    expect(actionRects, hasLength(6));
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('online-gallery-card-action-buttons')),
+        matching: find.byIcon(Icons.copy),
+      ),
+      findsOneWidget,
+    );
+    for (final rect in actionRects) {
+      expect(cardRect.contains(rect.topLeft), isTrue);
+      expect(cardRect.contains(rect.bottomRight), isTrue);
+    }
+    for (var index = 0; index < actionRects.length; index++) {
+      for (final other in actionRects.skip(index + 1)) {
+        expect(actionRects[index].overlaps(other), isFalse);
+      }
+    }
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('passes Gelbooru image headers and cache key to preview image', (
@@ -399,6 +723,7 @@ void main() {
           ),
         ],
         child: MaterialApp(
+          builder: (context, child) => _pointerPolicy(child!),
           locale: const Locale('en'),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
@@ -421,6 +746,7 @@ void main() {
     final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
     addTearDown(mouse.removePointer);
     await mouse.addPointer(location: tester.getCenter(card));
+    await mouse.moveTo(tester.getCenter(card));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 301));
     await tester.tap(find.byTooltip('Add to Queue'));
@@ -453,6 +779,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         child: MaterialApp(
+          builder: (context, child) => _pointerPolicy(child!),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
@@ -490,6 +817,7 @@ void main() {
 
     final preview = find.byKey(const ValueKey('online-gallery-hover-preview'));
     expect(preview, findsOneWidget);
+    expect(find.byType(ImageHoverPreviewSurface), findsOneWidget);
     final rect = tester.getRect(preview);
     expect(rect.left, greaterThanOrEqualTo(10));
     expect(rect.top, greaterThanOrEqualTo(10));
@@ -510,7 +838,7 @@ void main() {
           .descendant(of: media, matching: find.byType(CachedNetworkImage))
           .first,
     );
-    expect(hoverImage.fit, BoxFit.fitWidth);
+    expect(hoverImage.fit, BoxFit.cover);
     expect(hoverImage.alignment, Alignment.topCenter);
   });
 
@@ -538,6 +866,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         child: MaterialApp(
+          builder: (context, child) => _pointerPolicy(child!),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           home: Scaffold(
@@ -595,6 +924,7 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           child: MaterialApp(
+            builder: (context, child) => _pointerPolicy(child!),
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
             home: Scaffold(
@@ -632,7 +962,7 @@ void main() {
             .descendant(of: media, matching: find.byType(CachedNetworkImage))
             .first,
       );
-      expect(hoverImage.fit, BoxFit.contain);
+      expect(hoverImage.fit, BoxFit.cover);
       expect(hoverImage.alignment, Alignment.center);
       await mouse.removePointer();
     }
@@ -646,7 +976,7 @@ void main() {
         previewFileUrl: 'https://example.com/landscape.jpg',
         tagString: 'test_tag',
       ),
-      expectedHeight: 316 / 1.5,
+      expectedHeight: 320 / 1.5,
     );
     await verify(
       post: const DanbooruPost(
@@ -698,6 +1028,17 @@ void main() {
     expect(find.byTooltip('Read-only favorites'), findsOneWidget);
     expect(find.byTooltip('Unfavorite'), findsNothing);
   });
+}
+
+Widget _pointerPolicy(Widget child) {
+  return InteractionPolicyScope(
+    initialPolicy: const InteractionPolicy(
+      modality: InteractionModality.pointer,
+      touchAvailable: false,
+      precisePointerAvailable: true,
+    ),
+    child: child,
+  );
 }
 
 class _TestCharacterPromptNotifier extends CharacterPromptNotifier {

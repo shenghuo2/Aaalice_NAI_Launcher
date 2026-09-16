@@ -7,13 +7,17 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private var questionNotifications: AgentQuestionNotifications? = null
     private var appInstaller: AndroidAppInstaller? = null
     private var assetCopyChannel: AndroidAssetCopyChannel? = null
     private var fileExportChannel: AndroidFileExportChannel? = null
     private var generationServiceChannel: MethodChannel? = null
+    private var imageShareChannel: AndroidImageShareChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        imageShareChannel = AndroidImageShareChannel(this, flutterEngine.dartExecutor.binaryMessenger)
+        questionNotifications = AgentQuestionNotifications(this, flutterEngine.dartExecutor.binaryMessenger)
         fileExportChannel = AndroidFileExportChannel(
             this,
             flutterEngine.dartExecutor.binaryMessenger,
@@ -99,7 +103,17 @@ class MainActivity : FlutterActivity() {
         fileExportChannel?.onActivityResult(requestCode, resultCode, data)
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        imageShareChannel?.accept(intent)
+        questionNotifications?.onNewIntent(intent)
+    }
+
     override fun onDestroy() {
+        imageShareChannel?.dispose()
+        imageShareChannel = null
+        questionNotifications?.dispose()
+        questionNotifications = null
         appInstaller?.dispose()
         appInstaller = null
         assetCopyChannel?.dispose()

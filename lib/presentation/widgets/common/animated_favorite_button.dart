@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/utils/localization_extension.dart';
+import '../../adaptive/interaction_policy.dart';
 
 /// 统一收藏按钮。
 ///
@@ -179,6 +180,8 @@ class _FavoriteIconButtonState extends State<_FavoriteIconButton>
             ? context.l10n.common_unfavorite
             : context.l10n.common_favorite);
 
+    final interaction = context.interactionPolicy;
+
     Color foreground(Set<WidgetState> states) {
       if (states.contains(WidgetState.disabled)) {
         return colors.onSurface.withValues(alpha: 0.38);
@@ -189,10 +192,7 @@ class _FavoriteIconButtonState extends State<_FavoriteIconButton>
     }
 
     Color background(Set<WidgetState> states) {
-      final interactive =
-          states.contains(WidgetState.hovered) ||
-          states.contains(WidgetState.focused) ||
-          states.contains(WidgetState.pressed);
+      final interactive = interaction.isControlHighlighted(states);
       if (states.contains(WidgetState.disabled) && !widget.cardOverlay) {
         return Colors.transparent;
       }
@@ -206,8 +206,8 @@ class _FavoriteIconButtonState extends State<_FavoriteIconButton>
               : activeColor.withValues(alpha: 0.14);
         }
         return interactive
-            ? colors.surfaceContainerHighest
-            : widget.backgroundColor ?? colors.surfaceContainerHigh;
+            ? widget.backgroundColor ?? colors.surfaceContainerHighest
+            : Colors.transparent;
       }
       return interactive ? colors.surfaceContainerHigh : Colors.transparent;
     }

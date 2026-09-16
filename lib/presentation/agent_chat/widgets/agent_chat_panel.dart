@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -16,6 +18,7 @@ import 'agent_chat_panel_view_data.dart';
 import 'agent_chat_reading_preferences.dart';
 import 'agent_resource_drop_region.dart';
 import 'agent_chat_status.dart';
+import 'agent_chat_question_card.dart';
 
 final _agentChatViewportStoreProvider = Provider<AgentChatViewportStore>(
   (ref) => AgentChatViewportStore(),
@@ -32,14 +35,12 @@ class AgentChatPanel extends ConsumerStatefulWidget {
     super.key,
     this.onClose,
     this.onOpenSettings,
-    this.mobile = false,
     this.fullScreen = false,
     this.mobileHeaderWrapper,
   });
 
   final VoidCallback? onClose;
   final VoidCallback? onOpenSettings;
-  final bool mobile;
   final bool fullScreen;
   final Widget Function(Widget child)? mobileHeaderWrapper;
 
@@ -64,6 +65,12 @@ class _AgentChatPanelState extends ConsumerState<AgentChatPanel> {
       controller: _controller,
       isMounted: () => mounted,
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        ref.read(agentChatNotifierProvider.notifier).ensureInitialized(),
+      );
+    });
   }
 
   void _refresh() {
@@ -119,11 +126,8 @@ class _AgentChatPanelState extends ConsumerState<AgentChatPanel> {
           config: config,
           agentSettings: agentSettings,
           webAccess: webAccess,
-          mobile: widget.mobile,
           fullScreen: widget.fullScreen,
-          compactMobile:
-              widget.mobile &&
-              (constraints.maxHeight <= 520 || keyboardVisible),
+          compactHeight: constraints.maxHeight <= 520 || keyboardVisible,
           width: constraints.maxWidth,
           height: constraints.maxHeight,
           onClose: widget.onClose,
@@ -131,9 +135,13 @@ class _AgentChatPanelState extends ConsumerState<AgentChatPanel> {
           mobileHeaderWrapper: widget.mobileHeaderWrapper,
           currentCanvasReference: currentCanvasReference,
         );
+        final useStackedLayout =
+            widget.fullScreen ||
+            constraints.maxWidth < 600 ||
+            viewData.compactHeight;
         final panel = AgentResourceDropRegion(
           onDrop: commands.addPendingResource,
-          child: widget.mobile
+          child: useStackedLayout
               ? _MobileAgentChatLayout(
                   viewData: viewData,
                   commands: commands,
@@ -147,11 +155,13 @@ class _AgentChatPanelState extends ConsumerState<AgentChatPanel> {
         );
         return AgentChatReadingPreferences(
           config: agentSettings.settings.chat,
-          child: SafeArea(
-            top: widget.mobile,
-            bottom: widget.mobile,
-            child: panel,
-          ),
+          desktop: switch (Theme.of(context).platform) {
+            TargetPlatform.windows ||
+            TargetPlatform.macOS ||
+            TargetPlatform.linux => true,
+            _ => false,
+          },
+          child: SafeArea(child: panel),
         );
       },
     );
@@ -181,7 +191,15 @@ class _EmbeddedAgentChatLayout extends StatelessWidget {
         ),
       ),
       AgentChatStatus(viewData: viewData, commands: commands),
-      if (viewData.state.routeReady)
+      if (viewData.state.questionRequest case final request?)
+        Expanded(
+          flex: 2,
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: AgentChatQuestionCard(request: request),
+          ),
+        )
+      else if (viewData.state.routeReady)
         AgentChatComposer(
           viewData: viewData,
           commands: commands,
@@ -210,16 +228,13 @@ class _MobileAgentChatLayout extends StatelessWidget {
       color: theme.colorScheme.surface,
       child: Column(
         children: [
-          MediaQuery.withClampedTextScaling(
-            maxScaleFactor: 1.6,
-            child: AgentChatHeader(viewData: viewData, commands: commands),
-          ),
+          AgentChatHeader(viewData: viewData, commands: commands),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
                 // Keep decisions adjacent to the composer without allowing a
                 // long approval or error to displace input on an IME viewport.
-                final statusFraction = viewData.compactMobile ? 0.24 : 0.38;
+                final statusFraction = viewData.compactHeight ? 0.24 : 0.38;
                 final statusMaxHeight = (constraints.maxHeight * statusFraction)
                     .clamp(0.0, 280.0);
                 return Column(
@@ -231,18 +246,27 @@ class _MobileAgentChatLayout extends StatelessWidget {
                         controller: controller,
                       ),
                     ),
-                    ConstrainedBox(
+                    _AgentChatStatusViewport(
                       key: const ValueKey('agent-chat-mobile-status-viewport'),
-                      constraints: BoxConstraints(maxHeight: statusMaxHeight),
-                      child: SingleChildScrollView(
-                        primary: false,
-                        child: AgentChatStatus(
-                          viewData: viewData,
-                          commands: commands,
-                        ),
-                      ),
+                      maxHeight: statusMaxHeight,
+                      viewData: viewData,
+                      commands: commands,
                     ),
-                    if (viewData.state.routeReady) _composer(),
+                    if (viewData.state.questionRequest case final request?)
+                      Expanded(
+                        flex: 2,
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: AgentChatQuestionCard(request: request),
+                        ),
+                      )
+                    else if (viewData.state.routeReady)
+                      ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxHeight: constraints.maxHeight * 0.82,
+                        ),
+                        child: _composer(),
+                      ),
                   ],
                 );
               },
@@ -258,13 +282,32 @@ class _MobileAgentChatLayout extends StatelessWidget {
     // changes the available height. Swapping this wrapper only for the compact
     // layout detached the externally-owned FocusNode and dismissed Android's
     // keyboard immediately after it opened.
-    return MediaQuery.withClampedTextScaling(
-      maxScaleFactor: 1.6,
-      child: AgentChatComposer(
-        viewData: viewData,
-        commands: commands,
-        controller: controller,
-      ),
+    return AgentChatComposer(
+      viewData: viewData,
+      commands: commands,
+      controller: controller,
     );
   }
+}
+
+class _AgentChatStatusViewport extends StatelessWidget {
+  const _AgentChatStatusViewport({
+    super.key,
+    required this.maxHeight,
+    required this.viewData,
+    required this.commands,
+  });
+
+  final double maxHeight;
+  final AgentChatPanelViewData viewData;
+  final AgentChatPanelCommands commands;
+
+  @override
+  Widget build(BuildContext context) => ConstrainedBox(
+    constraints: BoxConstraints(maxHeight: maxHeight),
+    child: SingleChildScrollView(
+      primary: false,
+      child: AgentChatStatus(viewData: viewData, commands: commands),
+    ),
+  );
 }

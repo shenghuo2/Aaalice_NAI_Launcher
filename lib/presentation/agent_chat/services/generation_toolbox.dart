@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/agent/agent_types.dart';
@@ -13,6 +15,7 @@ import 'generation_preparation_runtime.dart';
 import 'generation_preparation_service.dart';
 import 'generation_queue_task_service.dart';
 import 'generation_settings_service.dart';
+import 'generation_source_image_toolbox.dart';
 import 'generation_status_service.dart';
 import 'generation_tool_definitions.dart';
 import 'generation_tool_limits.dart';
@@ -29,6 +32,7 @@ class GenerationToolbox {
     bool allowOutsideWorkspace = false,
     GenerationPreparationRuntime? runtime,
     AgentResourceResolver? resourceResolver,
+    Uint8List? Function(int index)? readAttachedImage,
   }) {
     final preparationRuntime = runtime ?? GenerationPreparationRuntime();
     final resolver = resourceResolver ?? AgentResourceResolver(ref);
@@ -39,7 +43,6 @@ class GenerationToolbox {
     final imageReadContract = GenerationImageReadContract(pathResolver);
     final history = GenerationHistoryService(
       ref,
-      resourceResolver: resolver,
       imageReadContract: imageReadContract,
       maxRecentImageLimit: maxRecentImageLimit,
     );
@@ -65,7 +68,12 @@ class GenerationToolbox {
       executeQueue: queue.queueTask,
     );
     _definitions = GenerationToolDefinitions(
-      interrogation: GenerationInterrogationService(ref, pathResolver),
+      interrogation: GenerationInterrogationService(
+        ref,
+        pathResolver,
+        resourceResolver: resolver,
+        readAttachedImage: readAttachedImage,
+      ),
       preparation: preparation,
       status: GenerationStatusService(
         ref,
@@ -73,6 +81,11 @@ class GenerationToolbox {
       ),
       settings: GenerationSettingsService(ref),
       history: history,
+    );
+    _sourceImage = GenerationSourceImageToolbox(
+      ref,
+      resolver: resolver,
+      pathResolver: pathResolver,
     );
   }
 
@@ -91,6 +104,7 @@ class GenerationToolbox {
   );
 
   late final GenerationToolDefinitions _definitions;
+  late final GenerationSourceImageToolbox _sourceImage;
 
-  List<AgentTool> tools() => _definitions.tools();
+  List<AgentTool> tools() => [..._definitions.tools(), ..._sourceImage.tools()];
 }

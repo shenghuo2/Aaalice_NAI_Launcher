@@ -43,6 +43,11 @@ class PromptEditorWithToolbar extends ConsumerStatefulWidget {
   /// 提示词助手的稳定会话标识
   final String? sessionId;
 
+  /// Whether the input owns its default bottom-right assistant entry.
+  final bool enableAssistant;
+  final bool showTagModeSwitch;
+  final Object? assistantTapRegionGroupId;
+
   /// 随机按钮点击回调
   final VoidCallback? onRandomPressed;
 
@@ -77,7 +82,7 @@ class PromptEditorWithToolbar extends ConsumerStatefulWidget {
   ///
   /// 当用户确认导入 ComfyUI 格式的多角色提示词时触发。
   final void Function(String globalPrompt, List<CharacterPrompt> characters)?
-      onComfyuiImport;
+  onComfyuiImport;
 
   const PromptEditorWithToolbar({
     super.key,
@@ -88,6 +93,9 @@ class PromptEditorWithToolbar extends ConsumerStatefulWidget {
     this.decoration,
     this.onChanged,
     this.sessionId,
+    this.enableAssistant = true,
+    this.showTagModeSwitch = true,
+    this.assistantTapRegionGroupId,
     this.onRandomPressed,
     this.onRandomLongPressed,
     this.onFullscreenPressed,
@@ -153,7 +161,8 @@ class _PromptEditorWithToolbarState
   @override
   Widget build(BuildContext context) {
     // 检查是否有任何工具栏按钮需要显示
-    final hasToolbar = widget.toolbarConfig.showRandomButton ||
+    final hasToolbar =
+        widget.toolbarConfig.showRandomButton ||
         widget.toolbarConfig.showFullscreenButton ||
         widget.toolbarConfig.showClearButton ||
         widget.toolbarConfig.showSettingsButton ||
@@ -193,6 +202,9 @@ class _PromptEditorWithToolbarState
             decoration: widget.decoration,
             onChanged: widget.onChanged,
             sessionId: widget.sessionId,
+            enableAssistant: widget.enableAssistant,
+            showTagModeSwitch: widget.showTagModeSwitch,
+            assistantTapRegionGroupId: widget.assistantTapRegionGroupId,
             maxLines: widget.maxLines,
             minLines: widget.minLines,
             expands: widget.expands,

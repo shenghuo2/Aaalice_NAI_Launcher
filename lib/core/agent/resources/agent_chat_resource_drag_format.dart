@@ -29,13 +29,13 @@ void addAgentResourceDragPayload(
 }
 
 bool canReadAgentResourceDropItem(DropItem item) =>
-    _decodeLocalReference(item.localData) != null ||
+    decodeLocalAgentResource(item.localData) != null ||
     item.canProvide(agentChatResourceDragFormat);
 
 Future<AgentChatResourceReference?> readAgentResourceDropItem(
   DropItem item,
 ) async {
-  final local = _decodeLocalReference(item.localData);
+  final local = decodeLocalAgentResource(item.localData);
   if (local != null) return local;
   final reader = item.dataReader;
   if (reader == null || !item.canProvide(agentChatResourceDragFormat)) {
@@ -53,8 +53,13 @@ Future<AgentChatResourceReference?> readAgentResourceDropItem(
       : AgentChatResourceReferenceCodec.decodeJson(payload);
 }
 
-AgentChatResourceReference? _decodeLocalReference(Object? value) {
+AgentChatResourceReference? decodeLocalAgentResource(Object? value) {
   try {
+    if (value is Map && value['cardResource'] is String) {
+      return AgentChatResourceReferenceCodec.decodeJson(
+        value['cardResource'] as String,
+      );
+    }
     return switch (value) {
       AgentChatResourceReference() => value,
       String() => AgentChatResourceReferenceCodec.decodeJson(value),

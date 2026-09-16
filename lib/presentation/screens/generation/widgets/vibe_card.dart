@@ -1,3 +1,5 @@
+import '../../../widgets/common/image_card_action.dart';
+import '../../../widgets/common/image_card_inline_actions.dart';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -85,7 +87,9 @@ class _VibeCardState extends ConsumerState<VibeCard> {
       child: AnimatedOpacity(
         key: ValueKey('vibe-card-enabled-opacity-${widget.index}'),
         opacity: vibe.enabled ? 1.0 : _disabledVibeCardOpacity,
-        duration: const Duration(milliseconds: 160),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 160),
         curve: Curves.easeOut,
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -203,39 +207,28 @@ class _VibeCardState extends ConsumerState<VibeCard> {
     );
   }
 
-  Widget _buildIconActions(BuildContext context, ThemeData theme) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox.square(
-          dimension: 48,
-          child: IconButton(
+  Widget _buildIconActions(BuildContext context, ThemeData theme) =>
+      ImageCardInlineActions(
+        actions: [
+          ImageCardAction(
+            id: ImageCardActionId.saveToLibrary,
             key: Key('vibe-card-save-to-library-${widget.index}'),
-            icon: Icon(
-              Icons.bookmark_add_outlined,
-              size: 18,
-              color: theme.colorScheme.primary,
-            ),
-            onPressed: _saveToLibrary,
-            tooltip: context.l10n.vibeLibrary_save,
+            icon: Icons.bookmark_add_outlined,
+            iconColor: theme.colorScheme.primary,
+            label: context.l10n.vibeLibrary_save,
+            invoke: _saveToLibrary,
           ),
-        ),
-        SizedBox.square(
-          dimension: 48,
-          child: IconButton(
+          ImageCardAction(
+            id: ImageCardActionId.delete,
             key: Key('vibe-card-remove-${widget.index}'),
-            icon: Icon(
-              Icons.delete_outline,
-              size: 18,
-              color: theme.colorScheme.error,
-            ),
-            onPressed: widget.onRemove,
-            tooltip: context.l10n.vibe_remove,
+            icon: Icons.delete_outline,
+            iconColor: theme.colorScheme.error,
+            label: context.l10n.vibe_remove,
+            invoke: widget.onRemove,
+            isDanger: true,
           ),
-        ),
-      ],
-    );
-  }
+        ],
+      );
 
   Widget _buildSliders(
     BuildContext context,

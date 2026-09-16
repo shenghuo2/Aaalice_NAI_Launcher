@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
-import '../../../core/agent/agent_system_prompt.dart';
 import '../../../core/agent/harness/harness_types.dart';
 import '../../../core/agent/skill_archive_service.dart';
 import '../../../core/agent/skill_catalog.dart';
@@ -271,7 +270,43 @@ class AgentSettingsNotifier extends StateNotifier<AgentSettingsState> {
         current.copyWith(chat: current.chat.copyWith(density: density)),
   );
 
-  String buildDefaultSystemPrompt() {
+  /// [window] 传 null 清除覆盖，让模型退回目录推断出的窗口。
+  Future<void> setContextWindowOverride({
+    required String providerId,
+    required String model,
+    required int? window,
+  }) {
+    if (window != null &&
+        (window < 1 || window > AgentSettings.maxContextWindowTokens)) {
+      throw const FormatException('Context window is out of range.');
+    }
+    final key = AgentChatConfig.contextWindowKey(providerId, model);
+    return _update((current) {
+      final overrides = Map<String, int>.from(
+        current.chat.contextWindowOverrides,
+      );
+      if (window == null) {
+        overrides.remove(key);
+      } else {
+        overrides[key] = window;
+      }
+      if (overrides.length > AgentSettings.maxContextWindows) {
+        throw const FormatException('Too many context window overrides.');
+      }
+      return current.copyWith(
+        chat: current.chat.copyWith(contextWindowOverrides: overrides),
+      );
+    });
+  }
+
+  String buildDefaultSystemPrompt() => buildAgentSystemPromptBody(
+    webAccessEnabled: state.settings.chat.webAccessEnabled,
+  );
+
+  String buildSystemPromptPreview({
+    required String customInstructions,
+    required AgentSystemPromptMode mode,
+  }) {
     final workspaceDirectory =
         _providedWorkspaceDirectory ??
         _resolvedWorkspaceDirectory ??
@@ -288,16 +323,6 @@ class AgentSettingsNotifier extends StateNotifier<AgentSettingsState> {
       workspacePath: workspaceDirectory.path,
       webAccessEnabled: state.settings.chat.webAccessEnabled,
       skillBlock: skillBlock,
-    );
-  }
-
-  String buildSystemPromptPreview({
-    required String customInstructions,
-    required AgentSystemPromptMode mode,
-  }) {
-    final builtInPrompt = buildDefaultSystemPrompt();
-    return composeAgentSystemPrompt(
-      builtInPrompt: builtInPrompt,
       customInstructions: state.settings.chat.behaviorInstructions(
         customPromptOverride: customInstructions,
         modeOverride: mode,

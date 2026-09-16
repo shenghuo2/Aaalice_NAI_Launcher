@@ -35,6 +35,19 @@ class VibeEmbeddedPngExportPlan {
 ///
 /// 用于将 VibeReference 导出为 .naiv4vibe 格式文件
 class VibeExportUtils {
+  /// Uses the same portable representation as the library ZIP exporter.
+  static Future<Uint8List> portableEntryBytes(VibeLibraryEntry entry) async {
+    final bytes = await _zipBytesForEntry(
+      entry,
+      includeThumbnails: true,
+      defaultModel: NovelAiVibeCodec.defaultModel,
+    );
+    if (bytes == null || bytes.isEmpty) {
+      throw StateError('Vibe has no exportable data: ${entry.id}');
+    }
+    return bytes;
+  }
+
   static const String _rawImageCandidateId = 'raw_image';
   static const String _vibeThumbnailCandidateId = 'vibe_thumbnail';
   static const String _thumbnailCandidateId = 'thumbnail';

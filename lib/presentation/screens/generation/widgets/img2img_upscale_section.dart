@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../widgets/common/image_viewport_surface.dart';
 import '../../../../core/comfyui/comfyui_models.dart';
 import '../../../../core/comfyui/seedvr2_support.dart';
 import '../../../../core/utils/localization_extension.dart';
@@ -157,25 +159,32 @@ class _Img2ImgUpscaleSectionState extends ConsumerState<Img2ImgUpscaleSection> {
             ),
           ),
           const SizedBox(height: 12),
-          SegmentedButton<UpscaleBackend>(
-            segments: [
-              const ButtonSegment(
-                value: UpscaleBackend.novelai,
-                label: Text('NovelAI'),
-                icon: Icon(Icons.cloud_outlined, size: 16),
-              ),
-              ButtonSegment(
-                value: UpscaleBackend.comfyui,
-                label: const Text('ComfyUI'),
-                icon: const Icon(Icons.computer, size: 16),
-                enabled: comfyEnabled,
-              ),
-            ],
-            selected: {settings.backend},
-            onSelectionChanged: (value) =>
-                controller.updateUpscaleBackend(value.first),
-            showSelectedIcon: false,
-            style: _compactButtonStyle,
+          LayoutBuilder(
+            builder: (context, constraints) => SegmentedButton<UpscaleBackend>(
+              direction:
+                  constraints.maxWidth < 420 ||
+                      MediaQuery.textScalerOf(context).scale(1) > 1.5
+                  ? Axis.vertical
+                  : Axis.horizontal,
+              segments: [
+                const ButtonSegment(
+                  value: UpscaleBackend.novelai,
+                  label: Text('NovelAI'),
+                  icon: Icon(Icons.cloud_outlined, size: 16),
+                ),
+                ButtonSegment(
+                  value: UpscaleBackend.comfyui,
+                  label: const Text('ComfyUI'),
+                  icon: const Icon(Icons.computer, size: 16),
+                  enabled: comfyEnabled,
+                ),
+              ],
+              selected: {settings.backend},
+              onSelectionChanged: (value) =>
+                  controller.updateUpscaleBackend(value.first),
+              showSelectedIcon: false,
+              style: _compactButtonStyle,
+            ),
           ),
           const SizedBox(height: 12),
           if (isNai)
@@ -321,12 +330,14 @@ class _Img2ImgUpscaleSectionState extends ConsumerState<Img2ImgUpscaleSection> {
               if (task.hasPreview) ...[
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.memory(
-                    task.previewImage!,
-                    height: 120,
-                    width: double.infinity,
-                    fit: BoxFit.contain,
-                    gaplessPlayback: true,
+                  child: ImageViewportSurface(
+                    child: Image.memory(
+                      task.previewImage!,
+                      height: 120,
+                      width: double.infinity,
+                      fit: BoxFit.contain,
+                      gaplessPlayback: true,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),

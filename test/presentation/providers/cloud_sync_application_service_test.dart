@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -5,6 +6,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_launcher/core/cloud_sync/backend/cloud_sync_backend.dart';
 import 'package:nai_launcher/core/cloud_sync/coordinator.dart';
+import 'package:nai_launcher/core/cloud_sync/content_selection.dart';
 import 'package:nai_launcher/core/cloud_sync/data_source.dart';
 import 'package:nai_launcher/core/cloud_sync/journal.dart';
 import 'package:nai_launcher/core/cloud_sync/models.dart';
@@ -18,6 +20,134 @@ import 'package:nai_launcher/presentation/providers/cloud_sync/cloud_sync_ui_pro
 import '../../core/cloud_sync/coordinator_test_backend.dart';
 
 void main() {
+  test(
+    'lifecycle without a saved account leaves the editable setup untouched',
+    () async {
+      final fixture = await _Fixture.create();
+      addTearDown(fixture.dispose);
+      await fixture.service.restorePersisted();
+      expect(fixture.states, isEmpty);
+      expect(fixture.backend.headReads, 0);
+    },
+  );
+
+  test(
+    'connected lifecycle refresh does not replace the dashboard with setup',
+    () async {
+      final fixture = await _Fixture.create();
+      addTearDown(fixture.dispose);
+      await fixture.service.connect(
+        const CloudSyncConnectRequest(
+          connection: _draft,
+          dataKinds: {CloudSyncDataKind.settings},
+        ),
+      );
+      fixture.states.clear();
+      await fixture.service.restorePersisted();
+      expect(fixture.states.every((state) => state.isConnected), isTrue);
+    },
+  );
+
+  test(
+    'restoration displays saved account before network and reads HEAD once',
+    () async {
+      final backend = _ApplicationBackend()..headReadGate = Completer<void>();
+      final fixture = await _Fixture.create(backend: backend);
+      addTearDown(fixture.dispose);
+      await CloudSyncConnectionStore(
+        localStorage: fixture.local,
+        secureStorage: fixture.secure,
+      ).save(
+        const CloudSyncConnectionDraft(
+          backend: CloudSyncBackendKind.oneDrive,
+          accountId: 'saved-id',
+          accountLabel: 'saved@example.test',
+          path: 'backup',
+        ),
+        {CloudSyncDataKind.settings},
+      );
+      final restoration = fixture.service.restorePersisted();
+      await backend.headReadStarted.future;
+      expect(
+        fixture.states.last.connectionStatus,
+        CloudSyncConnectionStatus.restoring,
+      );
+      expect(fixture.states.last.accountLabel, 'saved@example.test');
+      expect(fixture.states.last.isBusy, isTrue);
+      expect(await fixture.service.restorePersisted(), isFalse);
+      backend.headReadGate!.complete();
+      expect(await restoration, isTrue);
+      expect(backend.headReads, 1);
+      expect(fixture.states.last.isConnected, isTrue);
+      expect(fixture.states.last.isBusy, isFalse);
+      expect(backend.events, isEmpty);
+    },
+  );
+
+  test(
+    'first push waits for foreground OneDrive check and uploads once',
+    () async {
+      final fixture = await _Fixture.create();
+      addTearDown(fixture.dispose);
+      await fixture.service.connect(
+        const CloudSyncConnectRequest(
+          connection: CloudSyncConnectionDraft(
+            backend: CloudSyncBackendKind.oneDrive,
+            accountId: 'saved-id',
+            path: 'backup',
+          ),
+          dataKinds: {CloudSyncDataKind.settings},
+        ),
+      );
+      final backend = fixture.backend
+        ..headReadGate = Completer<void>()
+        ..headReadStarted = Completer<void>();
+      final restoration = fixture.service.restorePersisted();
+      await backend.headReadStarted.future;
+      final push = fixture.service.pushNow();
+      final completed = expectLater(push, completes);
+      expect(backend.events, isEmpty);
+      backend.headReadGate!.complete();
+      await restoration;
+      await completed;
+      expect(fixture.states.last.remoteExists, isTrue);
+      expect(fixture.states.last.error, isNull);
+      expect(fixture.states.last.lastSync, isNotNull);
+      expect(backend.events.where((event) => event == 'head'), hasLength(1));
+    },
+  );
+
+  test(
+    'successful lifecycle retry clears a previous connection error',
+    () async {
+      final backend = _ApplicationBackend()
+        ..headReadError = const CloudBackendException(
+          CloudBackendErrorKind.network,
+          'offline',
+        );
+      final fixture = await _Fixture.create(backend: backend);
+      addTearDown(fixture.dispose);
+      await CloudSyncConnectionStore(
+        localStorage: fixture.local,
+        secureStorage: fixture.secure,
+      ).save(_draft, {CloudSyncDataKind.settings});
+      await expectLater(
+        fixture.service.restorePersisted(),
+        throwsA(isA<CloudBackendException>()),
+      );
+      expect(fixture.states.last.error, 'backend.network');
+      expect(fixture.states.last.isBusy, isFalse);
+      backend.headReadError = null;
+      await fixture.service.restorePersisted();
+      expect(fixture.states.last.isConnected, isTrue);
+      expect(fixture.states.last.error, isNull);
+      expect(
+        fixture.local.values[StorageKeys.cloudSyncConfiguration],
+        isNotNull,
+      );
+    },
+  );
+
   test('new connection only saves configuration and does not upload', () async {
     final fixture = await _Fixture.create();
     addTearDown(fixture.dispose);
@@ -34,47 +164,23 @@ void main() {
       CloudSyncConnectionStatus.connected,
     );
     expect(fixture.backend.head, isNull);
-    expect(fixture.backend.keyEnvelope, isNull);
-    expect(fixture.codecEncoding, CloudSnapshotEncoding.plain);
+    expect(fixture.backend.readOnlyValidationChecks, 1);
+    expect(fixture.backend.capabilityChecks, 0);
+    expect(
+      fixture.states.last.capabilityMode,
+      CloudSyncCapabilityMode.manualBackupOnly,
+    );
     expect(fixture.secure.credentials, contains('provider-secret'));
     expect(fixture.local.values[StorageKeys.cloudSyncConfiguration], isNotNull);
   });
 
   test(
-    'legacy encrypted HEAD is ignored without replacing remote data',
+    'explicit WebDAV probe is retained by the backend saved read-only',
     () async {
-      final backend = _ApplicationBackend();
-      backend.head = CloudHeadRead(
-        bytes: Uint8List.fromList(
-          SnapshotHead(
-            snapshotId: 'legacy-encrypted-snapshot',
-            manifestSha256:
-                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-            updatedAt: DateTime.utc(2025),
-            encoding: CloudSnapshotEncoding.encrypted,
-          ).encode(),
-        ),
-        revision: 'legacy-head',
-      );
-      final fixture = await _Fixture.create(backend: backend);
+      final fixture = await _Fixture.create();
       addTearDown(fixture.dispose);
-      const legacyOperationId = 'legacy-pending-operation';
-      await fixture.source.stage(legacyOperationId, fixture.source.snapshot);
-      await fixture.journal.write(
-        SyncJournal(
-          operationId: legacyOperationId,
-          operation: JournalOperation.uploadLocal,
-          phase: JournalPhase.prepared,
-          updatedAt: DateTime.now().toUtc(),
-          snapshotId: 'legacy-pending-snapshot',
-          targetFingerprint: await fixture.source.stagedFingerprint(
-            legacyOperationId,
-          ),
-          expectedRevision: 'legacy-head',
-          uploadRequired: true,
-        ),
-      );
 
+      final tested = await fixture.service.testConnection(_draft);
       await fixture.service.connect(
         const CloudSyncConnectRequest(
           connection: _draft,
@@ -82,18 +188,46 @@ void main() {
         ),
       );
 
-      final head = SnapshotHead.decode(backend.head!.bytes);
-      expect(head.snapshotId, 'legacy-encrypted-snapshot');
-      expect(head.encoding, CloudSnapshotEncoding.encrypted);
-      expect(await fixture.journal.read(), isNull);
-      expect(fixture.source.stages, isEmpty);
-      expect(fixture.states.last.remoteExists, isFalse);
-      expect(fixture.codecEncoding, CloudSnapshotEncoding.plain);
+      expect(tested.mode, CloudSyncCapabilityMode.bidirectional);
+      expect(fixture.backend.capabilityChecks, 1);
+      expect(fixture.backend.readOnlyValidationChecks, 0);
+      expect(
+        fixture.states.last.capabilityMode,
+        CloudSyncCapabilityMode.bidirectional,
+      );
+      expect(fixture.backend.head, isNull);
     },
   );
 
+  test('probe is not reused after WebDAV draft changes', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    const changed = CloudSyncConnectionDraft(
+      backend: CloudSyncBackendKind.webDav,
+      serverUrl: 'https://other-dav.test',
+      username: 'user',
+      secret: 'provider-secret',
+      path: 'backup',
+    );
+
+    await fixture.service.testConnection(_draft);
+    await fixture.service.connect(
+      const CloudSyncConnectRequest(
+        connection: changed,
+        dataKinds: {CloudSyncDataKind.settings},
+      ),
+    );
+
+    expect(fixture.backend.capabilityChecks, 1);
+    expect(fixture.backend.readOnlyValidationChecks, 1);
+    expect(
+      fixture.states.last.capabilityMode,
+      CloudSyncCapabilityMode.manualBackupOnly,
+    );
+  });
+
   test(
-    'recovered initial upload is not followed by a duplicate snapshot',
+    'saving connection preserves pending work without touching local or remote data',
     () async {
       final fixture = await _Fixture.create();
       addTearDown(fixture.dispose);
@@ -122,20 +256,15 @@ void main() {
         ),
       );
 
-      expect(
-        SnapshotHead.decode(fixture.backend.head!.bytes).snapshotId,
-        snapshotId,
-      );
-      expect(
-        fixture.backend.events.where((event) => event == 'head'),
-        hasLength(1),
-      );
-      expect(await fixture.journal.read(), isNull);
+      expect(fixture.backend.head, isNull);
+      expect(fixture.backend.events.where((event) => event == 'head'), isEmpty);
+      expect((await fixture.journal.read())?.operationId, operationId);
+      expect(fixture.source.stages, contains(operationId));
     },
   );
 
   test(
-    'persisted fresh namespace remains connected for one-click retry',
+    'restoring saved settings preserves pending work without syncing',
     () async {
       final fixture = await _Fixture.create();
       addTearDown(fixture.dispose);
@@ -144,18 +273,109 @@ void main() {
         secureStorage: fixture.secure,
       );
       await store.save(_draft, {CloudSyncDataKind.settings});
+      const operationId = 'pending-restored-upload';
+      await fixture.source.stage(operationId, fixture.source.snapshot);
+      await fixture.journal.write(
+        SyncJournal(
+          operationId: operationId,
+          operation: JournalOperation.uploadLocal,
+          phase: JournalPhase.prepared,
+          updatedAt: DateTime.now().toUtc(),
+          snapshotId: 'pending-restored-snapshot',
+          targetFingerprint: await fixture.source.stagedFingerprint(
+            operationId,
+          ),
+          expectedRevision: null,
+          uploadRequired: true,
+        ),
+      );
 
       final restored = await fixture.service.restorePersisted();
 
       expect(restored, isTrue);
       expect(fixture.backend.head, isNull);
+      expect((await fixture.journal.read())?.operationId, operationId);
+      expect(fixture.source.stages, contains(operationId));
       expect(
         fixture.states.last.connectionStatus,
         CloudSyncConnectionStatus.connected,
       );
-      expect(fixture.codecEncoding, CloudSnapshotEncoding.plain);
     },
   );
+
+  test(
+    'push does not block on history and explicit refresh loads it',
+    () async {
+      final fixture = await _Fixture.create();
+      addTearDown(fixture.dispose);
+      await fixture.service.connect(
+        const CloudSyncConnectRequest(
+          connection: CloudSyncConnectionDraft(
+            backend: CloudSyncBackendKind.oneDrive,
+            accountId: 'history-test-account',
+            path: 'aaalice-sync',
+          ),
+          dataKinds: {CloudSyncDataKind.settings},
+        ),
+      );
+
+      await fixture.service.pushNow();
+
+      expect(fixture.backend.historyListCalls, 0);
+      expect(fixture.states.last.snapshots, hasLength(1));
+      final pushedRevision = fixture.states.last.remoteRevision;
+      final pushedAt = fixture.states.last.lastSync;
+
+      await fixture.service.refreshHistory();
+
+      expect(fixture.backend.historyListCalls, 1);
+      expect(fixture.states.last.snapshots, hasLength(1));
+      expect(fixture.states.last.remoteRevision, pushedRevision);
+      expect(fixture.states.last.lastSync, pushedAt);
+    },
+  );
+
+  test('cloud drives use plain snapshots without a key workflow', () async {
+    const driveDraft = CloudSyncConnectionDraft(
+      backend: CloudSyncBackendKind.oneDrive,
+      accountId: 'tenant:account-a',
+      accountLabel: 'user@example.test',
+      path: 'aaalice-sync',
+    );
+    final first = await _Fixture.create();
+    addTearDown(first.dispose);
+
+    await first.service.connect(
+      const CloudSyncConnectRequest(
+        connection: driveDraft,
+        dataKinds: {CloudSyncDataKind.settings},
+      ),
+    );
+
+    expect(first.backend.head, isNull);
+    expect(first.local.values[StorageKeys.cloudDriveConfiguration], isNotNull);
+    expect(first.local.values[StorageKeys.cloudSyncConfiguration], isNull);
+
+    await first.service.pushNow();
+    expect(
+      SnapshotHead.decode(first.backend.head!.bytes).version,
+      cloudSyncSchemaVersion,
+    );
+
+    final second = await _Fixture.create(
+      backend: first.backend,
+      theme: 'light',
+    );
+    addTearDown(second.dispose);
+    await second.service.connect(
+      const CloudSyncConnectRequest(
+        connection: driveDraft,
+        dataKinds: {CloudSyncDataKind.settings},
+      ),
+    );
+    await second.service.pullNow();
+    expect(second.states.last.lastSync, isNotNull);
+  });
 
   test(
     'second device connection detects backup without changing remote data',
@@ -184,7 +404,8 @@ void main() {
         ),
       );
 
-      expect(first.backend.capabilityChecks, 2);
+      expect(first.backend.readOnlyValidationChecks, 2);
+      expect(first.backend.capabilityChecks, 0);
       expect(second.backend.head!.bytes, remoteBefore);
       expect(second.backend.head!.revision, revisionBefore);
       expect(second.states.last.remoteExists, isTrue);
@@ -193,6 +414,55 @@ void main() {
       expect(second.states.last.lastSync, isNull);
     },
   );
+
+  test('updating backup contents only persists configuration', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    await fixture.service.connect(
+      const CloudSyncConnectRequest(
+        connection: _draft,
+        dataKinds: cloudSyncSelectableDataKinds,
+      ),
+    );
+    const selection = CloudSyncContentSelection(
+      includeGalleryAlbums: false,
+      includeVibes: true,
+    );
+
+    await fixture.service.updateContentSelection(selection);
+
+    expect(fixture.backend.head, isNull);
+    expect(fixture.backend.events, isEmpty);
+    expect(fixture.states.last.contentSelection.includeGalleryAlbums, isFalse);
+    expect(fixture.states.last.contentSelection.includeVibes, isTrue);
+    final stored = await CloudSyncConnectionStore(
+      localStorage: fixture.local,
+      secureStorage: fixture.secure,
+    ).load();
+    expect(stored?.contentSelection.includeGalleryAlbums, isFalse);
+    expect(stored?.contentSelection.includeVibes, isTrue);
+  });
+
+  test('explicit compact rebuild clears the namespace then uploads', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.dispose);
+    await fixture.service.testConnection(_draft);
+    await fixture.service.connect(
+      const CloudSyncConnectRequest(
+        connection: _draft,
+        dataKinds: cloudSyncSelectableDataKinds,
+      ),
+    );
+    await fixture.service.pushNow();
+    final previousHead = fixture.backend.head;
+
+    await fixture.service.rebuildCompactBackup();
+
+    expect(fixture.backend.deleteCalls, 1);
+    expect(fixture.backend.head, isNotNull);
+    expect(fixture.backend.head!.revision, isNot(previousHead!.revision));
+    expect(fixture.states.last.remoteExists, isTrue);
+  });
 }
 
 const _draft = CloudSyncConnectionDraft(
@@ -213,7 +483,6 @@ class _Fixture {
     required this.source,
     required this.journal,
     required this.service,
-    required this.codecEncodingReader,
   });
 
   final Directory directory;
@@ -224,9 +493,6 @@ class _Fixture {
   final _MemorySource source;
   final JournalStore journal;
   final CloudSyncApplicationService service;
-  final CloudSnapshotEncoding? Function() codecEncodingReader;
-
-  CloudSnapshotEncoding? get codecEncoding => codecEncodingReader();
 
   static Future<_Fixture> create({
     _ApplicationBackend? backend,
@@ -239,15 +505,12 @@ class _Fixture {
     final states = <CloudSyncUiState>[];
     final source = _MemorySource(theme);
     final journal = JournalStore(File('${directory.path}/journal.json'));
-    CloudSnapshotEncoding? codecEncoding;
     final service = CloudSyncApplicationService(
       backendFactory: (_) => effectiveBackend,
-      coordinatorFactory: (_, codec, __, ___) async {
-        codecEncoding = codec.encoding;
+      coordinatorFactory: (_, __, ___, ____) async {
         return SyncCoordinator(
           backend: effectiveBackend,
           dataSource: source,
-          codec: codec,
           journalStore: journal,
         );
       },
@@ -265,7 +528,6 @@ class _Fixture {
       source: source,
       journal: journal,
       service: service,
-      codecEncodingReader: () => codecEncoding,
     );
   }
 
@@ -276,9 +538,25 @@ class _Fixture {
 }
 
 class _ApplicationBackend extends CoordinatorTestBackend
-    implements CloudKeyEnvelopeBackend {
-  CloudObjectRead? keyEnvelope;
+    implements ReadOnlyCloudSyncBackendValidation {
+  Completer<void>? headReadGate;
+  var headReadStarted = Completer<void>();
+  Object? headReadError;
+  int headReads = 0;
+
+  @override
+  Future<CloudHeadRead?> readHead() async {
+    headReads++;
+    if (!headReadStarted.isCompleted) headReadStarted.complete();
+    await headReadGate?.future;
+    if (headReadError case final error?) throw error;
+    return super.readHead();
+  }
+
   int capabilityChecks = 0;
+  int readOnlyValidationChecks = 0;
+  int historyListCalls = 0;
+  int deleteCalls = 0;
 
   @override
   Future<CloudBackendCapability> testCapability() async {
@@ -287,24 +565,20 @@ class _ApplicationBackend extends CoordinatorTestBackend
   }
 
   @override
-  Future<CloudObjectRead?> readKeyEnvelope() async => keyEnvelope;
+  Future<void> validateConnectionReadOnly() async {
+    readOnlyValidationChecks++;
+  }
 
   @override
-  Future<CloudCommitResult> commitKeyEnvelope(
-    Uint8List bytes, {
-    required String? expectedRevision,
-  }) async {
-    if (keyEnvelope?.revision != expectedRevision) {
-      throw const CloudBackendException(
-        CloudBackendErrorKind.conflict,
-        'KEY CAS failed',
-      );
-    }
-    keyEnvelope = CloudObjectRead(
-      bytes: Uint8List.fromList(bytes),
-      revision: 'key-${++revision}',
-    );
-    return CloudCommitResult(revision: keyEnvelope!.revision);
+  Future<List<String>> listSnapshotIds({int limit = 20}) {
+    historyListCalls++;
+    return super.listSnapshotIds(limit: limit);
+  }
+
+  @override
+  Future<void> deleteNamespace() async {
+    deleteCalls++;
+    await super.deleteNamespace();
   }
 }
 
@@ -323,6 +597,7 @@ class _MemorySource implements CloudSyncDataSource {
   final CloudSyncSnapshotData snapshot;
   final Map<String, CloudSyncSnapshotData> stages = {};
   final Map<String, Uint8List> artifacts = {};
+  final Map<String, CloudSyncSnapshotData?> baseRecoveryPoints = {};
   CloudSyncSnapshotData? base;
 
   @override
@@ -330,8 +605,15 @@ class _MemorySource implements CloudSyncDataSource {
   @override
   Future<CloudSyncSnapshotData?> readBase() async => base;
   @override
-  Future<void> stage(String operationId, CloudSyncSnapshotData value) async =>
-      stages[operationId] = value;
+  Future<void> stage(
+    String operationId,
+    CloudSyncSnapshotData value, {
+    CloudSyncSnapshotData? recoveryPoint,
+  }) async {
+    stages[operationId] = value;
+    baseRecoveryPoints[operationId] = base;
+  }
+
   @override
   Future<CloudSyncSnapshotData> readStaged(String operationId) async =>
       stages[operationId]!;
@@ -344,6 +626,14 @@ class _MemorySource implements CloudSyncDataSource {
   Future<void> rollback(String operationId) async => stages.remove(operationId);
   @override
   Future<void> rollbackForRecovery(String operationId) async {}
+  @override
+  Future<void> restoreBaseForRecovery(String operationId) async {
+    if (!baseRecoveryPoints.containsKey(operationId)) {
+      throw StateError('base recovery state is missing');
+    }
+    base = baseRecoveryPoints[operationId];
+  }
+
   @override
   Future<void> saveBase(CloudSyncSnapshotData value, String snapshotId) async =>
       base = value;
@@ -364,6 +654,7 @@ class _MemorySource implements CloudSyncDataSource {
   @override
   Future<void> completeOperation(String operationId) async {
     stages.remove(operationId);
+    baseRecoveryPoints.remove(operationId);
     artifacts.removeWhere((key, _) => key.startsWith('$operationId/'));
   }
 }
@@ -384,7 +675,6 @@ class _MemoryLocalStorage extends LocalStorageService {
 
 class _MemorySecureStorage extends SecureStorageService {
   String? credentials;
-  String? masterKey;
 
   @override
   Future<void> saveCloudSyncCredentials(String encodedCredentials) async =>
@@ -392,13 +682,7 @@ class _MemorySecureStorage extends SecureStorageService {
   @override
   Future<String?> getCloudSyncCredentials() async => credentials;
   @override
-  Future<void> saveCloudSyncMasterKey(String encodedKey) async =>
-      masterKey = encodedKey;
-  @override
-  Future<String?> getCloudSyncMasterKey() async => masterKey;
-  @override
   Future<void> clearCloudSyncSecrets() async {
     credentials = null;
-    masterKey = null;
   }
 }

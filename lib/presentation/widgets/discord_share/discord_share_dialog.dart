@@ -3,17 +3,21 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../common/image_viewport_surface.dart';
 import '../../../core/utils/app_logger.dart';
-import '../../../core/utils/image_share_sanitizer.dart';
 import '../../../core/utils/localization_extension.dart';
 import '../../../data/models/gallery/nai_image_metadata.dart';
 import '../../../data/services/discord_share_service.dart';
+import '../../adaptive/adaptive_presenter.dart';
+import '../../adaptive/content_sized_adaptive_form.dart';
 import '../../utils/asset_protection_guard.dart';
-import '../common/app_toast.dart';
+import 'discord_share_error.dart';
+import '../../providers/discord_share_task_provider.dart';
 
 class DiscordShareDialog extends ConsumerStatefulWidget {
   const DiscordShareDialog({
@@ -23,6 +27,7 @@ class DiscordShareDialog extends ConsumerStatefulWidget {
     required this.metadata,
     this.width,
     this.height,
+    this.scrollController,
   });
 
   final Uint8List imageBytes;
@@ -30,6 +35,7 @@ class DiscordShareDialog extends ConsumerStatefulWidget {
   final NaiImageMetadata? metadata;
   final int? width;
   final int? height;
+  final ScrollController? scrollController;
 
   static Future<bool?> show(
     BuildContext context, {
@@ -39,15 +45,64 @@ class DiscordShareDialog extends ConsumerStatefulWidget {
     int? width,
     int? height,
   }) {
-    return showDialog<bool>(
+    return AdaptivePresenter.showForm<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => DiscordShareDialog(
+      dialogWidth: 920,
+      titleBuilder: (panelContext) => Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: const Color(0xFF5865F2).withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: const Icon(
+              Icons.send_rounded,
+              color: Color(0xFF5865F2),
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  panelContext.l10n.discordShare_title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    panelContext,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                if (MediaQuery.textScalerOf(panelContext).scale(1) < 2) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    panelContext.l10n.discordShare_subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(panelContext).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(
+                        panelContext,
+                      ).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+      builder: (panelContext, scrollController) => DiscordShareDialog(
         imageBytes: imageBytes,
         fileName: fileName,
         metadata: metadata,
         width: width,
         height: height,
+        scrollController: scrollController,
       ),
     );
   }
@@ -296,7 +351,6 @@ class _DiscordShareDialogState extends ConsumerState<DiscordShareDialog> {
       _sending = true;
       _error = null;
     });
-    final service = ref.read(discordShareServiceProvider);
     try {
       final confirmed = await AssetProtectionGuard.confirmExternalImageSend(
         context: context,
@@ -305,29 +359,25 @@ class _DiscordShareDialogState extends ConsumerState<DiscordShareDialog> {
       );
       if (!confirmed || !mounted) return;
 
-      final image = await ImageShareSanitizer.prepareForCopyOrDragInBackground(
-        widget.imageBytes,
-        fileName: widget.fileName,
-        stripMetadata: !_includeMetadata,
-      );
       _persistPreferences();
       await _preferenceWrite;
-      final result = await service.share(
-        session: session,
-        image: image,
-        targetIds: _selectedTargets,
-        prompt: _promptController.text,
-        caption: _captionController.text,
-        width: widget.width ?? widget.metadata?.width,
-        height: widget.height ?? widget.metadata?.height,
-        longPromptAsFile: _longPromptAsFile,
-      );
       if (!mounted) return;
-      if (result.isPartial) {
-        AppToast.warning(context, context.l10n.discordShare_partialSuccess);
-      } else {
-        AppToast.success(context, context.l10n.discordShare_success);
-      }
+      ref
+          .read(discordShareTaskProvider.notifier)
+          .submit(
+            DiscordShareSubmission(
+              session: session,
+              bytes: widget.imageBytes,
+              fileName: widget.fileName,
+              stripMetadata: !_includeMetadata,
+              targetIds: _selectedTargets,
+              prompt: _promptController.text,
+              caption: _captionController.text,
+              width: widget.width ?? widget.metadata?.width,
+              height: widget.height ?? widget.metadata?.height,
+              longPromptAsFile: _longPromptAsFile,
+            ),
+          );
       Navigator.of(context).pop(true);
     } on DiscordShareException catch (error) {
       if (!mounted) return;
@@ -389,80 +439,19 @@ class _DiscordShareDialogState extends ConsumerState<DiscordShareDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    return Dialog(
-      clipBehavior: Clip.antiAlias,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 920, maxHeight: 760),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildHeader(theme),
-            const Divider(height: 1),
-            Flexible(
-              child: _initializing
-                  ? const Center(child: CircularProgressIndicator())
-                  : _session == null
-                  ? _buildVerificationState(theme)
-                  : _buildEditor(theme),
-            ),
-            if (_session != null) ...[
-              const Divider(height: 1),
-              _buildActions(colors),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeader(ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 15, 12, 14),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: const Color(0xFF5865F2).withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(11),
-            ),
-            child: const Icon(
-              Icons.send_rounded,
-              color: Color(0xFF5865F2),
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  context.l10n.discordShare_title,
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  context.l10n.discordShare_subtitle,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: _sending ? null : () => Navigator.of(context).pop(),
-            tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
-            icon: const Icon(Icons.close),
-          ),
-        ],
-      ),
+    return Material(
+      color: Colors.transparent,
+      child: _initializing
+          ? const Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(
+                heightFactor: 1,
+                child: CircularProgressIndicator(),
+              ),
+            )
+          : _session == null
+          ? _buildVerificationState(theme)
+          : _buildEditor(theme),
     );
   }
 
@@ -480,9 +469,12 @@ class _DiscordShareDialogState extends ConsumerState<DiscordShareDialog> {
     final description = _joinRequired
         ? context.l10n.discordShare_joinDescription
         : context.l10n.discordShare_verifyDescription;
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(32),
+    return SingleChildScrollView(
+      key: const ValueKey('discord-share-scroll'),
+      controller: widget.scrollController,
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: const EdgeInsets.all(32),
+      child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 470),
           child: Column(
@@ -523,33 +515,37 @@ class _DiscordShareDialogState extends ConsumerState<DiscordShareDialog> {
               ],
               const SizedBox(height: 24),
               if (_joinRequired) ...[
-                FilledButton.icon(
+                FilledButton(
                   onPressed: _openCommunity,
-                  icon: const Icon(Icons.group_add_outlined),
-                  label: Text(context.l10n.discordShare_joinServer),
+                  child: _buildVerificationButtonContent(
+                    icon: const Icon(Icons.group_add_outlined),
+                    label: context.l10n.discordShare_joinServer,
+                  ),
                 ),
                 const SizedBox(height: 8),
-                TextButton.icon(
+                TextButton(
                   onPressed: _authenticating ? null : _authenticate,
-                  icon: _authenticating
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh, size: 18),
-                  label: Text(context.l10n.discordShare_retryVerification),
+                  child: _buildVerificationButtonContent(
+                    icon: _authenticating
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh, size: 18),
+                    label: context.l10n.discordShare_retryVerification,
+                  ),
                 ),
               ] else
-                FilledButton.icon(
+                FilledButton(
                   onPressed: _authenticating ? null : _authenticate,
-                  icon: _authenticating
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.open_in_browser, size: 18),
-                  label: Text(
-                    _authenticating
+                  child: _buildVerificationButtonContent(
+                    icon: _authenticating
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.open_in_browser, size: 18),
+                    label: _authenticating
                         ? context.l10n.discordShare_verifying
                         : context.l10n.discordShare_verifyButton,
                   ),
@@ -571,27 +567,51 @@ class _DiscordShareDialogState extends ConsumerState<DiscordShareDialog> {
     );
   }
 
+  Widget _buildVerificationButtonContent({
+    required Widget icon,
+    required String label,
+  }) {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        icon,
+        Text(label, textAlign: TextAlign.center),
+      ],
+    );
+  }
+
   Widget _buildEditor(ThemeData theme) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 760;
         final preview = _buildImagePreview(theme, compact: compact);
         final form = _buildShareForm(theme);
-        return SingleChildScrollView(
+        return ContentSizedAdaptiveForm(
+          scrollViewKey: const ValueKey('discord-share-scroll'),
+          scrollController: widget.scrollController,
           padding: const EdgeInsets.all(20),
-          child: compact
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [preview, const SizedBox(height: 18), form],
-                )
-              : Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(width: 260, child: preview),
-                    const SizedBox(width: 22),
-                    Expanded(child: form),
-                  ],
-                ),
+          footer: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [const Divider(height: 1), _buildActions()],
+          ),
+          content: [
+            compact
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [preview, const SizedBox(height: 18), form],
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(width: 260, child: preview),
+                      const SizedBox(width: 22),
+                      Expanded(child: form),
+                    ],
+                  ),
+          ],
         );
       },
     );
@@ -602,7 +622,7 @@ class _DiscordShareDialogState extends ConsumerState<DiscordShareDialog> {
     final image = ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: ColoredBox(
-        color: colors.surfaceContainerHighest,
+        color: ImageViewportSurface.background,
         child: Image.memory(widget.imageBytes, fit: BoxFit.contain),
       ),
     );
@@ -804,17 +824,18 @@ class _DiscordShareDialogState extends ConsumerState<DiscordShareDialog> {
     );
   }
 
-  Widget _buildActions(ColorScheme colors) {
+  Widget _buildActions() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
-      child: Row(
+      child: Wrap(
+        alignment: WrapAlignment.end,
+        spacing: 8,
+        runSpacing: 8,
         children: [
-          const Spacer(),
           TextButton(
             onPressed: _sending ? null : () => Navigator.of(context).pop(),
             child: Text(context.l10n.common_cancel),
           ),
-          const SizedBox(width: 8),
           FilledButton.icon(
             onPressed:
                 _sending ||
@@ -839,41 +860,11 @@ class _DiscordShareDialogState extends ConsumerState<DiscordShareDialog> {
     );
   }
 
-  String _localizedError(Object error) {
-    if (error is DioException) {
-      return context.l10n.discordShare_errorNetwork;
-    }
-    if (error is! DiscordShareException) {
-      return context.l10n.discordShare_errorRelay;
-    }
-    return switch (error.code) {
-      'browser_unavailable' => context.l10n.discordShare_errorBrowser,
-      'timeout' => context.l10n.discordShare_errorTimeout,
-      'share_in_progress' => context.l10n.discordShare_sending,
-      'rate_limited' =>
-        _rateLimitSecondsRemaining > 0
-            ? context.l10n.discordShare_errorRateLimitedRetry(
-                _rateLimitSecondsRemaining,
-              )
-            : context.l10n.discordShare_errorRateLimited,
-      'no_targets' ||
-      'invalid_targets' => context.l10n.discordShare_errorNoChannels,
-      'unauthorized' ||
-      'session_expired' ||
-      'invalid_oauth_request' ||
-      'invalid_oauth_state' ||
-      'invalid_oauth_result_request' ||
-      'invalid_oauth_verifier' => context.l10n.discordShare_errorSession,
-      'relay_misconfigured' ||
-      'rate_limiter_unavailable' => context.l10n.discordShare_errorRelay,
-      'image_upload_rejected' ||
-      'invalid_image' => context.l10n.discordShare_errorImageRejected,
-      'webhook_failed' ||
-      'partial_delivery' => context.l10n.discordShare_errorDelivery,
-      'request_failed' => context.l10n.discordShare_errorNetwork,
-      _ => context.l10n.discordShare_errorRelay,
-    };
-  }
+  String _localizedError(Object error) => discordShareErrorText(
+    context,
+    error,
+    retrySeconds: _rateLimitSecondsRemaining,
+  );
 
   String _categoryLabel(_PromptCategory category) => switch (category) {
     _PromptCategory.main => context.l10n.discordShare_categoryMain,

@@ -1,30 +1,63 @@
+import 'package:nai_launcher/presentation/widgets/common/horizontal_action_strip.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/platform/platform_capabilities.dart';
 import '../../../../core/services/file_export_service.dart';
 import '../../../../core/utils/localization_extension.dart';
 import '../../../../data/models/tag_library/tag_library_category.dart';
 import '../../../../data/models/tag_library/tag_library_entry.dart';
 import '../../../../data/services/tag_library_io_service.dart';
 
+import '../../../adaptive/adaptive_presenter.dart';
+import '../../../adaptive/interaction_policy.dart';
 import '../../../widgets/common/app_toast.dart';
+import '../../../widgets/common/translated_tag_text.dart';
 
-bool get _usesTouchControls => PlatformCapabilities.current.hasTouchInput;
-double get _compactControlExtent => _usesTouchControls ? 48 : 32;
-VisualDensity get _compactControlDensity =>
-    _usesTouchControls ? VisualDensity.standard : VisualDensity.compact;
+double _compactControlExtent(BuildContext context) =>
+    context.interactionPolicy.shouldExposeTouchAlternatives ? 48 : 32;
+VisualDensity _compactControlDensity(BuildContext context) =>
+    context.interactionPolicy.shouldExposeTouchAlternatives
+    ? VisualDensity.standard
+    : VisualDensity.compact;
 
 /// 导出对话框
 class ExportDialog extends ConsumerStatefulWidget {
   final List<TagLibraryEntry> entries;
   final List<TagLibraryCategory> categories;
 
-  const ExportDialog({
-    super.key,
-    required this.entries,
-    required this.categories,
-  });
+  const ExportDialog._({required this.entries, required this.categories});
+
+  static Future<void> show(
+    BuildContext context, {
+    required List<TagLibraryEntry> entries,
+    required List<TagLibraryCategory> categories,
+  }) {
+    return AdaptivePresenter.showForm<void>(
+      context: context,
+      titleBuilder: (panelContext) => Row(
+        children: [
+          Icon(
+            Icons.file_upload_outlined,
+            color: Theme.of(panelContext).colorScheme.primary,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              panelContext.l10n.tagLibrary_export,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                panelContext,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+      dialogWidth: 600,
+      builder: (context, _) =>
+          ExportDialog._(entries: entries, categories: categories),
+    );
+  }
 
   @override
   ConsumerState<ExportDialog> createState() => _ExportDialogState();
@@ -65,113 +98,103 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final mediaQuery = MediaQuery.of(context);
+    final listHeight =
+        ((mediaQuery.size.height -
+                    mediaQuery.padding.vertical -
+                    mediaQuery.viewInsets.vertical) *
+                0.35)
+            .clamp(120.0, 320.0);
 
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 600, maxHeight: 700),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 标题
-              Row(
-                children: [
-                  Icon(
-                    Icons.file_upload_outlined,
-                    color: theme.colorScheme.primary,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    context.l10n.tagLibrary_export,
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const Spacer(),
-                  if (!_isExporting)
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                ],
+    return SingleChildScrollView(
+      key: const Key('tag-library-export-content'),
+      padding: const EdgeInsets.all(16),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_isExporting) ...[
+            // 导出进度
+            LinearProgressIndicator(value: _progress),
+            const SizedBox(height: 12),
+            Text(
+              _progressMessage,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.outline,
               ),
+            ),
+          ] else ...[
+            // 统计与选择操作
+            _buildSelectionHeader(theme),
 
-              const SizedBox(height: 16),
+            const SizedBox(height: 8),
 
-              if (_isExporting) ...[
-                // 导出进度
-                LinearProgressIndicator(value: _progress),
-                const SizedBox(height: 12),
-                Text(
-                  _progressMessage,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.outline,
+            // 可滚动的选择列表
+            SizedBox(height: listHeight, child: _buildSelectionList(theme)),
+
+            const Divider(height: 24),
+
+            // 选项
+            CheckboxListTile(
+              title: Text(context.l10n.tagLibrary_includeThumbnails),
+              subtitle: Text(context.l10n.tagLibrary_includeThumbnailsSubtitle),
+              value: _includeThumbnails,
+              onChanged: (value) {
+                setState(() => _includeThumbnails = value ?? true);
+              },
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+            ),
+
+            const SizedBox(height: 16),
+
+            // 操作按钮
+            Align(
+              alignment: Alignment.centerRight,
+              child: Wrap(
+                key: const Key('tag-library-export-dialog-actions'),
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: Text(context.l10n.common_cancel),
                   ),
-                ),
-              ] else ...[
-                // 统计信息
-                _buildStatsBar(theme),
-
-                const SizedBox(height: 16),
-
-                // 全选/全不选按钮
-                _buildSelectionActions(theme),
-
-                const SizedBox(height: 8),
-
-                // 可滚动的选择列表
-                Expanded(child: _buildSelectionList(theme)),
-
-                const Divider(height: 24),
-
-                // 选项
-                CheckboxListTile(
-                  title: Text(context.l10n.tagLibrary_includeThumbnails),
-                  subtitle: Text(
-                    context.l10n.tagLibrary_includeThumbnailsSubtitle,
-                  ),
-                  value: _includeThumbnails,
-                  onChanged: (value) {
-                    setState(() => _includeThumbnails = value ?? true);
-                  },
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                ),
-
-                const SizedBox(height: 16),
-
-                // 操作按钮
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: Text(context.l10n.common_cancel),
-                    ),
-                    const SizedBox(width: 8),
-                    FilledButton.icon(
-                      onPressed:
-                          _selectedEntryIds.isNotEmpty ||
-                              _selectedCategoryIds.isNotEmpty
-                          ? _export
-                          : null,
-                      icon: const Icon(Icons.file_download),
-                      label: Text(
-                        context.l10n.tagLibrary_selectedExportCount(
-                          _selectedEntryIds.length +
-                              _selectedCategoryIds.length,
-                        ),
+                  FilledButton.icon(
+                    onPressed:
+                        _selectedEntryIds.isNotEmpty ||
+                            _selectedCategoryIds.isNotEmpty
+                        ? _export
+                        : null,
+                    icon: const Icon(Icons.file_download),
+                    label: Text(
+                      context.l10n.tagLibrary_selectedExportCount(
+                        _selectedEntryIds.length + _selectedCategoryIds.length,
                       ),
                     ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSelectionHeader(ThemeData theme) {
+    return HorizontalActionStrip(
+      scrollKey: const Key('tag-library-export-selection-header-scroll'),
+
+      child: Row(
+        key: const Key('tag-library-export-selection-header'),
+        children: [
+          _buildStatsBar(theme),
+          const SizedBox(width: 16),
+          _buildSelectionActions(theme),
+        ],
       ),
     );
   }
@@ -179,6 +202,7 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
   /// 构建统计信息栏
   Widget _buildStatsBar(ThemeData theme) {
     return Container(
+      key: const Key('tag-library-export-stats'),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest,
@@ -211,12 +235,13 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
     final allSelected = allEntriesSelected && allCategoriesSelected;
 
     return Row(
+      key: const Key('tag-library-export-selection-actions'),
       children: [
         Text(
           context.l10n.tagLibrary_selectExportContent,
           style: theme.textTheme.titleSmall,
         ),
-        const Spacer(),
+        const SizedBox(width: 8),
         TextButton.icon(
           onPressed: allSelected ? null : _selectAll,
           icon: const Icon(Icons.select_all, size: 18),
@@ -225,6 +250,7 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
             padding: const EdgeInsets.symmetric(horizontal: 8),
           ),
         ),
+        const SizedBox(width: 4),
         TextButton.icon(
           onPressed: _selectedEntryIds.isEmpty && _selectedCategoryIds.isEmpty
               ? null
@@ -313,10 +339,10 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
                   });
                 },
                 padding: EdgeInsets.zero,
-                visualDensity: _compactControlDensity,
+                visualDensity: _compactControlDensity(context),
                 constraints: BoxConstraints.tightFor(
-                  width: _compactControlExtent,
-                  height: _compactControlExtent,
+                  width: _compactControlExtent(context),
+                  height: _compactControlExtent(context),
                 ),
               ),
               SizedBox(
@@ -456,14 +482,14 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
                       });
                     },
                     padding: EdgeInsets.zero,
-                    visualDensity: _compactControlDensity,
+                    visualDensity: _compactControlDensity(context),
                     constraints: BoxConstraints.tightFor(
-                      width: _compactControlExtent,
-                      height: _compactControlExtent,
+                      width: _compactControlExtent(context),
+                      height: _compactControlExtent(context),
                     ),
                   )
                 else
-                  SizedBox(width: _compactControlExtent),
+                  SizedBox(width: _compactControlExtent(context)),
 
                 // 复选框
                 SizedBox(
@@ -593,13 +619,13 @@ class _ExportDialogState extends ConsumerState<ExportDialog> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  Text(
+                  TranslatedPromptText(
                     entry.contentPreview,
+                    selectable: false,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.outline,
                     ),
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),

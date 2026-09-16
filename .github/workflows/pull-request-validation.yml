@@ -14,6 +14,31 @@ on:
       - "android/**"
       - "assets/**"
       - "build.yaml"
+      - "dart_test.yaml"
+      - "fonts/**"
+      - "installer/windows/**"
+      - "l10n.yaml"
+      - "lib/**"
+      - "pubspec.lock"
+      - "pubspec.yaml"
+      - "scripts/**"
+      - "test/**"
+      - "tool/**"
+      - "windows/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/actions/prepare-flutter-build/action.yml"
+      - ".github/workflows/android-build.yml"
+      - ".github/workflows/pull-request-validation.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/windows-portable.yml"
+      - "analysis_options.yaml"
+      - "android/**"
+      - "assets/**"
+      - "build.yaml"
+      - "dart_test.yaml"
       - "fonts/**"
       - "installer/windows/**"
       - "l10n.yaml"
@@ -102,10 +127,14 @@ jobs:
       - name: Analyze
         run: flutter analyze
 
-  tests:
-    name: Test
+  test-shards:
+    name: Test / shard-${{ matrix.shard }}
     runs-on: windows-2022
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
 
     steps:
       - name: Checkout without LFS payloads
@@ -118,22 +147,87 @@ jobs:
         run: ./scripts/prepare_bundled_database.ps1
 
       - name: Test Windows portable package verifier
+        if: matrix.shard == 0
         shell: pwsh
         run: ./scripts/test_windows_portable_package_verifier.ps1
+
+      - name: Verify complete test shard coverage
+        if: matrix.shard == 0
+        shell: pwsh
+        run: ./scripts/test_flutter_test_shards.ps1
 
       - name: Prepare incremental Flutter build
         uses: ./.github/actions/prepare-flutter-build
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache-namespace: nai-hosted
+          generate-code: "false"
 
       - name: Validate bundled autocomplete databases
+        if: matrix.shard == 0
         run: dart run tool/tag_catalog/verify_bundled_databases.dart
 
       - name: Run tests
         shell: pwsh
         timeout-minutes: 10
-        run: ./scripts/run_flutter_tests.ps1 -TimeoutSeconds 570
+        run: >-
+          ./scripts/run_flutter_tests.ps1
+          -TotalShards 6 -ShardIndex ${{ matrix.shard }}
+          -TimeoutSeconds 570 -NoPub
+          -ReportPath tool/.tmp/ci-tests/results.json
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-shard-${{ matrix.shard }}
+          path: tool/.tmp/ci-tests/*.json
+          if-no-files-found: warn
+
+  cloud-sync-benchmark:
+    name: Cloud-sync performance budgets
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Checkout without LFS payloads
+        uses: actions/checkout@v6
+        with:
+          lfs: false
+      - name: Download verified bundled database
+        shell: pwsh
+        run: ./scripts/prepare_bundled_database.ps1
+      - name: Prepare Flutter dependencies
+        uses: ./.github/actions/prepare-flutter-build
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache-namespace: nai-hosted
+          generate-code: "false"
+      - name: Verify cloud-sync performance budgets
+        shell: pwsh
+        run: ./scripts/run_cloud_sync_benchmark.ps1
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-sync-benchmark
+          path: tool/.tmp/cloud-sync-benchmark/*.json
+          if-no-files-found: warn
+
+  tests:
+    name: Test
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [test-shards, cloud-sync-benchmark]
+
+    steps:
+      - name: Verify all test shards passed
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ('${{ needs.test-shards.result }}' -ne 'success' -or '${{ needs.cloud-sync-benchmark.result }}' -ne 'success') {
+            throw 'A test shard or cloud-sync benchmark did not pass.'
+          }
+          Write-Host 'All test shards and cloud-sync budgets passed.'
 
   windows-build:
     name: Build Windows debug
@@ -141,7 +235,7 @@ jobs:
     needs: changes
     if: >-
       github.event_name != 'workflow_dispatch' &&
-      needs.changes.outputs.windows_build == 'true' &&
+      (github.event_name == 'push' || needs.changes.outputs.windows_build == 'true') &&
       needs.changes.outputs.windows_package != 'true'
     timeout-minutes: 20
 
@@ -160,6 +254,7 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache-namespace: nai-hosted
+          generate-code: "false"
           cache-windows-build: "true"
 
       - name: Setup NuGet
@@ -198,6 +293,7 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache-namespace: nai-hosted
+          generate-code: "false"
           cache-windows-build: "true"
 
       - name: Setup NuGet

@@ -166,8 +166,9 @@ final class VibeReferenceService {
 
   List<VibeReference> mergeReferences(
     List<VibeReference> current,
-    List<VibeReference> incoming,
-  ) {
+    List<VibeReference> incoming, {
+    bool requireAll = false,
+  }) {
     final reordered = <VibeReference>[];
     final added = <VibeReference>[];
     for (final reference in incoming) {
@@ -178,6 +179,9 @@ final class VibeReferenceService {
     for (final reference in reordered) {
       final index = findIndex(result, reference);
       if (index >= 0) result.removeAt(index);
+    }
+    if (requireAll && result.length + added.length + reordered.length > 16) {
+      throw StateError('The complete Vibe set exceeds the 16 reference limit');
     }
     final available = 16 - result.length;
     result.addAll(added.take(available));

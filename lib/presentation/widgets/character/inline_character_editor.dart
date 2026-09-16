@@ -1,11 +1,19 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/character/character_prompt.dart';
+import '../../adaptive/adaptive_presenter.dart';
+import '../../adaptive/interaction_policy.dart';
 import '../../prompt_assistant/providers/prompt_assistant_history_provider.dart';
+import '../prompt/prompt_editor_control_row.dart';
 import '../../providers/character_prompt_provider.dart';
+import '../../providers/generation/character_editor_layout_provider.dart';
 import '../../providers/image_generation_provider.dart';
+import '../common/themed_confirm_dialog.dart';
+import '../common/vertical_resize_handle.dart';
 import '../prompt/toolbar/toolbar.dart';
 import '../prompt/unified/unified.dart';
 
@@ -14,6 +22,9 @@ import '../prompt/unified/unified.dart';
 /// 官网布局的卡内编辑与经典布局的全宽编辑面板共用。
 /// 挂载时自动把光标送进当前输入框；输入实时写回 provider。
 class CharacterPromptEditor extends ConsumerStatefulWidget {
+  static String tapRegionGroupId(String characterId) =>
+      'character-prompt-editor-$characterId';
+
   final CharacterPrompt character;
   final bool compact;
 
@@ -95,35 +106,43 @@ class _CharacterPromptEditorState extends ConsumerState<CharacterPromptEditor> {
     ref.read(characterPromptNotifierProvider.notifier).updateCharacter(updated);
   }
 
+  Future<void> _clearCurrentPrompt() async {
+    final controller = _tabIndex == 0 ? _promptController : _negativeController;
+    if (controller.text.isEmpty) return;
+
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await ThemedConfirmDialog.show(
+      context: context,
+      title: l10n.common_confirmClear,
+      content: l10n.common_clearInputConfirm,
+      confirmText: l10n.common_clear,
+      cancelText: l10n.common_cancel,
+      type: ThemedConfirmDialogType.warning,
+      icon: Icons.clear_all,
+    );
+    if (!mounted || !confirmed) return;
+
+    controller.clear();
+    _updateCharacter(
+      _tabIndex == 0
+          ? widget.character.copyWith(prompt: '')
+          : widget.character.copyWith(negativePrompt: ''),
+    );
+    setState(() {});
+    _focusCurrentTab();
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-
+    final assistantSessionId = _tabIndex == 0
+        ? PromptHistorySessionIds.characterPrompt(widget.character.id)
+        : PromptHistorySessionIds.characterNegative(widget.character.id);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
-          children: [
-            _EditorTab(
-              label: l10n.prompt_positivePrompt,
-              selected: _tabIndex == 0,
-              onTap: () {
-                setState(() => _tabIndex = 0);
-                _focusCurrentTab();
-              },
-            ),
-            const SizedBox(width: 6),
-            _EditorTab(
-              label: l10n.prompt_negativePrompt,
-              selected: _tabIndex == 1,
-              onTap: () {
-                setState(() => _tabIndex = 1);
-                _focusCurrentTab();
-              },
-            ),
-          ],
-        ),
+        _buildEditorHeader(l10n, assistantSessionId),
         const SizedBox(height: 6),
         if (_tabIndex == 0)
           _buildPromptEditor(
@@ -146,6 +165,50 @@ class _CharacterPromptEditorState extends ConsumerState<CharacterPromptEditor> {
     );
   }
 
+  Widget _buildEditorHeader(AppLocalizations l10n, String sessionId) {
+    final positive = _tabIndex == 0;
+    final currentController = positive
+        ? _promptController
+        : _negativeController;
+    return PromptEditorControlRow(
+      sessionId: sessionId,
+      leading: Row(
+        children: [
+          Flexible(
+            child: _EditorTab(
+              label: l10n.prompt_positivePrompt,
+              selected: _tabIndex == 0,
+              onTap: () {
+                setState(() => _tabIndex = 0);
+                _focusCurrentTab();
+              },
+            ),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: _EditorTab(
+              label: l10n.prompt_negativePrompt,
+              isNegative: true,
+              selected: _tabIndex == 1,
+              onTap: () {
+                setState(() => _tabIndex = 1);
+                _focusCurrentTab();
+              },
+            ),
+          ),
+        ],
+      ),
+      action: currentController.text.isEmpty
+          ? null
+          : IconButton(
+              key: const ValueKey('character-prompt-clear-button'),
+              tooltip: l10n.toolbar_clear,
+              onPressed: _clearCurrentPrompt,
+              icon: const Icon(Icons.clear, size: 20),
+            ),
+    );
+  }
+
   Widget _buildPromptEditor({
     required TextEditingController controller,
     required FocusNode focusNode,
@@ -165,25 +228,72 @@ class _CharacterPromptEditorState extends ConsumerState<CharacterPromptEditor> {
       enableAutoFormat: enableAutoFormat,
       enableSyntaxHighlight: enableHighlight,
       enableSdSyntaxAutoConvert: enableSdSyntaxAutoConvert,
-      // 清空由 UnifiedPromptInput 内部处理并回调 onChanged('')，无需重复
-      showClearButton: true,
-      clearNeedsConfirm: true,
+      showClearButton: false,
+      clearNeedsConfirm: false,
     );
 
-    return PromptEditorWithToolbar(
-      toolbarConfig: PromptEditorToolbarConfig.compactMode.copyWith(
-        showClearButton: false,
-      ),
-      inputConfig: inputConfig,
-      controller: controller,
-      focusNode: focusNode,
-      sessionId: _tabIndex == 0
-          ? PromptHistorySessionIds.characterPrompt(widget.character.id)
-          : PromptHistorySessionIds.characterNegative(widget.character.id),
-      onChanged: onChanged,
-      onCleared: () => onChanged(''),
-      minLines: widget.compact ? 1 : 2,
-      maxLines: widget.compact ? 4 : 6,
+    final isNegative = _tabIndex == 1;
+    final viewportHeight = MediaQuery.sizeOf(context).height;
+    final minimumHeight = widget.compact ? 88.0 : 112.0;
+    final maximumHeight = math.max(
+      minimumHeight,
+      math.min(viewportHeight * 0.5, widget.compact ? 360.0 : 480.0),
+    );
+    final heightKey = (characterId: widget.character.id, negative: isNegative);
+    final storedHeight = ref.watch(characterEditorHeightProvider(heightKey));
+    final editorHeight = (storedHeight ?? minimumHeight)
+        .clamp(minimumHeight, maximumHeight)
+        .toDouble();
+    final resizeHandleHeight =
+        context.interactionPolicy.prefersTouchPresentation
+        ? context.interactionPolicy.minimumControlExtent
+        : 20.0;
+    final fieldName = isNegative ? 'negative' : 'positive';
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          key: ValueKey('character-prompt-editor-area-$fieldName'),
+          height: editorHeight,
+          child: PromptEditorWithToolbar(
+            toolbarConfig: PromptEditorToolbarConfig.compactMode.copyWith(
+              showClearButton: false,
+            ),
+            inputConfig: inputConfig,
+            controller: controller,
+            focusNode: focusNode,
+            sessionId: isNegative
+                ? PromptHistorySessionIds.characterNegative(widget.character.id)
+                : PromptHistorySessionIds.characterPrompt(widget.character.id),
+            enableAssistant: true,
+            showTagModeSwitch: false,
+            assistantTapRegionGroupId: CharacterPromptEditor.tapRegionGroupId(
+              widget.character.id,
+            ),
+            onChanged: onChanged,
+            onCleared: () => onChanged(''),
+            expands: true,
+          ),
+        ),
+        VerticalResizeHandle(
+          key: ValueKey('character-prompt-resize-handle-$fieldName'),
+          height: resizeHandleHeight,
+          onDrag: (delta) {
+            final heightState = ref.read(
+              characterEditorHeightProvider(heightKey).notifier,
+            );
+            // Several pointer events can arrive before the next build.
+            final currentHeight = (heightState.state ?? editorHeight).clamp(
+              minimumHeight,
+              maximumHeight,
+            );
+            heightState.state = (currentHeight + delta)
+                .clamp(minimumHeight, maximumHeight)
+                .toDouble();
+          },
+        ),
+      ],
     );
   }
 }
@@ -192,11 +302,13 @@ class _CharacterPromptEditorState extends ConsumerState<CharacterPromptEditor> {
 class _EditorTab extends StatelessWidget {
   final String label;
   final bool selected;
+  final bool isNegative;
   final VoidCallback onTap;
 
   const _EditorTab({
     required this.label,
     required this.selected,
+    this.isNegative = false,
     required this.onTap,
   });
 
@@ -204,24 +316,28 @@ class _EditorTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final selectedColor = isNegative ? colorScheme.error : colorScheme.primary;
 
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        constraints: BoxConstraints(
+          minHeight: context.interactionPolicy.minimumControlExtent,
+        ),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: selected
-              ? colorScheme.primary.withValues(alpha: 0.12)
+              ? selectedColor.withValues(alpha: 0.12)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
         ),
         child: Text(
           label,
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: selected
-                ? colorScheme.primary
-                : colorScheme.onSurfaceVariant,
+          textAlign: TextAlign.center,
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: selected ? selectedColor : colorScheme.onSurfaceVariant,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
           ),
         ),
@@ -236,22 +352,35 @@ Future<void> confirmClearAllCharacters(
   WidgetRef ref,
 ) async {
   final l10n = AppLocalizations.of(context)!;
-  final confirmed = await showDialog<bool>(
+  final confirmed = await AdaptivePresenter.showPanel<bool>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: Text(l10n.characterEditor_clearAllTitle),
-      content: Text(l10n.characterEditor_clearAllConfirm),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
-          child: Text(l10n.common_cancel),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(true),
-          style: FilledButton.styleFrom(
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-          child: Text(l10n.common_clear),
+    title: l10n.characterEditor_clearAllTitle,
+    initialChildSize: 0.46,
+    minChildSize: 0.38,
+    dialogWidth: 440,
+    builder: (panelContext, scrollController) => ListView(
+      controller: scrollController,
+      shrinkWrap: true,
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
+      children: [
+        Text(l10n.characterEditor_clearAllConfirm),
+        const SizedBox(height: 24),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed: () => Navigator.of(panelContext).pop(false),
+              child: Text(l10n.common_cancel),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: () => Navigator.of(panelContext).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(panelContext).colorScheme.error,
+              ),
+              child: Text(l10n.common_clear),
+            ),
+          ],
         ),
       ],
     ),

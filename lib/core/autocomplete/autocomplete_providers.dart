@@ -1,20 +1,27 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/services/alias_resolver_service.dart';
 import '../../presentation/prompt_assistant/services/prompt_assistant_service.dart';
 import '../database/services/service_providers.dart';
+import '../network/network_failure_diagnostics.dart';
 import 'autocomplete_cache_database.dart';
 import 'autocomplete_settings.dart';
 import 'cooccurrence_completion_source.dart';
 import 'completion_models.dart';
 import 'completion_orchestrator.dart';
 import 'danbooru_completion_source.dart';
+import 'fast_tag_service_provider.dart';
 import 'llm_translation_resolver.dart';
-import 'tag_catalog_repository.dart';
 import 'tag_library_completion_source.dart';
-import 'zh_dictionary_service.dart';
+
+export 'fast_tag_service_provider.dart'
+    show
+        fastTagServiceProvider,
+        tagCatalogRepositoryProvider,
+        zhDictionaryServiceProvider;
 
 final autocompleteCacheDatabaseProvider = Provider<AutocompleteCacheDatabase>((
   ref,
@@ -30,29 +37,25 @@ final autocompleteCacheStatisticsProvider =
       return ref.watch(autocompleteCacheDatabaseProvider).statistics();
     });
 
-final tagCatalogRepositoryProvider = Provider<TagCatalogRepository>((ref) {
-  final repository = TagCatalogRepository();
-  ref.onDispose(() => unawaited(repository.dispose()));
-  return repository;
-});
-
-final zhDictionaryServiceProvider = ChangeNotifierProvider<ZhDictionaryService>(
-  (ref) {
-    final service = ZhDictionaryService();
-    unawaited(() async {
-      await service.initialize();
-      if (service.state.isInstalled) {
-        await service.checkForUpdate();
-      }
-    }());
-    return service;
-  },
-);
-
 final danbooruCompletionSourceProvider = Provider<DanbooruCompletionSource>((
   ref,
 ) {
+  final dio = Dio(
+    BaseOptions(
+      baseUrl: 'https://danbooru.donmai.us',
+      connectTimeout: const Duration(seconds: 3),
+      receiveTimeout: const Duration(seconds: 3),
+      sendTimeout: const Duration(seconds: 3),
+      headers: const {
+        'Accept': 'application/json',
+        'User-Agent': 'Aaalice-NAI-Launcher/Autocomplete',
+      },
+    ),
+  );
+  addNetworkFailureDiagnostics(dio, scope: 'Danbooru autocomplete');
+  ref.onDispose(dio.close);
   return DanbooruCompletionSource(
+    dio: dio,
     cache: ref.watch(autocompleteCacheDatabaseProvider),
   );
 });
@@ -106,8 +109,7 @@ final autocompleteLocalSourcesProvider = Provider<List<CompletionSource>>((
   ref,
 ) {
   return <CompletionSource>[
-    ref.watch(tagCatalogRepositoryProvider),
-    ref.watch(zhDictionaryServiceProvider),
+    ref.watch(fastTagServiceProvider),
     ref.watch(cooccurrenceCompletionSourceProvider),
   ];
 });
@@ -129,12 +131,11 @@ final tagLibraryCompletionSourceProvider = Provider<TagLibraryCompletionSource>(
 );
 
 final autocompleteServicesProvider = Provider<AutocompleteServices>((ref) {
-  final zhDictionary = ref.watch(zhDictionaryServiceProvider);
-  final tagCatalog = ref.watch(tagCatalogRepositoryProvider);
+  final fastTags = ref.watch(fastTagServiceProvider);
   return AutocompleteServices(
     localSources: ref.watch(autocompleteLocalSourcesProvider),
-    tagLookupSources: [tagCatalog, zhDictionary],
-    dictionaryTranslations: zhDictionary,
+    tagLookupSources: [fastTags],
+    dictionaryTranslations: fastTags,
     llmTranslations: ref.watch(llmTranslationResolverProvider),
     danbooru: ref.watch(danbooruCompletionSourceProvider),
     libraryAliases: ref.watch(tagLibraryCompletionSourceProvider),

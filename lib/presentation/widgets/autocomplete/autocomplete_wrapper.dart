@@ -13,11 +13,12 @@ import '../../../core/autocomplete/cooccurrence_data_pack_provider.dart';
 import '../../../core/autocomplete/completion_models.dart';
 import '../../../core/autocomplete/completion_orchestrator.dart';
 import '../../../core/autocomplete/prompt_token_parser.dart';
-import '../../../core/platform/platform_capabilities.dart';
 import '../../../core/utils/app_logger.dart';
 import '../../../core/utils/localization_extension.dart';
+import '../../adaptive/interaction_policy.dart';
 import '../../router/app_routes.dart';
 import 'autocomplete_config.dart';
+import 'autocomplete_overlay_handle.dart';
 import 'autocomplete_utils.dart';
 import 'completion_overlay.dart';
 
@@ -36,6 +37,7 @@ class AutocompleteWrapper extends ConsumerStatefulWidget {
     this.maxLines,
     this.expands = false,
     this.config,
+    this.overlayHandle,
   });
 
   final Widget child;
@@ -51,6 +53,7 @@ class AutocompleteWrapper extends ConsumerStatefulWidget {
   final int? maxLines;
   final bool expands;
   final AutocompleteConfig? config;
+  final AutocompleteOverlayHandle? overlayHandle;
 
   factory AutocompleteWrapper.localTag({
     Key? key,
@@ -176,7 +179,7 @@ class _AutocompleteWrapperState extends ConsumerState<AutocompleteWrapper> {
     if (!position.hasContentDimensions || position.viewportDimension <= 0) {
       return;
     }
-    final itemExtent = effectiveAutocompleteCandidateExtent;
+    final itemExtent = effectiveAutocompleteCandidateExtent(context);
     final firstIndex = (position.pixels / itemExtent).floor();
     final lastIndex =
         ((position.pixels + position.viewportDimension - 0.5) / itemExtent)
@@ -208,6 +211,9 @@ class _AutocompleteWrapperState extends ConsumerState<AutocompleteWrapper> {
     if (!mounted) return;
     final anchorContext = _anchorKey.currentContext;
     if (anchorContext == null) return;
+    if (_overlayEntry != null && _hasInputFocus) {
+      AutocompleteUtils.revealCaret(anchorContext);
+    }
     final isMultiline = AutocompleteUtils.isMultilineTextInput(
       context: anchorContext,
       maxLines: widget.maxLines,
@@ -494,6 +500,7 @@ class _AutocompleteWrapperState extends ConsumerState<AutocompleteWrapper> {
     final entry = OverlayEntry(builder: _buildOverlay);
     _overlayEntry = entry;
     Overlay.of(context, rootOverlay: true).insert(entry);
+    widget.overlayHandle?.attach(_closeOverlay);
   }
 
   Widget _buildOverlay(BuildContext overlayContext) {
@@ -524,23 +531,41 @@ class _AutocompleteWrapperState extends ConsumerState<AutocompleteWrapper> {
     const viewportInset = 8.0;
     const caretGap = 8.0;
     final touchCompact =
-        PlatformCapabilities.current.hasTouchInput && screen.width < 600;
+        context.interactionPolicy.touchAvailable && screen.width < 600;
     final flutterView = View.of(overlayContext);
     final rawKeyboardInset =
         flutterView.viewInsets.bottom / flutterView.devicePixelRatio;
     final keyboardInset = math
         .max(MediaQuery.viewInsetsOf(overlayContext).bottom, rawKeyboardInset)
         .clamp(0.0, screen.height);
-    final visibleBottom = screen.height - keyboardInset;
+    // Overlay coordinates may already be inside a resized Scaffold. Translate
+    // the window's keyboard edge instead of subtracting its inset twice.
+    final overlayOrigin = theater.localToGlobal(Offset.zero);
+    final logicalWindowHeight =
+        flutterView.physicalSize.height / flutterView.devicePixelRatio;
+    final safeInsets = MediaQuery.viewPaddingOf(overlayContext);
+    final visibleTop = math.max(
+      viewportInset,
+      safeInsets.top - overlayOrigin.dy + viewportInset,
+    );
+    final visibleBottom = math.min(
+      screen.height,
+      logicalWindowHeight -
+          keyboardInset -
+          overlayOrigin.dy -
+          (keyboardInset > 0 ? 0 : safeInsets.bottom),
+    );
     final below = math.max(
       visibleBottom - viewportInset - caretBottom - caretGap,
       0.0,
     );
-    final above = math.max(caretTop - caretGap - viewportInset, 0.0);
+    final above = math.max(
+      math.min(caretTop, visibleBottom) - caretGap - visibleTop,
+      0.0,
+    );
     final placeBelow = below >= 180 || below >= above;
     final availableHeight = placeBelow ? below : above;
-    final minimumUsableHeight = touchCompact ? 152.0 : 90.0;
-    if (availableHeight < minimumUsableHeight) {
+    if (availableHeight < 44) {
       return const SizedBox.shrink();
     }
     final maxHeight = math.min(availableHeight, touchCompact ? 320.0 : 410.0);
@@ -663,7 +688,7 @@ class _AutocompleteWrapperState extends ConsumerState<AutocompleteWrapper> {
     final position = _scrollController.position;
     if (!position.hasContentDimensions) return;
 
-    final itemExtent = effectiveAutocompleteCandidateExtent;
+    final itemExtent = effectiveAutocompleteCandidateExtent(context);
     final itemTop = _selectedIndex * itemExtent;
     final itemBottom = itemTop + itemExtent;
     final viewportTop = position.pixels;
@@ -830,6 +855,7 @@ class _AutocompleteWrapperState extends ConsumerState<AutocompleteWrapper> {
     final entry = _overlayEntry;
     if (entry == null) return;
     _overlayEntry = null;
+    widget.overlayHandle?.detach(_closeOverlay);
     entry.remove();
     entry.dispose();
   }
@@ -892,7 +918,13 @@ class _AutocompleteWrapperState extends ConsumerState<AutocompleteWrapper> {
           onPointerDown: _onPointerDown,
           onPointerUp: _onPointerUp,
           onPointerCancel: _onPointerCancel,
-          child: widget.child,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (_) {
+              _scheduleCursorMetricsUpdate();
+              return false;
+            },
+            child: widget.child,
+          ),
         ),
       ),
     );

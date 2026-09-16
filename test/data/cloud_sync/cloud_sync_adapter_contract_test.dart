@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'dart:convert';
+import 'package:nai_launcher/data/services/dlss/dlss_options.dart';
+import 'package:nai_launcher/data/services/dlss/dlss_presets.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
@@ -6,6 +9,7 @@ import 'package:nai_launcher/core/constants/storage_keys.dart';
 import 'package:nai_launcher/core/storage/local_storage_service.dart';
 import 'package:nai_launcher/data/cloud_sync/cloud_sync.dart';
 import 'package:nai_launcher/data/models/online_gallery/gallery_blacklist.dart';
+import 'package:nai_launcher/data/models/watermark/watermark_settings.dart';
 import 'package:nai_launcher/data/repositories/online_gallery_blacklist_repository.dart';
 
 class _TrackingAdapter extends ValidatingCloudSyncDataAdapter {
@@ -141,9 +145,22 @@ void main() {
     Hive.init(directory.path);
     await Hive.openBox<dynamic>(StorageKeys.settingsBox);
     final storage = LocalStorageService();
+    final dlssState = DlssPresetState()
+        .create('custom-texture', '质感预设')
+        .withOptions(const DlssOptions(scale: 1, detail: 2));
+    await storage.setSetting('dlss_options', jsonEncode(dlssState.toJson()));
     await storage.setSetting(StorageKeys.locale, 'ja');
+    await storage.setSetting(StorageKeys.shareWatermark, true);
     await storage.setSetting(StorageKeys.accessToken, 'secret-token');
     await storage.setSetting(StorageKeys.imageSavePath, 'D:/private');
+    await storage.setSetting(
+      StorageKeys.watermarkConfigV1,
+      const WatermarkSettings(enabled: true).encode(),
+    );
+    await storage.setSetting(
+      StorageKeys.watermarkLogoPathV1,
+      'D:/private/logo.png',
+    );
     final adapter = SettingsCloudSyncAdapter(storage);
 
     final records = await adapter.exportRecords().toList();
@@ -156,21 +173,66 @@ void main() {
       records.map((record) => record.id),
       isNot(contains(StorageKeys.imageSavePath)),
     );
+    expect(
+      records.map((record) => record.id),
+      contains(StorageKeys.watermarkConfigV1),
+    );
+    expect(
+      records.map((record) => record.id),
+      isNot(contains(StorageKeys.watermarkLogoPathV1)),
+    );
+    expect(records.every((record) => record.resource == null), isTrue);
 
     await storage.setSetting(StorageKeys.locale, 'en');
+    await storage.setSetting(StorageKeys.shareWatermark, false);
+    await storage.deleteSetting('dlss_options');
+    await storage.deleteSetting(StorageKeys.watermarkConfigV1);
     await adapter.apply(records);
+    final dlssRestored = DlssPresetState.fromJson(
+      jsonDecode(storage.getSetting<String>('dlss_options')!)
+          as Map<String, dynamic>,
+    );
+    expect(dlssRestored.toJson(), dlssState.toJson());
+    expect(dlssRestored.modified, isTrue);
     expect(storage.getSetting<String>(StorageKeys.locale), 'ja');
+    expect(storage.getSetting<bool>(StorageKeys.shareWatermark), isTrue);
+    expect(
+      WatermarkSettings.decode(
+        storage.getSetting<String>(StorageKeys.watermarkConfigV1),
+      ).settings.enabled,
+      isTrue,
+    );
   });
 
   test('portable preferences and explicit exclusions stay classified', () {
     expect(portableSettingKeys, contains(StorageKeys.defaultModel));
+    expect(portableSettingKeys, contains(StorageKeys.shareWatermark));
+    expect(portableSettingKeys, contains(StorageKeys.watermarkConfigV1));
+    // Redaction remains local-only, including its original-file associations.
+    expect(portableSettingKeys, isNot(contains(StorageKeys.mosaicConfigV1)));
+    expect(
+      portableSettingKeys,
+      isNot(contains(StorageKeys.mosaicDerivativeRegistryV1)),
+    );
+    expect(
+      portableSettingKeys,
+      isNot(contains(StorageKeys.watermarkLogoPathV1)),
+    );
     expect(
       portableSettingKeys,
       contains(StorageKeys.autocompleteOpenOnTagClick),
     );
     expect(
       portableSettingKeys,
+      isNot(contains(StorageKeys.quickTagCloudBrowsingFiltersV1)),
+    );
+    expect(
+      portableOnlineGallerySettingKeys,
       contains(StorageKeys.quickTagCloudBrowsingFiltersV1),
+    );
+    expect(
+      portableOnlineGallerySettingKeys,
+      contains(StorageKeys.quickTagCloudContentAccessV1),
     );
     expect(portableSettingKeys, isNot(contains(StorageKeys.proxyManualHost)));
     expect(portableSettingKeys, isNot(contains(StorageKeys.comfyuiServerUrl)));
@@ -181,6 +243,51 @@ void main() {
     expect(
       portableSettingKeys,
       isNot(contains(StorageKeys.onnxTaggerModelDirectory)),
+    );
+  });
+
+  test('settings adapter applies only currently selected groups', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'sync-selected-settings-',
+    );
+    addTearDown(() async {
+      await Hive.close();
+      await directory.delete(recursive: true);
+    });
+    Hive.init(directory.path);
+    await Hive.openBox<dynamic>(StorageKeys.settingsBox);
+    final storage = LocalStorageService();
+    await storage.setSetting(
+      StorageKeys.quickTagCloudBrowsingFiltersV1,
+      'local-filter',
+    );
+    final adapter = SettingsCloudSyncAdapter(
+      storage,
+      includeOnlineGallerySettings: false,
+    );
+
+    await adapter.apply([
+      PortableSyncRecord(
+        adapterId: 'portable-settings',
+        id: StorageKeys.locale,
+        kind: 'setting',
+        data: {'key': StorageKeys.locale, 'value': 'ja'},
+      ),
+      PortableSyncRecord(
+        adapterId: 'portable-settings',
+        id: StorageKeys.quickTagCloudBrowsingFiltersV1,
+        kind: 'setting',
+        data: {
+          'key': StorageKeys.quickTagCloudBrowsingFiltersV1,
+          'value': 'remote-filter',
+        },
+      ),
+    ]);
+
+    expect(storage.getSetting<String>(StorageKeys.locale), 'ja');
+    expect(
+      storage.getSetting<String>(StorageKeys.quickTagCloudBrowsingFiltersV1),
+      'local-filter',
     );
   });
 

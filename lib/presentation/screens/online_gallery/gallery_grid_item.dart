@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../widgets/common/image_viewport_surface.dart';
 import '../../../core/cache/online_gallery_detail_coordinator.dart';
 import '../../../core/agent/resources/agent_chat_resource_reference.dart';
 import '../../../core/utils/localization_extension.dart';
@@ -10,6 +11,8 @@ import 'online_gallery_grid.dart';
 import 'online_gallery_viewport_tracker.dart';
 import '../../agent_chat/widgets/agent_resource_drop_region.dart';
 import '../../widgets/online_gallery/online_gallery_image_placeholder.dart';
+
+void _scheduleRevealImmediately(VoidCallback reveal) => reveal();
 
 /// Owns one gallery tile's visibility and detail request lifecycle.
 ///
@@ -31,6 +34,7 @@ class GalleryGridItem extends StatefulWidget {
     this.onTileBuild,
     this.onVisibilityTransition,
     this.onVisibilityDrivenRebuild,
+    this.scheduleReveal = _scheduleRevealImmediately,
     required this.viewportGeneration,
     required this.detailRequestScope,
     required this.loadDetail,
@@ -49,6 +53,7 @@ class GalleryGridItem extends StatefulWidget {
   final VoidCallback? onTileBuild;
   final VoidCallback? onVisibilityTransition;
   final VoidCallback? onVisibilityDrivenRebuild;
+  final void Function(VoidCallback reveal) scheduleReveal;
   final int viewportGeneration;
   final Object detailRequestScope;
   final Future<GalleryDetail> Function(
@@ -139,6 +144,18 @@ class _GalleryGridItemState extends State<GalleryGridItem> {
     GalleryDetail? detail,
   }) {
     return AgentResourceDragSource(
+      selectionId: item.stableKey,
+      referenceForSelection: (id) {
+        final prefix = '${item.sourceId.key}:';
+        if (!id.startsWith(prefix)) {
+          throw StateError('Gallery drag contains a different source: $id');
+        }
+        return AgentChatResourceReference(
+          kind: AgentChatResourceKind.onlineGalleryMedia,
+          source: item.sourceId.key,
+          resourceId: id.substring(prefix.length),
+        );
+      },
       reference: AgentChatResourceReference(
         kind: AgentChatResourceKind.onlineGalleryMedia,
         source: item.sourceId.key,
@@ -194,6 +211,7 @@ class _GalleryGridItemState extends State<GalleryGridItem> {
         onGeometryMeasured: widget.onGeometryMeasured,
         onVisibilityTransition: widget.onVisibilityTransition,
         onVisibilityDrivenRebuild: widget.onVisibilityDrivenRebuild,
+        scheduleReveal: widget.scheduleReveal,
         builder: (context, hasBeenVisible, isScrolling, isVisible) {
           if (!hasBeenVisible) {
             return _buildDeferredCard(layoutAspectRatio);
@@ -208,13 +226,7 @@ class _GalleryGridItemState extends State<GalleryGridItem> {
             );
           }
           if (_detailFuture == null) {
-            return const AspectRatio(
-              aspectRatio: 1,
-              child: ClipRRect(
-                borderRadius: BorderRadius.all(Radius.circular(8)),
-                child: OnlineGalleryImagePlaceholder(loading: true),
-              ),
-            );
+            return _buildDeferredCard(layoutAspectRatio);
           }
           return FutureBuilder<GalleryDetail>(
             key: ValueKey((post.detailStableKey, widget.detailRequestScope)),
@@ -224,24 +236,24 @@ class _GalleryGridItemState extends State<GalleryGridItem> {
                 final error = snapshot.error;
                 if (error is DioException &&
                     error.type == DioExceptionType.cancel) {
-                  return const AspectRatio(
-                    aspectRatio: 1,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.all(Radius.circular(8)),
-                      child: OnlineGalleryImagePlaceholder(loading: true),
-                    ),
-                  );
+                  return _buildDeferredCard(layoutAspectRatio);
                 }
-                return AspectRatio(
-                  aspectRatio: 1,
+                return SizedBox(
+                  height: (widget.itemWidth / layoutAspectRatio).clamp(
+                    80.0,
+                    widget.itemWidth * 2.5,
+                  ),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerLow,
+                      color: ImageViewportSurface.background,
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Center(
                       child: TextButton.icon(
                         onPressed: _retryDetail,
+                        style: TextButton.styleFrom(
+                          foregroundColor: ImageViewportSurface.mutedForeground,
+                        ),
                         icon: const Icon(Icons.refresh),
                         label: Text(context.l10n.common_retry),
                       ),
@@ -252,22 +264,12 @@ class _GalleryGridItemState extends State<GalleryGridItem> {
               final detail = snapshot.data;
               final resolved = detail?.item;
               if (resolved == null) {
-                return const AspectRatio(
-                  aspectRatio: 1,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.all(Radius.circular(8)),
-                    child: OnlineGalleryImagePlaceholder(loading: true),
-                  ),
-                );
+                return _buildDeferredCard(layoutAspectRatio);
               }
-              final resolvedAspectRatio =
-                  resolved.width > 0 && resolved.height > 0
-                  ? resolved.width / resolved.height
-                  : layoutAspectRatio;
               return _buildResourceCard(
                 context,
                 resolved,
-                resolvedAspectRatio,
+                layoutAspectRatio,
                 loadMedia: hasBeenVisible,
                 mediaRequestActive: hasBeenVisible,
                 detail: detail,

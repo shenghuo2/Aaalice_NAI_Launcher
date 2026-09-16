@@ -1,5 +1,60 @@
 # Third-Party Notices
 
+## Native PNG Sanitization
+
+The local `nai_png_codec` package bundles libspng 0.7.4 (BSD-2-Clause and
+libpng-2.0) and miniz 3.0.2 (MIT). Complete license texts are retained in
+`packages/nai_png_codec/LICENSE` and the original source directories. Source URLs
+and SHA-256 hashes are pinned in `packages/nai_png_codec/source_lock.json`.
+The codec is built locally for each target; no runtime download is required.
+
+## Model and Provider Icons
+
+Model family and provider logos are bundled from [Lobe Icons](https://github.com/lobehub/lobe-icons),
+`@lobehub/icons-static-png` version `1.97.0`, under the MIT license.
+The original PNG files and complete copyright/license text are retained in
+`assets/icons/ai_brands/`. Monochrome logos use the current theme's foreground
+color at runtime. No icon service is contacted. Logos identify their respective
+model families; their trademarks belong to their respective owners.
+
+Source package: `https://registry.npmjs.org/@lobehub/icons-static-png/-/icons-static-png-1.97.0.tgz`
+
+Package integrity (SHA-512, Base64):
+`vyCHQJBxhk9dJxhsCQ3G6U1I4rP8HFiOgxn73IM2s1XAYHupmMJIfm80jRjd83xjM8jSI+SMGsMmjADy0qHwHg==`
+
+## Project Website Fonts
+
+The public project website self-hosts [Oswald](https://github.com/googlefonts/OswaldFont)
+and [Courier Prime](https://github.com/quoteunquoteapps/CourierPrime) from the
+[Google Fonts repository](https://github.com/google/fonts). Both font families
+are distributed under the SIL Open Font License 1.1. The exact license texts
+are retained next to the website font files under `docs/assets/fonts/`. The
+website does not contact Google Fonts at runtime.
+
+## Bundled Watermark Fonts
+
+The watermark editor uses a curated, platform-independent font set so previews
+and exported images share the same shaping and glyph assets on Windows, macOS,
+and Android. The following fonts are bundled under the SIL Open Font License
+1.1:
+
+- [LXGW ZhenKai](https://github.com/lxgw/LxgwZhenKai) (`LXGW ZhenKai GB`),
+  by LXGW.
+- [Great Vibes](https://github.com/TypeSETit/GreatVibes), by Robert E. Leuschke.
+- [Caveat](https://github.com/googlefonts/caveat), by Pablo Impallari.
+- [Allura](https://github.com/TypeSETit/Allura), by Robert E. Leuschke.
+- [Ma Shan Zheng](https://github.com/googlefonts/mashanzheng), by Ma Shan Zheng.
+- [Zhi Mang Xing](https://github.com/googlefonts/zhimangxing), by Zhi Mang Xing.
+- [Long Cang](https://github.com/googlefonts/longcang), by Long Cang.
+
+The six newly curated files are redistributed from the
+[Google Fonts repository](https://github.com/google/fonts), which records each
+font's original upstream project and authorship. The exact upstream records and
+complete license texts are retained under `licenses/fonts/`. Font files are
+stored under `fonts/watermark/`; `LXGW ZhenKai GB` remains at its existing
+`fonts/` path. No font is downloaded at runtime and no platform system font is
+used as the primary watermark face.
+
 ## Danbooru/e621 Tag Data
 
 The bundled `assets/databases/tag_catalog.db` is generated from the complete
@@ -160,3 +215,18 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+## DLSS-COM and NVIDIA NGX
+
+The NR bridge and GPU texture transfer code under `windows/dlss/` are adapted
+from [MYT-YEP/DLSS-COM](https://github.com/MYT-YEP/DLSS-COM), revision
+`3aeca71b28695118894bd04fc64f42b45e03004b`, under the MIT License.
+The complete notice is in `licenses/dlss/dlss-com.txt` and is installed with
+the Windows application.
+
+The native worker links NVIDIA's NGX SDK from
+[NVIDIA/DLSS](https://github.com/NVIDIA/DLSS), revision
+`a291cc7d2cc642a51566f3dfd5376f635cd1b284`. Build inputs are pinned and SHA-256
+verified in `windows/dlss/ngx_sdk.cmake`. The SDK's NVIDIA license is downloaded
+from the same revision and installed as `licenses/NVIDIA-DLSS.txt`.
+Model runtime DLLs are downloaded separately through the application's runtime
+installer; they are not included in this repository.

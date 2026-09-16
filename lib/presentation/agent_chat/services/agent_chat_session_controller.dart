@@ -17,11 +17,14 @@ import '../../../core/constants/storage_keys.dart';
 import '../../../core/storage/local_storage_service.dart';
 import '../../../core/utils/app_logger.dart';
 import '../../../data/models/inpaint/inpaint_draft.dart';
+import '../models/agent_chat_prompt_envelope.dart';
 import '../providers/agent_chat_session_view.dart';
 import '../providers/agent_chat_state.dart';
 import '../models/agent_chat_turn_timeline.dart';
 import 'agent_chat_draft_controller.dart';
+import 'agent_chat_session_naming.dart';
 import 'agent_chat_session_recovery.dart';
+import 'agent_chat_session_summary_cache.dart';
 
 class AgentChatRewindCheckpoint {
   const AgentChatRewindCheckpoint({
@@ -39,8 +42,11 @@ class AgentChatRewindCheckpoint {
 
 class AgentChatSessionController {
   static const sessionSummaryLimit = 100;
-  static const recentHistoryEntryLimit = 200;
-  static const historyPageEntryLimit = 120;
+  // The durable session and Agent context remain complete. The UI restores a
+  // bounded window and prepends further pages on demand so a large JSONL does
+  // not become one synchronous transcript projection/frame.
+  static const recentHistoryEntryLimit = 48;
+  static const historyPageEntryLimit = 48;
   static const historyRecordLimit = 800;
   AgentChatSessionController({
     required JsonlSessionRepo repository,
@@ -53,6 +59,7 @@ class AgentChatSessionController {
     required void Function(AgentChatState state) writeState,
     required bool Function() isMounted,
   }) : _repository = repository,
+       _summaryCache = AgentChatSessionSummaryCache(repository: repository),
        _localStorage = localStorage,
        _draftController = draftController,
        _workspaceDir = workspaceDir,
@@ -63,6 +70,7 @@ class AgentChatSessionController {
        _isMounted = isMounted;
 
   final JsonlSessionRepo _repository;
+  final AgentChatSessionSummaryCache _summaryCache;
   final LocalStorageService _localStorage;
   final AgentChatDraftController _draftController;
   final String _workspaceDir;
@@ -112,15 +120,9 @@ class AgentChatSessionController {
 
   Future<List<AgentChatSessionSummary>> listSessions() async {
     try {
-      final raw = await _repository.listWithNames();
-      return [
-        for (final (metadata, name, updatedAt) in raw)
-          AgentChatSessionSummary(
-            metadata: metadata,
-            name: name,
-            updatedAt: updatedAt,
-          ),
-      ].take(sessionSummaryLimit).toList(growable: false);
+      return (await _summaryCache.list())
+          .take(sessionSummaryLimit)
+          .toList(growable: false);
     } catch (error) {
       AppLogger.w('list sessions failed: $error', 'AgentChat');
       return const [];
@@ -729,10 +731,7 @@ class AgentChatSessionController {
         session_types.MessageEntry? target;
         for (final entry in entries.reversed) {
           if (entry is session_types.MessageEntry &&
-              (entry.message is UserMessage ||
-                  (entry.message is HarnessCustomMessage &&
-                      (entry.message as HarnessCustomMessage).customType ==
-                          'agentResourcePrompt'))) {
+              isVisualUserMessage(entry.message)) {
             target = entry;
             break;
           }
@@ -740,14 +739,9 @@ class AgentChatSessionController {
         if (target == null) return;
         final restoredResources = <AgentChatResourceReference>[];
         final targetMessage = target.message;
-        late final UserMessage rewoundMessage;
-        if (targetMessage is UserMessage) {
-          rewoundMessage = targetMessage;
-        } else if (targetMessage is HarnessCustomMessage) {
-          rewoundMessage = UserMessage(
-            content: targetMessage.content.skip(1).toList(growable: false),
-            timestamp: targetMessage.timestamp,
-          );
+        // target selected by isVisualUserMessage, so this always resolves.
+        final rewoundMessage = visibleUserMessage(targetMessage)!;
+        if (targetMessage is HarnessCustomMessage) {
           final details = targetMessage.details;
           if (details is Map && details['references'] is List) {
             for (final value in details['references'] as List) {
@@ -907,28 +901,14 @@ class AgentChatSessionController {
     }
   }
 
-  Future<void> autoNameSession(Message message) async {
+  Future<void> autoNameSession() async {
     final currentSession = session;
-    final userMessage = switch (message) {
-      UserMessage() => message,
-      HarnessCustomMessage() when message.customType == 'agentResourcePrompt' =>
-        UserMessage(
-          content: message.content.skip(1).toList(growable: false),
-          timestamp: message.timestamp,
-        ),
-      _ => null,
-    };
-    if (currentSession == null || userMessage == null) return;
+    if (currentSession == null) return;
     try {
       final existing = await currentSession.getName();
       if (existing != null && existing.trim().isNotEmpty) return;
-      final normalized = userMessage.text
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim();
-      if (normalized.isEmpty) return;
-      final name = normalized.length <= 40
-          ? normalized
-          : '${normalized.substring(0, 40)}…';
+      final name = await AgentChatSessionNaming.fromHistory(currentSession);
+      if (name.isEmpty) return;
       await currentSession.setName(name);
       _writeState(_readState().copyWith(sessions: await listSessions()));
     } catch (error) {

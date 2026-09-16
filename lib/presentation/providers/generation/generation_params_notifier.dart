@@ -534,6 +534,15 @@ class GenerationParamsNotifier extends _$GenerationParamsNotifier {
     }
   }
 
+  /// A multi-resource drop must fit as a whole before any group is applied.
+  void validateVibeReferenceBatch(List<VibeReference> incoming) {
+    _vibeReferences.mergeReferences(
+      state.vibeReferencesV4,
+      incoming,
+      requireAll: true,
+    );
+  }
+
   /// 移除 V4 Vibe 参考
   void removeVibeReference(int index) {
     if (index < 0 || index >= state.vibeReferencesV4.length) return;
@@ -765,20 +774,25 @@ class GenerationParamsNotifier extends _$GenerationParamsNotifier {
   }
 
   Future<void> _restoreGenerationState() async {
-    final restored = await _persistence.restore();
-    if (_isDisposed) return;
-    _hasAppliedGenerationStateRestore = restored.isTerminal;
-    if (!restored.shouldApply) return;
+    // 恢复失败不能沿 Future.wait 冒泡进 generate()，否则整次生成会无声中断。
+    try {
+      final restored = await _persistence.restore();
+      if (_isDisposed) return;
+      _hasAppliedGenerationStateRestore = restored.isTerminal;
+      if (!restored.shouldApply) return;
 
-    state = state.copyWith(
-      vibeReferencesV4: _vibeReferences.normalize(
-        restored.vibeReferences,
-        currentModel: state.model,
-      ),
-      preciseReferences: restored.preciseReferences,
-      normalizeVibeStrength: restored.normalizeVibeStrength,
-    );
-    if (restored.shouldRewrite) unawaited(saveGenerationState());
+      state = state.copyWith(
+        vibeReferencesV4: _vibeReferences.normalize(
+          restored.vibeReferences,
+          currentModel: state.model,
+        ),
+        preciseReferences: restored.preciseReferences,
+        normalizeVibeStrength: restored.normalizeVibeStrength,
+      );
+      if (restored.shouldRewrite) unawaited(saveGenerationState());
+    } catch (error, stackTrace) {
+      AppLogger.e('恢复生成状态失败', error, stackTrace, 'GenerationParams');
+    }
   }
 
   // ==================== 多角色参数 (V4 模型) ====================

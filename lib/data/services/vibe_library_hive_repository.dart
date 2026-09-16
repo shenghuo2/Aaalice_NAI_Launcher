@@ -323,6 +323,14 @@ class HiveVibeLibraryRepository implements VibeLibraryRepositoryProtocol {
   }
 
   @override
+  Future<void> putCategories(List<VibeLibraryCategory> categories) async {
+    await ensureCategoriesBox();
+    await categoriesBox!.putAll({
+      for (final category in categories) category.id: category,
+    });
+  }
+
+  @override
   Future<void> deleteCategory(String id) async {
     await ensureCategoriesBox();
     await categoriesBox!.delete(id);

@@ -20,7 +20,6 @@ import 'package:nai_launcher/core/autocomplete/completion_models.dart';
 import 'package:nai_launcher/core/comfyui/workflow_template_manager.dart';
 import 'package:nai_launcher/core/constants/api_constants.dart';
 import 'package:nai_launcher/core/constants/storage_keys.dart';
-import 'package:nai_launcher/core/services/danbooru_tags_lazy_service.dart';
 import 'package:nai_launcher/core/shortcuts/default_shortcuts.dart';
 import 'package:nai_launcher/core/shortcuts/shortcut_config.dart';
 import 'package:nai_launcher/core/storage/local_storage_service.dart';
@@ -31,14 +30,11 @@ import 'package:nai_launcher/data/models/gallery/gallery_statistics.dart';
 import 'package:nai_launcher/data/models/gallery/local_image_record.dart';
 import 'package:nai_launcher/data/models/gallery/nai_image_metadata.dart';
 import 'package:nai_launcher/data/models/tag/local_tag.dart';
-import 'package:nai_launcher/data/models/tag/tag_suggestion.dart'
-    hide TagCategory;
 import 'package:nai_launcher/data/models/vibe/vibe_library_entry.dart';
 import 'package:nai_launcher/data/models/vibe/vibe_reference.dart';
 import 'package:nai_launcher/data/services/local_onnx_tagger_service.dart';
 import 'package:nai_launcher/data/services/statistics_service.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
-import 'package:nai_launcher/presentation/providers/danbooru_suggestion_provider.dart';
 import 'package:nai_launcher/presentation/providers/fixed_tags_provider.dart';
 import 'package:nai_launcher/presentation/providers/generation/image_workflow_controller.dart';
 import 'package:nai_launcher/presentation/providers/local_gallery_provider.dart';
@@ -49,6 +45,7 @@ import 'package:nai_launcher/presentation/providers/shortcuts_provider.dart';
 import 'package:nai_launcher/presentation/providers/tag_library_page_provider.dart';
 import 'package:nai_launcher/presentation/screens/online_gallery/online_gallery_screen.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/models/prompt_assistant_models.dart';
+import 'package:nai_launcher/presentation/prompt_assistant/models/assistant_model_capability.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/providers/prompt_assistant_config_provider.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/providers/prompt_assistant_history_provider.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/services/provider_adapters/prompt_assistant_adapter.dart';
@@ -69,9 +66,6 @@ import 'package:nai_launcher/presentation/widgets/prompt/unified/unified_prompt_
 import 'package:nai_launcher/presentation/widgets/shortcuts/shortcut_aware_widget.dart';
 
 class _MockDio extends Mock implements Dio {}
-
-class _MockDanbooruTagsLazyService extends Mock
-    implements DanbooruTagsLazyService {}
 
 class _MockLocalStorageService extends Mock implements LocalStorageService {}
 
@@ -116,7 +110,6 @@ void main() {
 
     testWidgets('AppBootstrapEffects 监听 provider 变化时不重建子树', (tester) async {
       final anlasWatcherProvider = StateProvider<int>((ref) => 0);
-      final backgroundRefreshProvider = StateProvider<int>((ref) => 0);
       final kritaBridgeProvider = StateProvider<int>((ref) => 0);
       final cooccurrenceDataPackProvider = StateProvider<int>((ref) => 0);
       var buildCount = 0;
@@ -126,7 +119,6 @@ void main() {
           child: MaterialApp(
             home: AppBootstrapEffects(
               anlasWatcher: anlasWatcherProvider,
-              backgroundRefresh: backgroundRefreshProvider,
               kritaBridge: kritaBridgeProvider,
               cooccurrenceDataPack: cooccurrenceDataPackProvider,
               cloudSyncLifecycle: () async {},
@@ -146,14 +138,11 @@ void main() {
       );
 
       expect(container.exists(anlasWatcherProvider), isTrue);
-      expect(container.exists(backgroundRefreshProvider), isTrue);
       expect(container.exists(kritaBridgeProvider), isTrue);
       expect(container.exists(cooccurrenceDataPackProvider), isTrue);
       expect(buildCount, 1);
 
       container.read(anlasWatcherProvider.notifier).state = 1;
-      await tester.pump();
-      container.read(backgroundRefreshProvider.notifier).state = 1;
       await tester.pump();
       container.read(kritaBridgeProvider.notifier).state = 1;
       await tester.pump();
@@ -171,7 +160,6 @@ void main() {
           child: MaterialApp(
             home: AppBootstrapEffects(
               anlasWatcher: inert,
-              backgroundRefresh: inert,
               kritaBridge: inert,
               cooccurrenceDataPack: inert,
               cloudSyncLifecycle: () async {
@@ -199,7 +187,6 @@ void main() {
           child: MaterialApp(
             home: AppBootstrapEffects(
               anlasWatcher: inert,
-              backgroundRefresh: inert,
               kritaBridge: inert,
               cooccurrenceDataPack: inert,
               cloudSyncLifecycle: () async {
@@ -606,28 +593,12 @@ void main() {
     ) async {
       final controller = TextEditingController();
       final focusNode = FocusNode();
-      final service = _MockDanbooruTagsLazyService();
       addTearDown(controller.dispose);
       addTearDown(focusNode.dispose);
-
-      when(
-        () => service.searchTags(
-          any(),
-          category: any(named: 'category'),
-          limit: any(named: 'limit'),
-        ),
-      ).thenAnswer(
-        (_) async => const [
-          LocalTag(tag: 'raiden_shogun', category: 4, count: 1000),
-        ],
-      );
 
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            danbooruTagsLazyServiceProvider.overrideWith((ref) async {
-              return service;
-            }),
             autocompleteLocalSourcesProvider.overrideWithValue(const [
               _FakeCompletionSource(),
             ]),
@@ -806,8 +777,10 @@ void main() {
     });
 
     test('injects native SeedVR2 model, VAE, scale, tiles, and seed', () {
-      final manager = WorkflowTemplateManager()..loadBuiltinTemplates();
-      final workflow = manager.getById(comfySeedvr2NativeUpscaleTemplateId)!;
+      final manager = WorkflowTemplateManager();
+      final workflow = BuiltinWorkflows.all.firstWhere(
+        (workflow) => workflow.id == comfySeedvr2NativeUpscaleTemplateId,
+      );
 
       final executable = manager.buildExecutableWorkflow(
         template: workflow,
@@ -849,8 +822,10 @@ void main() {
     });
 
     test('injects SeedVR2 target resolution into the upscaler node', () {
-      final manager = WorkflowTemplateManager()..loadBuiltinTemplates();
-      final workflow = manager.getById(comfySeedvr2LegacyUpscaleTemplateId)!;
+      final manager = WorkflowTemplateManager();
+      final workflow = BuiltinWorkflows.all.firstWhere(
+        (workflow) => workflow.id == comfySeedvr2LegacyUpscaleTemplateId,
+      );
 
       final executable = manager.buildExecutableWorkflow(
         template: workflow,
@@ -861,8 +836,10 @@ void main() {
     });
 
     test('injects SeedVR2 VAE tile size into encode and decode fields', () {
-      final manager = WorkflowTemplateManager()..loadBuiltinTemplates();
-      final workflow = manager.getById(comfySeedvr2LegacyUpscaleTemplateId)!;
+      final manager = WorkflowTemplateManager();
+      final workflow = BuiltinWorkflows.all.firstWhere(
+        (workflow) => workflow.id == comfySeedvr2LegacyUpscaleTemplateId,
+      );
 
       final executable = manager.buildExecutableWorkflow(
         template: workflow,
@@ -877,8 +854,10 @@ void main() {
     });
 
     test('injects SeedVR2 block swap settings into the DiT loader node', () {
-      final manager = WorkflowTemplateManager()..loadBuiltinTemplates();
-      final workflow = manager.getById(comfySeedvr2LegacyUpscaleTemplateId)!;
+      final manager = WorkflowTemplateManager();
+      final workflow = BuiltinWorkflows.all.firstWhere(
+        (workflow) => workflow.id == comfySeedvr2LegacyUpscaleTemplateId,
+      );
 
       final executable = manager.buildExecutableWorkflow(
         template: workflow,
@@ -892,10 +871,10 @@ void main() {
     });
 
     test('injects SeedVR2 block swap settings into the tiled workflow', () {
-      final manager = WorkflowTemplateManager()..loadBuiltinTemplates();
-      final workflow = manager.getById(
-        comfySeedvr2LegacyTiledUpscaleTemplateId,
-      )!;
+      final manager = WorkflowTemplateManager();
+      final workflow = BuiltinWorkflows.all.firstWhere(
+        (workflow) => workflow.id == comfySeedvr2LegacyTiledUpscaleTemplateId,
+      );
 
       final executable = manager.buildExecutableWorkflow(
         template: workflow,
@@ -907,8 +886,9 @@ void main() {
     });
 
     test('includes RTX upscale workflow using Nvidia RTX nodes', () {
-      final manager = WorkflowTemplateManager()..loadBuiltinTemplates();
-      final workflow = manager.getById('builtin_rtx_upscale')!;
+      final workflow = BuiltinWorkflows.all.firstWhere(
+        (workflow) => workflow.id == 'builtin_rtx_upscale',
+      );
       final nodeTypes = extractWorkflowNodeTypes(workflow.workflowJson);
 
       expect(nodeTypes, contains('RTXVideoSuperResolution'));
@@ -920,8 +900,10 @@ void main() {
     });
 
     test('includes SeedVR2 tiled workflow with tile size controls', () {
-      final manager = WorkflowTemplateManager()..loadBuiltinTemplates();
-      final workflow = manager.getById('builtin_seedvr2_tiled_upscale')!;
+      final manager = WorkflowTemplateManager();
+      final workflow = BuiltinWorkflows.all.firstWhere(
+        (workflow) => workflow.id == 'builtin_seedvr2_tiled_upscale',
+      );
 
       final executable = manager.buildExecutableWorkflow(
         template: workflow,
@@ -1886,7 +1868,10 @@ void main() {
               apiKey: 'key',
               responseFormat: PromptAssistantResponseFormat.jsonObject,
               maxOutputTokens: 512,
-              reasoningMode: PromptAssistantReasoningMode.disabled,
+              reasoningRequest: AssistantModelCatalog.resolveProvider(
+                provider: ProviderPreset.deepseek.createConfig(),
+                model: 'deepseek-chat',
+              ).resolveReasoningRequest(null),
             ),
           )
           .toList();
@@ -2196,7 +2181,8 @@ void main() {
           'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
         );
         expect(options.headers?['x-goog-api-key'], 'key');
-        expect(payload['system_instruction'], isA<Map>());
+        expect(options.receiveTimeout, const Duration(minutes: 5));
+        expect(payload['systemInstruction'], isA<Map>());
         return Response<dynamic>(
           data: const {
             'candidates': [
@@ -2598,9 +2584,6 @@ Future<void> _pumpOnlineGalleryScreen(WidgetTester tester) async {
         onlineGalleryNotifierProvider.overrideWith(
           _FakeOnlineGalleryNotifier.new,
         ),
-        danbooruSuggestionNotifierProvider.overrideWith(
-          _FakeDanbooruSuggestionNotifier.new,
-        ),
         autocompleteLocalSourcesProvider.overrideWithValue(const [
           _FakeCompletionSource(),
         ]),
@@ -2667,28 +2650,6 @@ class _FakeOnlineGalleryNotifier extends OnlineGalleryNotifier {
       dateRangeEnd: end,
       clearDateRange: start == null && end == null,
     );
-  }
-}
-
-class _FakeDanbooruSuggestionNotifier extends DanbooruSuggestionNotifier {
-  @override
-  TagSuggestionState build() => const TagSuggestionState();
-
-  @override
-  void search(String query, {bool immediate = false}) {
-    final suggestion = switch (query) {
-      'foot_focus' => const TagSuggestion(tag: 'foot_focus'),
-      'lo' => const TagSuggestion(tag: 'long_hair'),
-      _ => null,
-    };
-    if (suggestion == null) return;
-
-    state = TagSuggestionState(suggestions: [suggestion], currentQuery: query);
-  }
-
-  @override
-  void clear() {
-    state = const TagSuggestionState();
   }
 }
 

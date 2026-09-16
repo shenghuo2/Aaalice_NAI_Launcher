@@ -41,7 +41,83 @@ class _LoadedSubscriptionNotifier extends SubscriptionNotifier {
   );
 }
 
+class _Subscription extends SubscriptionNotifier {
+  _Subscription(this.value);
+  final UserSubscription value;
+  @override
+  SubscriptionState build() => SubscriptionState.loaded(value);
+}
+
 void main() {
+  for (final locale in AppLocalizations.supportedLocales) {
+    testWidgets('expiry is localized and wraps at 3x text: $locale', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final expiry = DateTime(2030, 10, 21, 18, 30);
+      for (final width in [320.0, 600.0, 840.0, 1180.0, 1600.0]) {
+        tester.view.physicalSize = Size(width, 900);
+        await tester.pumpWidget(
+          _expiryApp(
+            locale,
+            UserSubscription(
+              tier: 3,
+              expiresAt: expiry.millisecondsSinceEpoch ~/ 1000,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final l10n = AppLocalizations.of(
+          tester.element(find.byType(AccountDetailTile)),
+        )!;
+        final text = find.text(l10n.settings_subscriptionExpiresOn(expiry));
+        expect(text, findsOneWidget);
+        expect(
+          tester.renderObject<RenderParagraph>(text).didExceedMaxLines,
+          isFalse,
+        );
+        expect(tester.getRect(text).right, lessThanOrEqualTo(width));
+        expect(find.text('Opus'), findsOneWidget);
+        expect(tester.takeException(), isNull, reason: '$locale at $width');
+      }
+    });
+  }
+  for (final subscription in [
+    const UserSubscription(tier: 3),
+    const UserSubscription(tier: 3, expiresAt: 0),
+    const UserSubscription(tier: 0, expiresAt: 1900000000),
+  ]) {
+    testWidgets('omits unavailable membership expiry: $subscription', (
+      tester,
+    ) async {
+      await tester.pumpWidget(_expiryApp(const Locale('en'), subscription));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('account-subscription-expiry')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+  testWidgets('expired membership still shows its recorded expiry', (
+    tester,
+  ) async {
+    final expiry = DateTime(2020, 1, 2);
+    await tester.pumpWidget(
+      _expiryApp(
+        const Locale('en'),
+        UserSubscription(
+          tier: 3,
+          expiresAt: expiry.millisecondsSinceEpoch ~/ 1000,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Subscription expiry: Jan 2, 2020'), findsOneWidget);
+  });
+
   testWidgets('窄手机和大字号下账号摘要保持完整层级', (tester) async {
     tester.view.physicalSize = const Size(320, 800);
     tester.view.devicePixelRatio = 1;
@@ -90,3 +166,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 }
+
+Widget _expiryApp(Locale locale, UserSubscription subscription) =>
+    ProviderScope(
+      overrides: [
+        authNotifierProvider.overrideWith(_AuthenticatedAuthNotifier.new),
+        accountManagerNotifierProvider.overrideWith(
+          _AccountManagerNotifier.new,
+        ),
+        subscriptionNotifierProvider.overrideWith(
+          () => _Subscription(subscription),
+        ),
+      ],
+      child: MaterialApp(
+        locale: locale,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(3)),
+          child: child!,
+        ),
+        home: const Scaffold(
+          body: SingleChildScrollView(child: AccountDetailTile()),
+        ),
+      ),
+    );

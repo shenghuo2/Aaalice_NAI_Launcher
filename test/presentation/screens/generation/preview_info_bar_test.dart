@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
@@ -9,6 +11,7 @@ import 'package:nai_launcher/core/storage/local_storage_service.dart';
 import 'package:nai_launcher/data/models/gallery/nai_image_metadata.dart';
 import 'package:nai_launcher/data/services/metadata/unified_metadata_parser.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
+import 'package:nai_launcher/presentation/adaptive/interaction_policy.dart';
 import 'package:nai_launcher/presentation/providers/image_generation_provider.dart';
 import 'package:nai_launcher/presentation/providers/preview_transparency_provider.dart';
 import 'package:nai_launcher/presentation/screens/generation/widgets/preview_info_bar.dart';
@@ -39,34 +42,54 @@ Future<ProviderContainer> _pumpBar(
   WidgetTester tester,
   GeneratedImage image, {
   double? width,
+  InteractionPolicy? interactionPolicy,
+  String defaultModel = 'nai-diffusion-4-5-full',
+  double textScale = 1,
 }) async {
   final container = ProviderContainer(
     overrides: [
-      localStorageServiceProvider.overrideWith((ref) => _FakeStorage()),
+      localStorageServiceProvider.overrideWith(
+        (ref) => _FakeStorage(defaultModel: defaultModel),
+      ),
     ],
   );
   addTearDown(container.dispose);
+
+  Widget home = Scaffold(
+    body: Center(
+      // 与 image_preview.dart 的用法一致：定宽容器 + 左对齐，
+      // 信息条本身拿到的是松约束，宽度由内容决定
+      child: SizedBox(
+        width: width,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: PreviewInfoBar(image: image),
+        ),
+      ),
+    ),
+  );
+  if (interactionPolicy != null) {
+    home = InteractionPolicyScope(
+      initialPolicy: interactionPolicy,
+      child: home,
+    );
+  }
 
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
       child: MaterialApp(
+        theme: ThemeData(fontFamily: 'PreviewTestFont'),
         locale: const Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: Center(
-            // 与 image_preview.dart 的用法一致：定宽容器 + 左对齐，
-            // 信息条本身拿到的是松约束，宽度由内容决定
-            child: SizedBox(
-              width: width,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: PreviewInfoBar(image: image),
-              ),
-            ),
-          ),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
         ),
+        home: home,
       ),
     ),
   );
@@ -78,6 +101,12 @@ Future<ProviderContainer> _pumpBar(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() async {
+    // Ahem 将数字和汉字都画成等宽方块，无法验证真实字体下的紧凑布局。
+    final loader = FontLoader('PreviewTestFont')
+      ..addFont(rootBundle.load('fonts/LXGWZhenKaiGB-Regular.ttf'));
+    await loader.load();
+  });
 
   testWidgets('分辨率胶囊显示图片实际宽高', (tester) async {
     await _pumpBar(tester, _image(seed: 4201934405));
@@ -90,10 +119,7 @@ void main() {
     const seed = 4201934405;
     final container = await _pumpBar(tester, _image(seed: seed));
 
-    expect(
-      container.read(generationParamsNotifierProvider).seed,
-      isNot(seed),
-    );
+    expect(container.read(generationParamsNotifierProvider).seed, isNot(seed));
 
     await tester.tap(find.text('$seed'));
     await tester.pump();
@@ -119,10 +145,7 @@ void main() {
   testWidgets('信息条按内容收窄，种子胶囊不会被拉满剩余宽度', (tester) async {
     await _pumpBar(tester, _image(seed: 4201934405), width: 600);
 
-    expect(
-      tester.getSize(find.byType(PreviewInfoBar)).width,
-      lessThan(400),
-    );
+    expect(tester.getSize(find.byType(PreviewInfoBar)).width, lessThan(400));
   });
 
   testWidgets('元数据没有种子时不显示种子胶囊', (tester) async {
@@ -144,6 +167,182 @@ void main() {
     expect(find.byIcon(Icons.eco_outlined), findsOneWidget);
   });
 
+  testWidgets('触屏主预览在种子右侧显示透明背景开关', (tester) async {
+    const seed = 2889740361;
+    final container = await _pumpBar(
+      tester,
+      _image(seed: seed),
+      width: 280,
+      defaultModel: 'nai-diffusion-5-curated',
+      interactionPolicy: const InteractionPolicy(
+        modality: InteractionModality.touch,
+        touchAvailable: true,
+        precisePointerAvailable: false,
+      ),
+    );
+
+    final toggle = find.byKey(
+      const ValueKey('generation_preview_transparent_background_toggle'),
+    );
+    final seedText = find.text('$seed');
+
+    expect(toggle, findsOneWidget);
+    expect(find.text('透明背景'), findsOneWidget);
+    expect(
+      tester.getRect(toggle).left,
+      greaterThanOrEqualTo(tester.getRect(seedText).right),
+    );
+    expect(
+      tester.getRect(toggle).right,
+      closeTo(tester.getRect(find.byType(PreviewInfoBar)).right, 0.01),
+    );
+    expect(tester.getSize(toggle).height, PreviewInfoBar.barHeight);
+    expect(
+      tester.getSize(find.byType(PreviewInfoBar)).height,
+      PreviewInfoBar.barHeight,
+    );
+
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(
+      container.read(generationParamsNotifierProvider).transparentBackground,
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('触屏窄预览优先完整显示种子和透明背景开关', (tester) async {
+    const seed = 2889740361;
+    await _pumpBar(
+      tester,
+      _image(seed: seed),
+      width: 360,
+      defaultModel: 'nai-diffusion-5-curated',
+      interactionPolicy: const InteractionPolicy(
+        modality: InteractionModality.touch,
+        touchAvailable: true,
+        precisePointerAvailable: false,
+      ),
+    );
+
+    final bar = find.byType(PreviewInfoBar);
+    final seedText = find.text('$seed');
+    final toggle = find.byKey(
+      const ValueKey('generation_preview_transparent_background_toggle'),
+    );
+
+    expect(find.text('832'), findsNothing);
+    expect(find.text('1216'), findsNothing);
+    expect(seedText, findsOneWidget);
+    expect(toggle, findsOneWidget);
+    expect(
+      tester.getRect(seedText).right,
+      lessThanOrEqualTo(tester.getRect(toggle).left),
+    );
+    expect(
+      tester.getRect(seedText).right,
+      lessThanOrEqualTo(tester.getRect(bar).right),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final width in [240.0, 280.0, 320.0]) {
+    testWidgets('窄预览 $width 勾选透明背景后种子完整且无需横向滚动', (tester) async {
+      const seed = 4201934405;
+      final container = await _pumpBar(
+        tester,
+        _image(seed: seed),
+        width: width,
+        defaultModel: 'nai-diffusion-5-curated',
+        interactionPolicy: const InteractionPolicy(
+          modality: InteractionModality.touch,
+          touchAvailable: true,
+          precisePointerAvailable: false,
+        ),
+      );
+      final toggle = find.byKey(
+        const ValueKey('generation_preview_transparent_background_toggle'),
+      );
+      for (final enabled in [false, true]) {
+        if (enabled) {
+          await tester.tap(toggle);
+          await tester.pumpAndSettle();
+        }
+        expect(
+          container
+              .read(generationParamsNotifierProvider)
+              .transparentBackground,
+          enabled,
+        );
+        expect(
+          find.descendant(
+            of: find.byType(PreviewInfoBar),
+            matching: find.byType(Scrollable),
+          ),
+          findsNothing,
+        );
+        final seedText = find.text('$seed');
+        final paragraph = tester.renderObject<RenderParagraph>(seedText);
+        expect(paragraph.didExceedMaxLines, isFalse);
+        expect(
+          tester.getRect(seedText).right,
+          lessThanOrEqualTo(tester.getRect(toggle).left),
+        );
+        expect(
+          tester.getSize(find.byType(TransparencyBackgroundIcon)).width,
+          greaterThan(0),
+        );
+        await tester.tap(seedText);
+        await tester.pump();
+        expect(container.read(generationParamsNotifierProvider).seed, seed);
+        expect(tester.takeException(), isNull);
+      }
+    });
+  }
+
+  testWidgets('触屏预览在三倍文字下保持控件可点击且无溢出', (tester) async {
+    await _pumpBar(
+      tester,
+      _image(seed: 4201934405),
+      width: 320,
+      textScale: 3,
+      defaultModel: 'nai-diffusion-5-curated',
+      interactionPolicy: const InteractionPolicy(
+        modality: InteractionModality.touch,
+        touchAvailable: true,
+        precisePointerAvailable: false,
+      ),
+    );
+    await tester.tap(
+      find.byKey(
+        const ValueKey('generation_preview_transparent_background_toggle'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('4201934405').hitTestable(), findsOneWidget);
+  });
+
+  testWidgets('不支持透明背景的模型不显示主预览开关', (tester) async {
+    await _pumpBar(
+      tester,
+      _image(seed: 1),
+      width: 280,
+      interactionPolicy: const InteractionPolicy(
+        modality: InteractionModality.touch,
+        touchAvailable: true,
+        precisePointerAvailable: false,
+      ),
+    );
+
+    expect(
+      find.byKey(
+        const ValueKey('generation_preview_transparent_background_toggle'),
+      ),
+      findsNothing,
+    );
+  });
+
   testWidgets('棋盘格入口弹出的浮层可切换透明底色档位', (tester) async {
     final container = await _pumpBar(tester, _image(seed: 1));
 
@@ -151,7 +350,10 @@ void main() {
     await tester.pumpAndSettle();
 
     final l10n = await AppLocalizations.delegate.load(const Locale('zh'));
-    expect(find.text(l10n.generation_transparencyBackgroundTitle), findsOneWidget);
+    expect(
+      find.text(l10n.generation_transparencyBackgroundTitle),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byTooltip(l10n.generation_transparencyCheckerDark));
     await tester.pump();
@@ -161,11 +363,63 @@ void main() {
       TransparencyBackgrounds.checkerDark,
     );
   });
+
+  testWidgets('透明底色浮层展开自定义颜色时不会溢出', (tester) async {
+    await _pumpBar(tester, _image(seed: 1));
+
+    await tester.tap(find.byType(TransparencyBackgroundIcon));
+    await tester.pumpAndSettle();
+
+    final l10n = await AppLocalizations.delegate.load(const Locale('zh'));
+    await tester.tap(find.byTooltip(l10n.generation_transparencyCustom));
+    await tester.pumpAndSettle();
+
+    final svPanel = find.byKey(const ValueKey('hsv-color-picker-sv-panel'));
+    expect(svPanel, findsOneWidget);
+    expect(tester.getSize(svPanel).height, lessThan(120));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('窄屏下透明底色浮层会改向展开并保持在视口内', (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await _pumpBar(tester, _image(seed: 1), width: 200);
+
+    await tester.tap(find.byType(TransparencyBackgroundIcon));
+    await tester.pumpAndSettle();
+
+    final panel = find.byKey(
+      const ValueKey('generation_transparency_background_panel'),
+    );
+    final panelRect = tester.getRect(panel);
+
+    expect(panel, findsOneWidget);
+    expect(panelRect.left, greaterThanOrEqualTo(0));
+    expect(panelRect.right, lessThanOrEqualTo(320));
+  });
 }
 
 /// 测试环境没有 Hive box，透明底色偏好走内存实现
 class _FakeStorage extends LocalStorageService {
+  _FakeStorage({required this.defaultModel});
+
+  final String defaultModel;
   String? style;
+  bool transparentBackground = false;
+
+  @override
+  String getDefaultModel() => defaultModel;
+
+  @override
+  bool getLastTransparentBackground() => transparentBackground;
+
+  @override
+  Future<void> setLastTransparentBackground(bool value) async {
+    transparentBackground = value;
+  }
 
   @override
   String? getPreviewTransparencyBackground() => style;

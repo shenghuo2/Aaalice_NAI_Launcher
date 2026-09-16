@@ -32,6 +32,7 @@ abstract interface class VibeLibraryRepositoryProtocol {
   Future<List<VibeLibraryCategory>> readCategories();
   Future<VibeLibraryCategory?> readCategory(String id);
   Future<void> putCategory(VibeLibraryCategory category);
+  Future<void> putCategories(List<VibeLibraryCategory> categories);
   Future<void> deleteCategory(String id);
   Future<void> clearCategories();
   Future<void> close();

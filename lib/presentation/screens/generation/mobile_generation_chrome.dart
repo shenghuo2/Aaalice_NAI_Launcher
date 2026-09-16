@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/utils/localization_extension.dart';
+import '../../adaptive/window_size_class.dart';
+import '../../agent_chat/widgets/agent_chat_entry_button.dart';
 import '../../providers/image_generation_provider.dart';
 import '../../themes/design_tokens.dart';
 import '../../widgets/anlas/anlas_balance_chip.dart';
 import '../../widgets/anlas/opus_usage_chip.dart';
 import '../../widgets/common/anlas_cost_badge.dart';
+import '../../widgets/common/owned_scroll_controller.dart';
 import '../../widgets/common/themed_button.dart';
 import '../../widgets/common/themed_scaffold.dart';
 import 'mobile_generation_controller.dart';
@@ -14,17 +17,21 @@ import 'mobile_generation_gestures.dart';
 import 'mobile_generation_view_data.dart';
 import 'widgets/history_panel.dart';
 import 'widgets/parameter_panel.dart';
+import 'widgets/generation_controls/generate_button.dart';
+import 'widgets/generation_controls/random_mode_toggle.dart';
 
 class MobileGenerationChrome extends ConsumerWidget {
   const MobileGenerationChrome({
     super.key,
     required this.controller,
     required this.data,
+    required this.historyViewport,
     required this.body,
   });
 
   final MobileGenerationController controller;
   final MobileGenerationViewData data;
+  final OwnedViewportOffset historyViewport;
   final Widget body;
 
   PreferredSizeWidget? _buildAppBar(BuildContext context) {
@@ -48,7 +55,18 @@ class MobileGenerationChrome extends ConsumerWidget {
                 label: context.l10n.promptToken_prompt,
               ),
             )
-          : Text(context.l10n.generation_title),
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.brush_outlined,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Flexible(child: Text(context.l10n.nav_canvas)),
+              ],
+            ),
       actions: data.isPromptMaximized
           ? null
           : [
@@ -58,11 +76,8 @@ class MobileGenerationChrome extends ConsumerWidget {
                 onPressed: controller.openParameterDrawer,
                 tooltip: context.l10n.generation_paramsSettings,
               ),
-              IconButton(
-                key: const ValueKey('generation-agent-drawer-action'),
-                icon: const Icon(Icons.smart_toy_outlined),
+              AgentChatEntryButton(
                 onPressed: controller.openAgentChat,
-                tooltip: context.l10n.agentChat_tab,
               ),
               IconButton(
                 key: const ValueKey('generation-history-drawer-action'),
@@ -79,7 +94,10 @@ class MobileGenerationChrome extends ConsumerWidget {
     final theme = Theme.of(context);
     return Drawer(
       key: const ValueKey('generation-parameters-drawer'),
-      width: MediaQuery.sizeOf(context).width * 0.9,
+      width: (AdaptiveWindowMetrics.of(context).usableSize.width * 0.9).clamp(
+        0.0,
+        520.0,
+      ),
       child: SafeArea(
         child: Column(
           children: [
@@ -122,9 +140,15 @@ class MobileGenerationChrome extends ConsumerWidget {
     if (data.isPromptMaximized || controller.agentFullScreen) return null;
     return Drawer(
       key: const ValueKey('generation-history-drawer'),
-      width: MediaQuery.sizeOf(context).width * 0.9,
+      width: (AdaptiveWindowMetrics.of(context).usableSize.width * 0.9).clamp(
+        0.0,
+        520.0,
+      ),
       child: SafeArea(
-        child: HistoryPanel(onClose: controller.closeHistoryDrawer),
+        child: HistoryPanel(
+          onClose: controller.closeHistoryDrawer,
+          viewportOffset: historyViewport,
+        ),
       ),
     );
   }
@@ -136,7 +160,7 @@ class MobileGenerationChrome extends ConsumerWidget {
       top: false,
       child: Container(
         key: const ValueKey('generation-mobile-bottom-bar'),
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 7),
+        padding: const EdgeInsets.fromLTRB(12, 2, 12, 7),
         decoration: BoxDecoration(
           color: theme.colorScheme.surface,
           border: Border(top: BorderSide(color: theme.dividerColor)),
@@ -145,21 +169,52 @@ class MobileGenerationChrome extends ConsumerWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
+            Wrap(
+              key: const ValueKey('generation-mobile-status-row'),
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 6,
+              runSpacing: 6,
               children: [
-                const OpusUsageChip(compact: true),
-                const SizedBox(width: 4),
-                const AnlasBalanceChip(compact: true),
-                if (data.showRandomTools) ...[
-                  const Spacer(),
-                  _MobileRandomModeToggle(
-                    enabled: data.randomModeEnabled,
-                    showLabel: true,
-                  ),
-                ],
+                const Wrap(
+                  key: ValueKey('generation-mobile-balance-group'),
+                  spacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    OpusUsageChip(compact: true),
+                    AnlasBalanceChip(compact: true),
+                  ],
+                ),
+                Row(
+                  key: const ValueKey('generation-mobile-queue-actions'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (data.showRandomTools)
+                      SizedBox.square(
+                        dimension: 44,
+                        child: RandomModeToggle(
+                          enabled: data.randomModeEnabled,
+                          compact: true,
+                        ),
+                      ),
+                    IconButton(
+                      key: const ValueKey('generation-add-current-to-queue'),
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size.square(44),
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: VisualDensity.standard,
+                      ),
+                      onPressed: () =>
+                          controller.addCurrentPromptToQueue(context),
+                      icon: const Icon(Icons.playlist_add_rounded),
+                      tooltip: context.l10n.queue_addCurrentTask,
+                    ),
+                  ],
+                ),
               ],
             ),
-            const SizedBox(height: 5),
+            const SizedBox(height: 2),
             _MobileGenerateButton(
               isGenerating: data.isGenerating,
               showCancel: data.isLauncherGenerating,
@@ -218,83 +273,6 @@ class _FullscreenHeaderTitle extends StatelessWidget {
   }
 }
 
-class _MobileRandomModeToggle extends ConsumerWidget {
-  const _MobileRandomModeToggle({
-    required this.enabled,
-    this.showLabel = false,
-  });
-
-  final bool enabled;
-  final bool showLabel;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final semanticLabel = enabled
-        ? context.l10n.randomMode_enabledTip
-        : context.l10n.randomMode_disabledTip;
-    return Semantics(
-      button: true,
-      toggled: enabled,
-      label: semanticLabel,
-      child: Tooltip(
-        message: semanticLabel,
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: () => ref.read(randomPromptModeProvider.notifier).toggle(),
-            borderRadius: BorderRadius.circular(12),
-            child: AnimatedContainer(
-              duration: MediaQuery.disableAnimationsOf(context)
-                  ? Duration.zero
-                  : const Duration(milliseconds: 140),
-              curve: Curves.easeOutCubic,
-              width: showLabel ? null : 44,
-              height: 44,
-              padding: showLabel
-                  ? const EdgeInsets.symmetric(horizontal: 12)
-                  : EdgeInsets.zero,
-              decoration: BoxDecoration(
-                color: enabled
-                    ? theme.colorScheme.primaryContainer
-                    : theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.casino_outlined,
-                    size: 20,
-                    color: enabled
-                        ? theme.colorScheme.onPrimaryContainer
-                        : theme.colorScheme.onSurfaceVariant,
-                  ),
-                  if (showLabel) ...[
-                    const SizedBox(width: 7),
-                    Text(
-                      context.l10n.toolbar_randomPrompt,
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        color: enabled
-                            ? theme.colorScheme.onPrimaryContainer
-                            : theme.colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _MobileGenerateButton extends StatelessWidget {
   const _MobileGenerateButton({
     required this.isGenerating,
@@ -323,6 +301,11 @@ class _MobileGenerateButton extends StatelessWidget {
       generationState.currentImage > 0 &&
       generationState.totalImages > generationState.currentImage;
 
+  /// 已提交但还没开跑，此时按钮必须立刻反馈，否则点击会被静默吞掉。
+  bool get _isPreparing => generationState.isPreparing;
+
+  bool get _showCancelAction => showCancel || _isPreparing;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -334,15 +317,16 @@ class _MobileGenerateButton extends StatelessWidget {
         onPrimaryContainer: theme.colorScheme.onError,
       ),
     );
-    final isLoading = isGenerating && !showCancel;
+    // Krita 占用时启动器自身没有可取消的任务，只能转圈禁用等待。
+    final isLoading = isGenerating && !_showCancelAction;
     final primaryButton = AnimatedTheme(
-      data: showCancel ? cancelTheme : theme,
+      data: _showCancelAction ? cancelTheme : theme,
       duration: MediaQuery.disableAnimationsOf(context)
           ? Duration.zero
           : const Duration(milliseconds: 160),
       curve: Curves.easeOut,
       child: ThemedButton(
-        onPressed: showCancel
+        onPressed: _showCancelAction
             ? onCancel
             : requiresLogin
             ? onGenerate
@@ -351,7 +335,7 @@ class _MobileGenerateButton extends StatelessWidget {
             : onGenerate,
         isLoading: isLoading,
         label: IndexedStack(
-          index: showCancel ? 1 : 0,
+          index: _showCancelAction ? 1 : 0,
           alignment: Alignment.center,
           children: [
             Row(
@@ -390,7 +374,10 @@ class _MobileGenerateButton extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.stop_circle_outlined),
+                if (_isPreparing)
+                  const GenerateButtonSpinner()
+                else
+                  const Icon(Icons.stop_circle_outlined),
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(

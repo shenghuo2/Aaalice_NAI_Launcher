@@ -1,3 +1,4 @@
+import '../../selection/card_selection_scope.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -6,14 +7,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/cache/gallery_image_request.dart';
 import '../../../core/online_gallery/gallery_tag_query.dart';
 import '../../../core/utils/localization_extension.dart';
+import '../../../data/models/online_gallery/ai_tag_generation_info.dart';
 import '../../../data/models/online_gallery/danbooru_post.dart';
 import '../../../data/models/online_gallery/quick_tag_cloud_codex.dart';
 import '../../../data/services/danbooru_auth_service.dart';
+import '../../adaptive/adaptive_presenter.dart';
 import '../../providers/online_gallery_output_filter_provider.dart';
 import '../../providers/online_gallery_prompt_tag_settings_provider.dart';
 import '../../providers/online_gallery_provider.dart';
+import '../../providers/pic_manager_push_provider.dart';
 import '../../providers/selection_mode_provider.dart';
 import '../../services/gallery_prompt_projection_service.dart';
+import '../../services/generation_prompt_transfer_service.dart';
 import '../../utils/pic_manager_push_actions.dart';
 import '../../widgets/danbooru_post_card.dart';
 import '../../widgets/gelbooru_credentials_dialog.dart';
@@ -40,13 +45,27 @@ class OnlineGalleryContent extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return _OnlineGalleryContentPresenter(
-      context: context,
-      ref: ref,
-      controller: controller,
-      scrollCoordinator: scrollCoordinator,
-      commands: commands,
-    ).build(Theme.of(context), state);
+    return CardSelectionScope(
+      selection: ref.watch(onlineGallerySelectionNotifierProvider),
+      commands: ref.read(onlineGallerySelectionNotifierProvider.notifier),
+      orderedIds: const GalleryPromptProjectionService().selectableStableKeys(
+        items: state.posts,
+        promptTagSettings: ref.watch(onlineGalleryPromptTagSettingsProvider),
+        outputFilter: ref.watch(onlineGalleryOutputFilterProvider),
+        detailForItem: ref
+            .read(onlineGalleryNotifierProvider.notifier)
+            .peekDetail,
+      ),
+      child: CardSelectionShortcuts(
+        child: _OnlineGalleryContentPresenter(
+          context: context,
+          ref: ref,
+          controller: controller,
+          scrollCoordinator: scrollCoordinator,
+          commands: commands,
+        ).build(Theme.of(context), state),
+      ),
+    );
   }
 }
 
@@ -95,10 +114,18 @@ class _OnlineGalleryContentPresenter {
         GalleryViewMode.favorites => state.favoritesSourceId,
       };
 
-  void _showGelbooruCredentialsDialog(BuildContext context) {
-    showDialog<void>(
+  Future<void> _showGelbooruCredentialsDialog(BuildContext context) {
+    return AdaptivePresenter.showPanel<void>(
       context: context,
-      builder: (_) => const GelbooruCredentialsDialog(),
+      title: context.l10n.gelbooru_configureTitle,
+      initialChildSize: 0.86,
+      minChildSize: 0.58,
+      maxChildSize: 0.96,
+      dialogWidth: 480,
+      builder: (_, scrollController) => GelbooruCredentialsDialog(
+        embedded: true,
+        scrollController: scrollController,
+      ),
     );
   }
 
@@ -331,14 +358,13 @@ class _OnlineGalleryContentPresenter {
           (state.randomEnabled ? state.randomSession.cache : state.currentCache)
               .isPageBoundaryStart(index)
           ? _controller.pageAnchorKey(post.stableKey)
-          : post.stableKey == _controller.pendingAnchorStableKey
-          ? _controller.anchorRestoreKey
           : null,
       onVisibilityChanged: _scrollCoordinator.handleCardVisibility,
       onGeometryMeasured: _controller.recordGeometryRead,
       onTileBuild: _controller.recordTileBuild,
       onVisibilityTransition: _controller.recordVisibilityTransition,
       onVisibilityDrivenRebuild: _controller.recordVisibilityDrivenRebuild,
+      scheduleReveal: _controller.scheduleCardReveal,
       viewportGeneration: _controller.viewportGeneration,
       detailRequestScope: (
         state.currentCacheKey,
@@ -390,6 +416,16 @@ class _OnlineGalleryContentPresenter {
         ? detail.media.first
         : null;
     final isQuickTagCloud = post.sourceId == GallerySourceId.quickTagCloud;
+    final aiTagInfo =
+        post.sourceId == GallerySourceId.aiTag && targetMedia != null
+        ? AiTagGenerationInfo.tryFromMediaMetadata(targetMedia.metadata)
+        : null;
+    final aiTagBadge = post.sourceId == GallerySourceId.aiTag
+        ? aiTagInfo?.modelBadgeLabel(fallbackType: post.aiType) ?? post.aiType
+        : null;
+    final aiTagTransferConfiguration = aiTagInfo == null
+        ? null
+        : GenerationTransferConfiguration.tryFromAiTag(aiTagInfo);
     return Consumer(
       builder: (context, cardRef, _) {
         final postKey = onlineGalleryPostKey(post);
@@ -472,14 +508,7 @@ class _OnlineGalleryContentPresenter {
               : null,
           selectionMode: selectionState.$1,
           isSelected: selectionState.$2,
-          canSelect:
-              projection.positivePrompt.trim().isNotEmpty ||
-              projection.negativePrompt.trim().isNotEmpty ||
-              projection.characterPrompts.any(
-                (character) =>
-                    character.prompt.trim().isNotEmpty ||
-                    character.negativePrompt.trim().isNotEmpty,
-              ),
+          canSelect: projection.hasUsableOutput,
           tagPrompt: projection.positivePrompt,
           promptOverride: projection.positivePrompt,
           negativePromptOverride: projection.negativePrompt.trim().isEmpty
@@ -496,6 +525,13 @@ class _OnlineGalleryContentPresenter {
                 )
               : isQuickTagCloud
               ? quickTagCloudBadge
+              : aiTagBadge,
+          badgeUsesModelColor:
+              post.sourceId == GallerySourceId.aiTag && aiTagBadge != null,
+          generationTransferOptions: post.sourceId == GallerySourceId.aiTag
+              ? GenerationTransferOptions(
+                  configuration: aiTagTransferConfiguration,
+                )
               : null,
           emptyTitle: isQuickTagCloud
               ? context.l10n.onlineGallery_codexUntitled
@@ -555,12 +591,10 @@ class _OnlineGalleryContentPresenter {
             _galleryNotifier.search(tag);
           },
           onFavoriteToggle: canWriteFavorite
-              ? () => unawaited(
-                  _toggleFavoriteAndMaybePush(
-                    context,
-                    post,
-                    wasFavorited: isFavorited,
-                  ),
+              ? () => _toggleFavoriteAndMaybePush(
+                  context,
+                  post,
+                  wasFavorited: isFavorited,
                 )
               : null,
         );

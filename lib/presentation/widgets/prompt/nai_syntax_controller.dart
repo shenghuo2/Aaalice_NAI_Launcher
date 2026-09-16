@@ -2,14 +2,24 @@ import 'package:flutter/material.dart';
 
 import '../../../core/utils/alias_parser.dart';
 import '../../../core/utils/character_prompt_block_parser.dart';
-import '../../../core/utils/disabled_prompt_tag_syntax.dart';
+import '../../../core/utils/prompt_edit_document.dart';
+import 'prompt_display_controller.dart';
 
 /// NAI 语法高亮控制器
 /// 继承 TextEditingController，重写 buildTextSpan 实现语法着色
 class NaiSyntaxController extends TextEditingController {
+  PromptDisplayController? _displayController;
+  PromptDisplayController get displayController =>
+      _displayController ??= PromptDisplayController(this);
+
+  @override
+  void dispose() {
+    _displayController?.dispose();
+    super.dispose();
+  }
+
   bool _highlightEnabled;
   bool _numericEmphasisEnabled;
-  bool _highlightActiveTag;
 
   static final RegExp _numericPrefixPattern = RegExp(r'-?\d*\.?\d*$');
 
@@ -31,20 +41,9 @@ class NaiSyntaxController extends TextEditingController {
     clearCache();
   }
 
-  /// 是否高亮当前光标或选区命中的完整标签。
-  bool get highlightActiveTag => _highlightActiveTag;
-
-  set highlightActiveTag(bool value) {
-    if (_highlightActiveTag == value) return;
-    _highlightActiveTag = value;
-    clearCache();
-    notifyListeners();
-  }
-
   // 缓存：避免每次光标移动都重新解析
   String? _cachedText;
   int? _cachedColorSignature;
-  TextRange? _cachedActiveTagRange;
   List<TextSpan>? _cachedSpans;
 
   List<TextRange> _searchMatches = const [];
@@ -59,14 +58,41 @@ class NaiSyntaxController extends TextEditingController {
   /// 是否存在语法错误
   bool get hasSyntaxErrors => _syntaxErrors.isNotEmpty;
 
+  /// Tag surfaces use the same source-position emphasis as the text editor,
+  /// without search, alias or negative-block decorations changing weight color.
+  Map<int, Color> emphasisColorsAt(ThemeData theme, Iterable<int> offsets) {
+    if (!highlightEnabled || text.isEmpty) return const {};
+    final marks = List<_HighlightMark?>.filled(text.length, null);
+    var active = text;
+    final disabled = PromptEditDocument.disabledRanges(
+      text,
+      allowIncomplete: true,
+    );
+    for (final range in disabled.reversed) {
+      active = active.replaceRange(
+        range.$1,
+        range.$2,
+        ' ' * (range.$2 - range.$1),
+      );
+    }
+    _applyOfficialEmphasis(active, marks, []);
+    for (final range in disabled) {
+      marks.fillRange(range.$1, range.$2, null);
+    }
+    final colors = NaiSyntaxColors.fromTheme(theme);
+    return {
+      for (final offset in offsets)
+        if (offset >= 0 && offset < marks.length && marks[offset] != null)
+          offset: colors._getBackgroundColor(marks[offset]!),
+    };
+  }
+
   NaiSyntaxController({
     super.text,
     bool highlightEnabled = true,
     bool numericEmphasisEnabled = true,
-    bool highlightActiveTag = false,
   }) : _highlightEnabled = highlightEnabled,
-       _numericEmphasisEnabled = numericEmphasisEnabled,
-       _highlightActiveTag = highlightActiveTag;
+       _numericEmphasisEnabled = numericEmphasisEnabled;
 
   bool get _hasSearchHighlights => _searchMatches.isNotEmpty;
 
@@ -94,7 +120,6 @@ class NaiSyntaxController extends TextEditingController {
   void clearCache() {
     _cachedText = null;
     _cachedColorSignature = null;
-    _cachedActiveTagRange = null;
     _cachedSpans = null;
   }
 
@@ -108,111 +133,99 @@ class NaiSyntaxController extends TextEditingController {
 
     final theme = Theme.of(context);
     final colors = NaiSyntaxColors.fromTheme(theme);
-    final activeTagRange = _resolveActiveTagRange();
 
     // 检查缓存是否有效（文本未变化且主题未变化）
+    final List<TextSpan> resolvedSpans;
     if (_cachedText == text &&
         _cachedColorSignature == colors.cacheSignature &&
-        _cachedActiveTagRange == activeTagRange &&
         _cachedSpans != null) {
-      return TextSpan(style: baseStyle, children: _cachedSpans);
+      resolvedSpans = _cachedSpans!;
+    } else {
+      // 官网的竖线提示独立于“高亮强调”开关，搜索高亮也需要继续叠加。
+      final spans = _parseAndHighlight(
+        text,
+        baseStyle,
+        colors,
+        includeEmphasis: highlightEnabled,
+      );
+      resolvedSpans = _applySearchHighlights(spans, baseStyle, colors);
+
+      // 更新缓存
+      _cachedText = text;
+      _cachedColorSignature = colors.cacheSignature;
+      _cachedSpans = resolvedSpans;
     }
 
-    // 官网的竖线提示独立于“高亮强调”开关，搜索高亮也需要继续叠加。
-    final spans = _parseAndHighlight(
-      text,
-      baseStyle,
-      colors,
-      includeEmphasis: highlightEnabled,
+    // 预编辑区叠加在缓存之后：它每敲一下就变，进缓存键等于每帧重新解析全文。
+    return TextSpan(
+      style: baseStyle,
+      children: _applyComposingUnderline(
+        resolvedSpans,
+        baseStyle,
+        withComposing,
+      ),
     );
-    final activeTagSpans = _applyActiveTagHighlight(
-      spans,
-      baseStyle,
-      colors,
-      activeTagRange,
-    );
-    final resolvedSpans = _applySearchHighlights(
-      activeTagSpans,
-      baseStyle,
-      colors,
-    );
-
-    // 更新缓存
-    _cachedText = text;
-    _cachedColorSignature = colors.cacheSignature;
-    _cachedActiveTagRange = activeTagRange;
-    _cachedSpans = resolvedSpans;
-
-    return TextSpan(style: baseStyle, children: resolvedSpans);
   }
 
-  TextRange? _resolveActiveTagRange() {
-    if (!_highlightActiveTag || !selection.isValid) return null;
-
-    final segment = DisabledPromptTagSyntax.segmentForSelection(
-      text,
-      selectionStart: selection.start,
-      selectionEnd: selection.end,
-    );
-    if (segment == null) return null;
-    return TextRange(start: segment.start, end: segment.end);
-  }
-
-  List<TextSpan> _applyActiveTagHighlight(
+  /// 给输入法预编辑区加下划线，语法着色照旧，只标出尚未上屏的部分。
+  List<TextSpan> _applyComposingUnderline(
     List<TextSpan> spans,
     TextStyle baseStyle,
-    NaiSyntaxColors colors,
-    TextRange? activeRange,
+    bool withComposing,
   ) {
-    if (activeRange == null || activeRange.isCollapsed) return spans;
+    if (!withComposing || !value.isComposingRangeValid) {
+      return spans;
+    }
+    final composing = value.composing;
 
-    final highlighted = <TextSpan>[];
+    final underlined = <TextSpan>[];
     var globalOffset = 0;
 
     for (final span in spans) {
       final spanText = span.text;
       if (spanText == null || spanText.isEmpty) {
-        highlighted.add(span);
+        underlined.add(span);
         continue;
       }
 
       final spanStart = globalOffset;
       final spanEnd = spanStart + spanText.length;
-      final highlightStart = activeRange.start.clamp(spanStart, spanEnd);
-      final highlightEnd = activeRange.end.clamp(spanStart, spanEnd);
-
-      if (highlightStart >= highlightEnd) {
-        highlighted.add(span);
-      } else {
-        final localStart = highlightStart - spanStart;
-        final localEnd = highlightEnd - spanStart;
-        final spanStyle = span.style ?? baseStyle;
-        if (localStart > 0) {
-          highlighted.add(
-            TextSpan(text: spanText.substring(0, localStart), style: spanStyle),
-          );
-        }
-        highlighted.add(
-          TextSpan(
-            text: spanText.substring(localStart, localEnd),
-            style: spanStyle.copyWith(
-              backgroundColor: colors.activeTagBackground(
-                spanStyle.backgroundColor,
-              ),
-            ),
-          ),
-        );
-        if (localEnd < spanText.length) {
-          highlighted.add(
-            TextSpan(text: spanText.substring(localEnd), style: spanStyle),
-          );
-        }
+      globalOffset = spanEnd;
+      if (composing.end <= spanStart || composing.start >= spanEnd) {
+        underlined.add(span);
+        continue;
       }
 
-      globalOffset = spanEnd;
+      // 预编辑区可能横跨任意着色片段，按它的边界再切一次，避免下划线漫延。
+      final spanStyle = span.style ?? baseStyle;
+      final cuts = <int>[
+        spanStart,
+        if (composing.start > spanStart && composing.start < spanEnd)
+          composing.start,
+        if (composing.end > spanStart && composing.end < spanEnd) composing.end,
+        spanEnd,
+      ];
+      for (var i = 0; i + 1 < cuts.length; i++) {
+        final start = cuts[i];
+        final end = cuts[i + 1];
+        final composed = start >= composing.start && end <= composing.end;
+        underlined.add(
+          TextSpan(
+            text: spanText.substring(start - spanStart, end - spanStart),
+            style: composed
+                ? spanStyle.copyWith(
+                    decoration: TextDecoration.combine([
+                      if (spanStyle.decoration != null) spanStyle.decoration!,
+                      TextDecoration.underline,
+                    ]),
+                  )
+                : spanStyle,
+          ),
+        );
+      }
     }
 
-    return highlighted;
+    return underlined;
   }
 
   List<TextSpan> _applySearchHighlights(
@@ -311,42 +324,75 @@ class NaiSyntaxController extends TextEditingController {
     final backgroundMarks = List<_HighlightMark?>.filled(text.length, null);
     final pipeMarks = List<_PipeMark?>.filled(text.length, null);
     final negativeMarks = List<_NegativeMark?>.filled(text.length, null);
-    final disabledMarks = List<_DisabledMark?>.filled(text.length, null);
     final errors = <String>[];
+    final disabled = PromptEditDocument.disabledRanges(
+      text,
+      allowIncomplete: true,
+    );
+    var active = text;
+    for (final range in disabled.reversed) {
+      active = active.replaceRange(
+        range.$1,
+        range.$2,
+        ' ' * (range.$2 - range.$1),
+      );
+    }
 
     if (includeEmphasis) {
-      _applyOfficialEmphasis(text, backgroundMarks, errors);
-      _applyAliasHighlights(text, backgroundMarks);
+      _applyOfficialEmphasis(active, backgroundMarks, errors);
+      _applyAliasHighlights(active, backgroundMarks);
     }
-    _applyOfficialPipeHighlights(text, pipeMarks);
-    _applyCharacterNegativeHighlights(text, negativeMarks, errors);
-    _applyDisabledTagHighlights(text, disabledMarks);
+    _applyOfficialPipeHighlights(active, pipeMarks);
+    _applyCharacterNegativeHighlights(active, negativeMarks, errors);
     _syntaxErrors = errors;
 
-    return _buildHighlightedSpans(
+    final spans = _buildHighlightedSpans(
       text,
       baseStyle,
       colors,
       backgroundMarks,
       pipeMarks,
       negativeMarks,
-      disabledMarks,
     );
+    return _styleDisabled(spans, disabled, baseStyle);
   }
 
-  void _applyDisabledTagHighlights(String text, List<_DisabledMark?> marks) {
-    for (final segment in DisabledPromptTagSyntax.segments(text)) {
-      if (!segment.disabled) continue;
-      marks[segment.start] = _DisabledMark.marker;
-      marks[segment.end - 1] = _DisabledMark.marker;
-      for (
-        var index = segment.contentStart;
-        index < segment.contentEnd;
-        index++
-      ) {
-        marks[index] = _DisabledMark.content;
+  List<TextSpan> _styleDisabled(
+    List<TextSpan> spans,
+    List<(int, int)> ranges,
+    TextStyle baseStyle,
+  ) {
+    if (ranges.isEmpty) return spans;
+    final result = <TextSpan>[];
+    var offset = 0;
+    for (final span in spans) {
+      final content = span.text ?? '';
+      final end = offset + content.length;
+      final cuts = <int>{offset, end};
+      for (final range in ranges) {
+        if (range.$1 > offset && range.$1 < end) cuts.add(range.$1);
+        if (range.$2 > offset && range.$2 < end) cuts.add(range.$2);
       }
+      final sorted = cuts.toList()..sort();
+      for (var i = 0; i + 1 < sorted.length; i++) {
+        final disabled = ranges.any(
+          (range) => sorted[i] >= range.$1 && sorted[i] < range.$2,
+        );
+        result.add(
+          TextSpan(
+            text: content.substring(sorted[i] - offset, sorted[i + 1] - offset),
+            style: disabled
+                ? baseStyle.copyWith(
+                    decoration: TextDecoration.lineThrough,
+                    color: baseStyle.color?.withValues(alpha: 0.7),
+                  )
+                : span.style,
+          ),
+        );
+      }
+      offset = end;
     }
+    return result;
   }
 
   void _applyCharacterNegativeHighlights(
@@ -558,7 +604,6 @@ class NaiSyntaxController extends TextEditingController {
     List<_HighlightMark?> backgroundMarks,
     List<_PipeMark?> pipeMarks,
     List<_NegativeMark?> negativeMarks,
-    List<_DisabledMark?> disabledMarks,
   ) {
     final spans = <TextSpan>[];
     var start = 0;
@@ -566,7 +611,6 @@ class NaiSyntaxController extends TextEditingController {
       backgroundMarks[0],
       pipeMarks[0],
       negativeMarks[0],
-      disabledMarks[0],
     );
 
     for (var index = 1; index <= text.length; index++) {
@@ -576,7 +620,6 @@ class NaiSyntaxController extends TextEditingController {
               backgroundMarks[index],
               pipeMarks[index],
               negativeMarks[index],
-              disabledMarks[index],
             );
       if (nextDecoration == decoration) continue;
 
@@ -600,8 +643,6 @@ enum _PipeMark { single, double }
 
 enum _NegativeMark { keyword, boundary, content }
 
-enum _DisabledMark { marker, content }
-
 class _HighlightMark {
   final _HighlightTone tone;
   final double opacity;
@@ -620,25 +661,18 @@ class _SpanDecoration {
   final _HighlightMark? background;
   final _PipeMark? pipe;
   final _NegativeMark? negative;
-  final _DisabledMark? disabled;
 
-  const _SpanDecoration(
-    this.background,
-    this.pipe,
-    this.negative,
-    this.disabled,
-  );
+  const _SpanDecoration(this.background, this.pipe, this.negative);
 
   @override
   bool operator ==(Object other) =>
       other is _SpanDecoration &&
       other.background == background &&
       other.pipe == pipe &&
-      other.negative == negative &&
-      other.disabled == disabled;
+      other.negative == negative;
 
   @override
-  int get hashCode => Object.hash(background, pipe, negative, disabled);
+  int get hashCode => Object.hash(background, pipe, negative);
 }
 
 /// 官网强调高亮的默认主题色。
@@ -649,8 +683,6 @@ class NaiSyntaxColors {
   final Color midIntensityColor;
   final Color pipeColor;
   final Color negativeColor;
-  final Color disabledColor;
-  final Color activeTagColor;
 
   const NaiSyntaxColors._({
     required this.isDark,
@@ -659,8 +691,6 @@ class NaiSyntaxColors {
     required this.midIntensityColor,
     required this.pipeColor,
     required this.negativeColor,
-    required this.disabledColor,
-    required this.activeTagColor,
   });
 
   factory NaiSyntaxColors.fromTheme(ThemeData theme) {
@@ -674,10 +704,6 @@ class NaiSyntaxColors {
         theme.colorScheme.error.withValues(alpha: 0.58),
         theme.colorScheme.onSurfaceVariant,
       ),
-      disabledColor: theme.colorScheme.outline,
-      activeTagColor: theme.colorScheme.primary.withValues(
-        alpha: theme.brightness == Brightness.dark ? 0.24 : 0.16,
-      ),
     );
   }
 
@@ -688,14 +714,7 @@ class NaiSyntaxColors {
     midIntensityColor,
     pipeColor,
     negativeColor,
-    disabledColor,
-    activeTagColor,
   );
-
-  Color activeTagBackground(Color? existing) {
-    if (existing == null) return activeTagColor;
-    return Color.alphaBlend(activeTagColor, existing);
-  }
 
   TextStyle _applyDecoration(TextStyle baseStyle, _SpanDecoration decoration) {
     var style = baseStyle.copyWith(height: 1.35);
@@ -715,18 +734,6 @@ class NaiSyntaxColors {
       style = style.copyWith(
         color: decoration.negative == null ? pipeColor : negativeColor,
         fontWeight: FontWeight.w800,
-      );
-    }
-    if (decoration.disabled != null) {
-      style = baseStyle.copyWith(
-        height: 1.35,
-        color: decoration.disabled == _DisabledMark.marker
-            ? disabledColor.withValues(alpha: 0.45)
-            : disabledColor,
-        decoration: decoration.disabled == _DisabledMark.content
-            ? TextDecoration.lineThrough
-            : TextDecoration.none,
-        decorationColor: disabledColor,
       );
     }
     return style;

@@ -43,6 +43,58 @@ void main() {
     expect(await service.validateDatabaseFile(file.path), 1000);
   });
 
+  test(
+    'concurrent initialization waits for the installed dictionary',
+    () async {
+      final directory = Directory(p.join(temp.path, 'autocomplete', 'ffdkj'));
+      await directory.create(recursive: true);
+      _createDictionary(p.join(directory.path, 'tag.sqlite'), rows: 1000);
+      final supportDirectory = Completer<Directory>();
+      var directoryRequests = 0;
+      service.dispose();
+      service = ZhDictionaryService(
+        applicationSupportDirectory: () {
+          directoryRequests++;
+          return supportDirectory.future;
+        },
+      );
+      final startup = service.initialize();
+      final editorHint = service.initialize();
+      supportDirectory.complete(temp);
+      expect(editorHint, same(startup));
+      expect(directoryRequests, 1);
+      expect(service.state.isInstalled, isFalse);
+      await editorHint;
+      expect(service.state.isInstalled, isTrue);
+      expect(service.state.tagCount, 1000);
+      expect(await service.resolve(['tag_0'], locale: 'zh-CN'), {
+        'tag_0': '标签0',
+      });
+      await service.initialize();
+      expect(directoryRequests, 1);
+    },
+  );
+
+  test('initialization failures remain visible and can be retried', () async {
+    var attempts = 0;
+    service.dispose();
+    service = ZhDictionaryService(
+      applicationSupportDirectory: () {
+        if (++attempts == 1) {
+          throw const FileSystemException('support directory unavailable');
+        }
+        return Future.value(temp);
+      },
+    );
+    await expectLater(
+      service.initialize(),
+      throwsA(isA<FileSystemException>()),
+    );
+    await service.initialize();
+    expect(attempts, 2);
+    expect(service.state.isInstalled, isFalse);
+  });
+
   test('searches the Simplified dictionary with Traditional input', () async {
     final dictionaryDirectory = Directory(
       p.join(temp.path, 'autocomplete', 'ffdkj'),
@@ -68,6 +120,32 @@ void main() {
     expect(results, isNotEmpty);
     expect(results.first.canonicalTag, 'tag_0');
     expect(results.first.translation, '标签0');
+  });
+
+  test('fuzzy translation only restores one missing character', () async {
+    final dictionaryDirectory = Directory(
+      p.join(temp.path, 'autocomplete', 'ffdkj'),
+    );
+    await dictionaryDirectory.create(recursive: true);
+    _createDictionary(
+      p.join(dictionaryDirectory.path, 'tag.sqlite'),
+      rows: 1000,
+      extraRows: const {'toddler': '幼儿', 'screentones': '网点', 'fever': '发烧'},
+    );
+
+    final result = await service.resolveFuzzy([
+      '',
+      'a',
+      '3d',
+      '::',
+      'todder',
+      'screentone',
+      'fewer',
+      'artist:mx2j',
+      'year_2026',
+    ]);
+
+    expect(result, {'todder': '幼儿', 'screentone': '网点'});
   });
 
   test('rejects a corrupt SQLite file', () async {
@@ -410,7 +488,11 @@ class _RoutingAdapter implements HttpClientAdapter {
   void close({bool force = false}) {}
 }
 
-File _createDictionary(String path, {required int rows}) {
+File _createDictionary(
+  String path, {
+  required int rows,
+  Map<String, String> extraRows = const {},
+}) {
   final db = native.sqlite3.open(path);
   db.execute('''
     CREATE TABLE tags(
@@ -426,6 +508,9 @@ File _createDictionary(String path, {required int rows}) {
   db.execute('BEGIN');
   for (var index = 0; index < rows; index++) {
     statement.execute(['tag_$index', 0, '标签$index', rows - index]);
+  }
+  for (final entry in extraRows.entries) {
+    statement.execute([entry.key, 0, entry.value, 1]);
   }
   db.execute('COMMIT');
   statement.dispose();

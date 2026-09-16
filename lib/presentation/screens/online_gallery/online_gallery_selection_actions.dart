@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -10,6 +9,7 @@ import '../../../core/utils/localization_extension.dart';
 import '../../../core/utils/media_mime_type.dart';
 import '../../../data/models/online_gallery/danbooru_post.dart';
 import '../../../data/models/queue/replication_task.dart';
+import '../../adaptive/adaptive_presenter.dart';
 import '../../providers/online_gallery_output_filter_provider.dart';
 import '../../providers/online_gallery_prompt_tag_settings_provider.dart';
 import '../../providers/online_gallery_provider.dart';
@@ -17,6 +17,7 @@ import '../../providers/replication_queue_provider.dart';
 import '../../providers/selection_mode_provider.dart';
 import '../../services/gallery_prompt_projection_service.dart';
 import '../../widgets/common/app_toast.dart';
+import '../../widgets/common/image_card_action.dart';
 import 'online_gallery_utils.dart';
 
 class OnlineGallerySelectionActions {
@@ -24,6 +25,52 @@ class OnlineGallerySelectionActions {
 
   final BuildContext context;
   final WidgetRef ref;
+
+  List<ImageCardAction> buildActions(
+    OnlineGalleryState state,
+    Set<String> selectedIds,
+  ) {
+    final posts = List<GalleryItem>.unmodifiable(
+      state.posts.where((post) => selectedIds.contains(post.stableKey)),
+    );
+    final complete = posts.length == selectedIds.length && posts.isNotEmpty;
+    final theme = Theme.of(context);
+    return [
+      ImageCardAction(
+        id: ImageCardActionId.addToQueue,
+        icon: Icons.playlist_add,
+        label: context.l10n.onlineGallery_addToQueue,
+        iconColor: theme.colorScheme.primary,
+        supportsBatch: true,
+        enabled: complete,
+        invoke: () => addSelectedToQueue(posts),
+      ),
+      if (posts.every(
+        (post) =>
+            post.sourceId.capabilities.supportsWritableFavorites ||
+            post.sourceId.capabilities.supportsLocalFavorites,
+      ))
+        ImageCardAction(
+          id: ImageCardActionId.favorite,
+          icon: Icons.favorite_border,
+          label: context.l10n.onlineGallery_bulkFavorite,
+          iconColor: theme.colorScheme.secondary,
+          supportsBatch: true,
+          enabled: complete,
+          invoke: () => favoriteSelected(posts),
+        ),
+      if (posts.every((post) => post.hasValidPreview))
+        ImageCardAction(
+          id: ImageCardActionId.save,
+          icon: Icons.download,
+          label: context.l10n.onlineGallery_bulkDownload,
+          iconColor: theme.colorScheme.tertiary,
+          supportsBatch: true,
+          enabled: complete,
+          invoke: () => downloadSelected(posts),
+        ),
+    ];
+  }
 
   OnlineGalleryNotifier get _galleryNotifier =>
       ref.read(onlineGalleryNotifierProvider.notifier);
@@ -109,6 +156,8 @@ class OnlineGallerySelectionActions {
               ReplicationCharacterPromptSnapshot(
                 prompt: character.prompt,
                 negativePrompt: character.negativePrompt,
+                positionX: character.positionX,
+                positionY: character.positionY,
               ),
           ],
         ),
@@ -120,15 +169,17 @@ class OnlineGallerySelectionActions {
     }
   }
 
-  Future<void> addSelectedToQueue() async {
+  Future<void> addSelectedToQueue([List<GalleryItem>? targets]) async {
     final selectionState = ref.read(onlineGallerySelectionNotifierProvider);
     final galleryState = ref.read(onlineGalleryNotifierProvider);
     final promptTagSettings = ref.read(onlineGalleryPromptTagSettingsProvider);
     final outputFilter = ref.read(onlineGalleryOutputFilterProvider);
 
-    final selectedPosts = galleryState.posts
-        .where((p) => selectionState.selectedIds.contains(p.stableKey))
-        .toList();
+    final selectedPosts =
+        targets ??
+        galleryState.posts
+            .where((p) => selectionState.selectedIds.contains(p.stableKey))
+            .toList();
 
     if (selectedPosts.isEmpty) return;
 
@@ -192,17 +243,19 @@ class OnlineGallerySelectionActions {
   }
 
   /// 批量收藏
-  Future<void> favoriteSelected() async {
+  Future<void> favoriteSelected([List<GalleryItem>? targets]) async {
     final selectionState = ref.read(onlineGallerySelectionNotifierProvider);
     final galleryState = ref.read(onlineGalleryNotifierProvider);
     final source = _activeSource(galleryState);
-    final selectedPosts = galleryState.posts
-        .where(
-          (post) =>
-              post.sourceId == source &&
-              selectionState.selectedIds.contains(post.stableKey),
-        )
-        .toList();
+    final selectedPosts =
+        targets ??
+        galleryState.posts
+            .where(
+              (post) =>
+                  post.sourceId == source &&
+                  selectionState.selectedIds.contains(post.stableKey),
+            )
+            .toList();
     if (selectedPosts.isEmpty) return;
 
     var count = 0;
@@ -226,13 +279,15 @@ class OnlineGallerySelectionActions {
   }
 
   /// 批量下载
-  Future<void> downloadSelected() async {
+  Future<void> downloadSelected([List<GalleryItem>? targets]) async {
     final selectionState = ref.read(onlineGallerySelectionNotifierProvider);
     final galleryState = ref.read(onlineGalleryNotifierProvider);
 
-    final selectedPosts = galleryState.posts
-        .where((p) => selectionState.selectedIds.contains(p.stableKey))
-        .toList();
+    final selectedPosts =
+        targets ??
+        galleryState.posts
+            .where((p) => selectionState.selectedIds.contains(p.stableKey))
+            .toList();
 
     if (selectedPosts.isEmpty) return;
 
@@ -346,32 +401,26 @@ class OnlineGallerySelectionActions {
         )
         .length;
     final progress = ValueNotifier<int>(0);
-    BuildContext? progressDialogContext;
+    BuildContext? progressPanelContext;
+    Future<void>? progressPresentation;
     if (context.mounted && jobs.isNotEmpty) {
-      unawaited(
-        showDialog<void>(
-          context: context,
-          barrierDismissible: false,
-          builder: (dialogContext) {
-            progressDialogContext = dialogContext;
-            return AlertDialog(
-              content: ValueListenableBuilder<int>(
-                valueListenable: progress,
-                builder: (_, completed, __) => SizedBox(
-                  width: 320,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      LinearProgressIndicator(value: completed / jobs.length),
-                      const SizedBox(height: 12),
-                      Text('$completed / ${jobs.length}'),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
+      progressPresentation = AdaptivePresenter.showPanel<void>(
+        context: context,
+        barrierDismissible: false,
+        allowDragDismissal: false,
+        showHeader: false,
+        dialogWidth: 480,
+        initialChildSize: 0.42,
+        minChildSize: 0.32,
+        maxChildSize: 0.72,
+        builder: (panelContext, scrollController) {
+          progressPanelContext = panelContext;
+          return _GalleryDownloadProgressPanel(
+            progress: progress,
+            total: jobs.length,
+            scrollController: scrollController,
+          );
+        },
       );
       await Future<void>.delayed(Duration.zero);
     }
@@ -414,11 +463,57 @@ class OnlineGallerySelectionActions {
         }),
       );
     }
-    if (progressDialogContext?.mounted == true) {
-      Navigator.of(progressDialogContext!).pop();
+    if (progressPanelContext?.mounted == true) {
+      Navigator.of(progressPanelContext!).pop();
     }
+    await progressPresentation;
     progress.dispose();
     return (successCount, failCount, skippedCount);
+  }
+}
+
+class _GalleryDownloadProgressPanel extends StatelessWidget {
+  const _GalleryDownloadProgressPanel({
+    required this.progress,
+    required this.total,
+    required this.scrollController,
+  });
+
+  final ValueNotifier<int> progress;
+  final int total;
+  final ScrollController scrollController;
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      controller: scrollController,
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 440),
+          child: ValueListenableBuilder<int>(
+            valueListenable: progress,
+            builder: (context, completed, _) => Semantics(
+              liveRegion: true,
+              value: '$completed / $total',
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  LinearProgressIndicator(value: completed / total),
+                  const SizedBox(height: 12),
+                  Text(
+                    '$completed / $total',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

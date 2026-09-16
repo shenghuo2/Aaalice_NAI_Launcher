@@ -1,9 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nai_launcher/presentation/themes/core/layered_surface_style.dart';
 import 'package:nai_launcher/presentation/screens/settings/widgets/settings_card.dart';
 import 'package:nai_launcher/presentation/screens/settings/widgets/settings_page_layout.dart';
 
 void main() {
+  testWidgets('settings cards do not inherit the foreground color cast', (
+    tester,
+  ) async {
+    const scheme = ColorScheme.dark(
+      surface: Color(0xFF1A1A1A),
+      onSurface: Color(0xFFFF4040),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(colorScheme: scheme),
+        home: const Scaffold(body: SettingsCard(child: Text('content'))),
+      ),
+    );
+
+    final card = tester.widget<Card>(find.byType(Card));
+    expect(card.color, sectionSurfaceColor(scheme));
+  });
+
   Widget buildSubject({
     required Brightness brightness,
     required double textScale,
@@ -89,13 +108,7 @@ void main() {
         final widget = card.widget as Card;
         expect(widget.elevation, 0);
         final colorScheme = Theme.of(card).colorScheme;
-        expect(
-          widget.color,
-          Color.alphaBlend(
-            colorScheme.onSurface.withValues(alpha: 0.05),
-            colorScheme.surfaceContainerLow,
-          ),
-        );
+        expect(widget.color, sectionSurfaceColor(colorScheme));
         expect(widget.color, isNot(colorScheme.surface));
         expect(widget.shape, isNull);
       }

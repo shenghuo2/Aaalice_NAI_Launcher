@@ -5,6 +5,7 @@ import '../../../core/cache/gallery_image_request.dart';
 import '../../../core/cache/online_gallery_image_cache_manager.dart';
 import '../../../core/cache/online_gallery_prefetch_coordinator.dart';
 import '../../../data/models/online_gallery/gallery_item.dart';
+import '../../adaptive/window_size_class.dart';
 
 class GalleryDetailController extends ChangeNotifier {
   GalleryDetailController({
@@ -21,6 +22,7 @@ class GalleryDetailController extends ChangeNotifier {
   }
 
   late final PageController pageController;
+  final ScrollController infoScrollController = ScrollController();
   final FocusNode keyboardFocusNode = FocusNode();
 
   GalleryItem _item;
@@ -31,6 +33,7 @@ class GalleryDetailController extends ChangeNotifier {
   bool favoriteActionPending = false;
   bool queueActionPending = false;
   bool downloadActionPending = false;
+  bool reverseActionPending = false;
   bool _disposed = false;
   final OnlineGalleryPrefetchCoordinator? _prefetchCoordinator;
 
@@ -100,7 +103,7 @@ class GalleryDetailController extends ChangeNotifier {
         tier: GalleryImageTier.sample,
         targetDecodeWidth: GalleryImageSizing.detailViewportTargetWidth(
           MediaQuery.devicePixelRatioOf(context),
-          MediaQuery.sizeOf(context).width,
+          context.adaptiveWindow.safeUsableSize.width,
         ),
       );
       _prefetchCoordinator?.submit(
@@ -158,6 +161,17 @@ class GalleryDetailController extends ChangeNotifier {
     }
   }
 
+  Future<void> sendToReverse(Future<void> Function() action) async {
+    reverseActionPending = true;
+    _notifyChanged();
+    try {
+      await action();
+    } finally {
+      reverseActionPending = false;
+      _notifyChanged();
+    }
+  }
+
   void _notifyChanged() {
     if (!_disposed) notifyListeners();
   }
@@ -189,6 +203,7 @@ class GalleryDetailController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     pageController.dispose();
+    infoScrollController.dispose();
     keyboardFocusNode.dispose();
     super.dispose();
   }

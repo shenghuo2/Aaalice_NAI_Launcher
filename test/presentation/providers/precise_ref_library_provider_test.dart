@@ -230,6 +230,34 @@ void main() {
     expect(state().hasFilters, isFalse);
   });
 
+  test('setSidebarFilter 原子切换收藏和类型分类', () async {
+    await notifier().initialize();
+    await notifier().importFromBytes(
+      _pngBytes(),
+      name: 'character',
+      type: PreciseRefType.character,
+    );
+    final style = await notifier().importFromBytes(
+      _pngBytes(),
+      name: 'style',
+      type: PreciseRefType.style,
+    );
+    await notifier().toggleFavorite(style.id);
+
+    notifier().setSidebarFilter(
+      favoritesOnly: false,
+      type: PreciseRefType.style,
+    );
+    expect(state().favoritesOnly, isFalse);
+    expect(state().typeFilter, PreciseRefType.style);
+    expect(state().filteredEntries.single.name, 'style');
+
+    notifier().setSidebarFilter(favoritesOnly: true);
+    expect(state().favoritesOnly, isTrue);
+    expect(state().typeFilter, isNull);
+    expect(state().filteredEntries.single.name, 'style');
+  });
+
   test('setSortOrder 重复选择同一排序时翻转方向', () async {
     await notifier().initialize();
     await notifier().importFromBytes(_pngBytes(), name: 'b');
@@ -265,5 +293,39 @@ void main() {
     expect(removed, isTrue);
     expect(state().entries, isEmpty);
     expect(state().filteredEntries, isEmpty);
+  });
+
+  test('批量修改类型、统一收藏与删除只更新指定条目', () async {
+    await notifier().initialize();
+    final first = await notifier().importFromBytes(_pngBytes(), name: 'first');
+    final second = await notifier().importFromBytes(
+      _pngBytes(),
+      name: 'second',
+    );
+    await notifier().importFromBytes(_pngBytes(), name: 'untouched');
+
+    await notifier().updateEntriesType({
+      first.id,
+      second.id,
+    }, PreciseRefType.style);
+    await notifier().setEntriesFavorite({
+      first.id,
+      second.id,
+    }, isFavorite: true);
+
+    expect(
+      state().entries.where(
+        (entry) => {first.id, second.id}.contains(entry.id),
+      ),
+      everyElement(
+        isA<PreciseRefLibraryEntry>()
+            .having((entry) => entry.type, 'type', PreciseRefType.style)
+            .having((entry) => entry.isFavorite, 'isFavorite', isTrue),
+      ),
+    );
+
+    final deleted = await notifier().deleteEntries({first.id, second.id});
+    expect(deleted, 2);
+    expect(state().entries.single.name, 'untouched');
   });
 }

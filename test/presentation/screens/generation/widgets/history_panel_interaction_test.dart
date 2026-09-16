@@ -5,9 +5,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:nai_launcher/core/utils/image_share_sanitizer.dart';
+import 'package:nai_launcher/presentation/providers/copy_drag_watermark_provider.dart';
 import 'package:nai_launcher/core/shortcuts/shortcut_config.dart';
 import 'package:nai_launcher/core/storage/local_storage_service.dart';
+import 'package:nai_launcher/data/models/image/image_stream_chunk.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
+import 'package:nai_launcher/presentation/adaptive/interaction_policy.dart';
 import 'package:nai_launcher/presentation/providers/generation/preview_selection_provider.dart';
 import 'package:nai_launcher/presentation/providers/history_click_behavior_provider.dart';
 import 'package:nai_launcher/presentation/providers/image_generation_provider.dart';
@@ -17,9 +21,48 @@ import 'package:nai_launcher/presentation/widgets/common/image_detail/components
 import 'package:nai_launcher/presentation/widgets/common/image_card_hover_motion.dart';
 import 'package:nai_launcher/presentation/widgets/common/image_detail/image_detail_viewer.dart';
 import 'package:nai_launcher/presentation/widgets/common/selectable_image_card.dart';
+import 'package:nai_launcher/presentation/widgets/common/workspace_panel_header.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('watermark preheat excludes offscreen history', (tester) async {
+    final service = _RecordingSharePreparation();
+    final container = _createContainer(
+      List.generate(20, (i) => _image('preheat-$i')),
+      transform: ShareImageTransform(
+        cacheKey: 'synthetic',
+        apply: (image, {required stripMetadata}) async => image,
+      ),
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      _historyApp(container, preparationService: service),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(service.enqueued, isNotEmpty);
+    expect(service.enqueued.length, lessThan(20));
+    expect(service.enqueued, isNot(contains('preheat-19')));
+    await tester.pumpWidget(const SizedBox.shrink());
+    service.dispose();
+  });
+
+  testWidgets('历史记录使用统一面板顶栏且收起按钮贴齐左侧', (tester) async {
+    final container = _createContainer([_image('header-alignment')]);
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(_historyApp(container));
+    await tester.pump();
+
+    final panelRect = tester.getRect(find.byType(HistoryPanel));
+    final collapseRect = tester.getRect(
+      find.byKey(const ValueKey('generation-history-collapse')),
+    );
+    expect(find.byType(WorkspacePanelHeader), findsOneWidget);
+    expect(tester.getSize(find.byType(WorkspacePanelHeader)).height, 56);
+    expect(collapseRect.left, closeTo(panelRect.left + 4, 0.01));
+  });
 
   testWidgets('classic single click opens one image detail', (tester) async {
     final container = _createContainer([_image('classic')]);
@@ -121,7 +164,7 @@ void main() {
     },
   );
 
-  testWidgets('linked long press opens the merged sequence at its image', (
+  testWidgets('linked long press selects its image for bulk actions', (
     tester,
   ) async {
     final container = _createContainer([
@@ -137,7 +180,8 @@ void main() {
     await tester.longPress(second);
     await _pumpRoute(tester);
 
-    _expectLinkedViewer(tester, initialIndex: 1);
+    expect(tester.widget<SelectableImageCard>(second).isSelected, isTrue);
+    expect(find.byType(ImageDetailViewer), findsNothing);
   });
 
   testWidgets('linked context detail opens the merged sequence at its image', (
@@ -156,6 +200,7 @@ void main() {
     await _openContextMenu(tester, second);
     await tester.tap(find.text('查看详情'));
     await _pumpRoute(tester);
+    await tester.pump();
 
     _expectLinkedViewer(tester, initialIndex: 1);
   });
@@ -209,6 +254,7 @@ void main() {
       await _openContextMenu(tester, finder);
       await tester.tap(find.text('查看详情'));
       await _pumpRoute(tester);
+      await tester.pump();
       final viewer = tester.widget<ImageDetailViewer>(
         find.byType(ImageDetailViewer),
       );
@@ -412,43 +458,23 @@ void main() {
     expect(scrollable.position.pixels, greaterThan(0));
   });
 
-  testWidgets('maps each batch stream preview to its completed image', (
+  testWidgets('hands each completion preview to its own history card', (
     tester,
   ) async {
-    final firstPreview = _solidPng(255, 0, 0);
-    final secondPreview = _solidPng(0, 0, 255);
+    final firstFrame = StreamPreviewFrame(bytes: _solidPng(255, 0, 0));
+    final secondFrame = StreamPreviewFrame(bytes: _solidPng(0, 0, 255));
     final container = _createContainer([]);
     addTearDown(container.dispose);
+    final first = _image('batch-first');
+    final second = _image('batch-second');
     final notifier = container.read(imageGenerationNotifierProvider.notifier);
     notifier.state = notifier.state.copyWith(
-      status: GenerationStatus.generating,
-      currentImage: 2,
-      totalImages: 2,
-      streamPreview: secondPreview,
-      streamPreviewSlots: [
-        StreamPreviewSlot(
-          imageNumber: 1,
-          totalImages: 2,
-          progress: 0.9,
-          previewBytes: firstPreview,
-        ),
-        StreamPreviewSlot(
-          imageNumber: 2,
-          totalImages: 2,
-          progress: 0.8,
-          previewBytes: secondPreview,
-        ),
-      ],
+      status: GenerationStatus.completed,
+      currentImages: [first, second],
+      completionPreviews: {first.id: firstFrame, second.id: secondFrame},
     );
 
     await tester.pumpWidget(_historyApp(container));
-    await tester.pump();
-
-    notifier.state = notifier.state.copyWith(
-      status: GenerationStatus.completed,
-      currentImages: [_image('batch-first'), _image('batch-second')],
-      clearStreamPreview: true,
-    );
     await tester.pump();
 
     final firstCard = tester.widget<SelectableImageCard>(
@@ -457,80 +483,9 @@ void main() {
     final secondCard = tester.widget<SelectableImageCard>(
       find.byKey(const ValueKey('batch-second')),
     );
-    expect(
-      listEquals(firstCard.completionPlaceholderBytes, firstPreview),
-      isTrue,
-    );
-    expect(
-      listEquals(secondCard.completionPlaceholderBytes, secondPreview),
-      isTrue,
-    );
+    expect(firstCard.completionPreview, same(firstFrame));
+    expect(secondCard.completionPreview, same(secondFrame));
   });
-
-  testWidgets(
-    'does not reuse a cancelled run preview for the next generation',
-    (tester) async {
-      final cancelledPreview = _solidPng(255, 0, 0);
-      final nextPreview = _solidPng(0, 255, 0);
-      final container = _createContainer([]);
-      addTearDown(container.dispose);
-      final notifier = container.read(imageGenerationNotifierProvider.notifier);
-      notifier.state = notifier.state.copyWith(
-        status: GenerationStatus.generating,
-        currentImage: 1,
-        totalImages: 1,
-        streamPreview: cancelledPreview,
-        streamPreviewSlots: [
-          StreamPreviewSlot(
-            imageNumber: 1,
-            totalImages: 1,
-            progress: 0.8,
-            previewBytes: cancelledPreview,
-          ),
-        ],
-      );
-
-      await tester.pumpWidget(_historyApp(container));
-      await tester.pump();
-
-      notifier.state = notifier.state.copyWith(
-        status: GenerationStatus.cancelled,
-        currentImages: const [],
-        clearStreamPreview: true,
-      );
-      await tester.pump();
-      notifier.state = notifier.state.copyWith(
-        status: GenerationStatus.generating,
-        currentImage: 1,
-        totalImages: 1,
-        streamPreview: nextPreview,
-        streamPreviewSlots: [
-          StreamPreviewSlot(
-            imageNumber: 1,
-            totalImages: 1,
-            progress: 0.8,
-            previewBytes: nextPreview,
-          ),
-        ],
-      );
-      await tester.pump();
-      notifier.state = notifier.state.copyWith(
-        status: GenerationStatus.completed,
-        currentImages: [_image('after-cancel')],
-        clearStreamPreview: true,
-      );
-      await tester.pump();
-
-      final card = tester.widget<SelectableImageCard>(
-        find.byKey(const ValueKey('after-cancel')),
-      );
-      expect(listEquals(card.completionPlaceholderBytes, nextPreview), isTrue);
-      expect(
-        listEquals(card.completionPlaceholderBytes, cancelledPreview),
-        isFalse,
-      );
-    },
-  );
 }
 
 Uint8List _solidPng(int red, int green, int blue) {
@@ -544,9 +499,12 @@ ProviderContainer _createContainer(
   HistoryClickBehavior behavior = HistoryClickBehavior.openDetail,
   List<GeneratedImage> currentImages = const [],
   GenerationStatus status = GenerationStatus.idle,
+  ShareImageTransform? transform,
 }) {
   final container = ProviderContainer(
     overrides: [
+      if (transform != null)
+        copyDragWatermarkProvider.overrideWithValue(transform),
       localStorageServiceProvider.overrideWith(
         (_) => _HistoryBehaviorStorage(behavior),
       ),
@@ -564,6 +522,24 @@ ProviderContainer _createContainer(
     batchHeight: 100,
   );
   return container;
+}
+
+class _RecordingSharePreparation extends ShareImagePreparationService {
+  final enqueued = <String>[];
+  @override
+  void enqueue({
+    required String imageId,
+    required Uint8List imageBytes,
+    required String fileName,
+    required bool stripMetadata,
+    String? sourceFilePath,
+    ShareImageTransform? transform,
+  }) {
+    enqueued.add(imageId);
+  }
+
+  @override
+  Future<void> retainHistoryImageIds(Set<String> imageIds) async {}
 }
 
 class _HistoryBehaviorStorage extends LocalStorageService {
@@ -605,28 +581,38 @@ GeneratedImage _image(
 Widget _historyApp(
   ProviderContainer container, {
   ValueNotifier<bool>? visible,
+  ShareImagePreparationService? preparationService,
 }) {
   final previewFocusNode = container.read(generationPreviewFocusNodeProvider);
-  return UncontrolledProviderScope(
-    container: container,
-    child: MaterialApp(
-      locale: const Locale('zh'),
-      supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      home: Scaffold(
-        body: Focus(
-          focusNode: previewFocusNode,
-          child: SizedBox(
-            width: 320,
-            height: 640,
-            child: visible == null
-                ? const HistoryPanel()
-                : ValueListenableBuilder(
-                    valueListenable: visible,
-                    builder: (_, isVisible, __) => isVisible
-                        ? const HistoryPanel()
-                        : const SizedBox.shrink(),
-                  ),
+  return InteractionPolicyScope(
+    initialPolicy: const InteractionPolicy(
+      modality: InteractionModality.pointer,
+      touchAvailable: false,
+      precisePointerAvailable: true,
+    ),
+    child: UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp(
+        locale: const Locale('zh'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        home: Scaffold(
+          body: Focus(
+            focusNode: previewFocusNode,
+            child: SizedBox(
+              width: 320,
+              height: 640,
+              child: visible == null
+                  ? HistoryPanel(sharePreparationService: preparationService)
+                  : ValueListenableBuilder(
+                      valueListenable: visible,
+                      builder: (_, isVisible, __) => isVisible
+                          ? HistoryPanel(
+                              sharePreparationService: preparationService,
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+            ),
           ),
         ),
       ),

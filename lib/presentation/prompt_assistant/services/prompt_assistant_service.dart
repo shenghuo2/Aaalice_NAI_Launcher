@@ -1,15 +1,22 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/autocomplete/local_first_prompt_translation.dart';
+import '../../../core/autocomplete/tag_translation_lookup.dart';
 import '../../../core/utils/app_logger.dart';
+import '../../../core/utils/prompt_edit_document.dart';
 import '../../providers/proxy_settings_provider.dart';
+import '../models/agent_protocol.dart';
+import '../models/assistant_execution_settings.dart';
+import '../models/assistant_model_capability.dart';
 import '../models/prompt_assistant_models.dart';
 import '../providers/prompt_assistant_config_provider.dart';
-import 'provider_adapters/prompt_assistant_adapter.dart';
+import 'assistant_cancellation.dart';
 import 'prompt_assistant_api_client.dart';
+import 'provider_adapters/prompt_assistant_adapter.dart';
 
 final promptAssistantDioProvider = Provider<Dio>((ref) {
   // 监听代理设置变化触发重建：默认适配器在创建 HttpClient 时才读取
@@ -29,10 +36,16 @@ final promptAssistantDioProvider = Provider<Dio>((ref) {
 
 final promptAssistantServiceProvider = Provider<PromptAssistantService>((ref) {
   final dio = ref.watch(promptAssistantDioProvider);
-  return PromptAssistantService(
+  final client = PromptAssistantApiClient(dio: dio);
+  final service = PromptAssistantService(
     ref: ref,
-    apiClient: PromptAssistantApiClient(dio: dio),
+    apiClient: client,
+    localFirstTranslation: LocalFirstPromptTranslationPipeline(
+      ref.watch(tagTranslationLookupProvider),
+    ),
   );
+  ref.onDispose(service.dispose);
+  return service;
 });
 
 class TagTranslationBatchResult {
@@ -49,13 +62,45 @@ class PromptAssistantService {
   PromptAssistantService({
     required Ref ref,
     required PromptAssistantApiClient apiClient,
+    LocalFirstPromptTranslationPipeline? localFirstTranslation,
   }) : _ref = ref,
-       _apiClient = apiClient;
+       _apiClient = apiClient,
+       _localFirstTranslation = localFirstTranslation;
 
   final Ref _ref;
   final PromptAssistantApiClient _apiClient;
+  final LocalFirstPromptTranslationPipeline? _localFirstTranslation;
+
+  final Map<String, CancelToken> _operations = {};
+
+  void dispose() {
+    for (final token in _operations.values) {
+      token.cancel('assistant service disposed');
+    }
+    _operations.clear();
+    _apiClient.dispose();
+  }
+
+  CancelToken _startOperation(String sessionId) {
+    _operations.remove(sessionId)?.cancel('replaced by new operation');
+    final token = CancelToken();
+    _operations[sessionId] = token;
+    return token;
+  }
+
+  void _finishOperation(String sessionId, CancelToken token) {
+    if (identical(_operations[sessionId], token)) _operations.remove(sessionId);
+  }
 
   Future<void> cancelCurrentTask({String? sessionId}) async {
+    if (sessionId == null || sessionId.isEmpty) {
+      for (final token in _operations.values) {
+        token.cancel('cancelled by user');
+      }
+      _operations.clear();
+    } else {
+      _operations.remove(sessionId)?.cancel('cancelled by user');
+    }
     _apiClient.cancelCurrentRequest(sessionId: sessionId);
   }
 
@@ -89,28 +134,101 @@ class PromptAssistantService {
     required String sessionId,
     String? targetLanguage,
   }) async* {
-    final instruction = targetLanguage == null || targetLanguage.isEmpty
-        ? 'Automatically detect the source language and translate between Chinese and English. Return only the translation.'
-        : 'Translate the text into $targetLanguage. Return only the translation.';
-    yield* _runTask(
-      sessionId: sessionId,
-      taskType: AssistantTaskType.translate,
-      userContent: input,
-      userInstruction: instruction,
-    );
+    final operation = _startOperation(sessionId);
+    try {
+      final localFirst = await _localFirstTranslation?.translate(
+        input,
+        targetLanguage: targetLanguage,
+        translateMissing: (tags) async => (await _translateTags(
+          tags,
+          sessionId: sessionId,
+          operation: operation,
+        )).translations,
+      );
+      operation.throwIfCancelled();
+      if (localFirst != null) {
+        yield StreamingChunk(delta: localFirst.text);
+        yield const StreamingChunk(delta: '', done: true);
+        return;
+      }
+      final instruction = targetLanguage == null || targetLanguage.isEmpty
+          ? 'Automatically detect the source language and translate between Chinese and English. Return only the translation.'
+          : 'Translate the text into $targetLanguage. Return only the translation.';
+      yield* _runTask(
+        sessionId: sessionId,
+        taskType: AssistantTaskType.translate,
+        userContent: input,
+        userInstruction: instruction,
+        operation: operation,
+      );
+    } finally {
+      _finishOperation(sessionId, operation);
+    }
   }
 
   static const int tagTranslationPromptVersion = 1;
+
+  /// Fills tag captions without replacing the editable prompt with Chinese.
+  Stream<StreamingChunk> translateTagLabels(
+    String input, {
+    required String sessionId,
+  }) async* {
+    final operation = _startOperation(sessionId);
+    try {
+      final lookup = _ref.read(tagTranslationLookupProvider);
+      final tags = PromptEditDocument.parse(input)
+          .expand((span) => span.leaves)
+          .map((span) => TagTranslationLookup.normalizeTag(span.label))
+          .where((tag) => tag.isNotEmpty)
+          .toSet()
+          .toList();
+      final local = await lookup.translateBatch(tags);
+      operation.throwIfCancelled();
+      final missing = tags.where((tag) => !local.containsKey(tag)).toList();
+      final result = await _translateTags(
+        missing,
+        sessionId: sessionId,
+        operation: operation,
+        naturalLanguage: true,
+      );
+      operation.throwIfCancelled();
+      lookup.addTranslations(result.translations);
+      yield const StreamingChunk(delta: '', done: true);
+    } finally {
+      _finishOperation(sessionId, operation);
+    }
+  }
 
   Future<TagTranslationBatchResult> translateTags(
     List<String> canonicalTags, {
     required String sessionId,
   }) async {
+    final operation = _startOperation(sessionId);
+    try {
+      return await _translateTags(
+        canonicalTags,
+        sessionId: sessionId,
+        operation: operation,
+      );
+    } finally {
+      _finishOperation(sessionId, operation);
+    }
+  }
+
+  Future<TagTranslationBatchResult> _translateTags(
+    List<String> canonicalTags, {
+    required String sessionId,
+    required CancelToken operation,
+    bool naturalLanguage = false,
+  }) async {
+    operation.throwIfCancelled();
     final tags = canonicalTags
-        .map((tag) => tag.trim().toLowerCase())
-        .where((tag) => RegExp(r'^[a-z0-9_():.!+\-]+$').hasMatch(tag))
+        .map((tag) => naturalLanguage ? tag : tag.trim().toLowerCase())
+        .where(
+          (tag) =>
+              naturalLanguage || RegExp(r'^[a-z0-9_():.!+\-]+$').hasMatch(tag),
+        )
         .toSet()
-        .take(8)
         .toList(growable: false);
     if (tags.isEmpty) {
       return const TagTranslationBatchResult(
@@ -118,11 +236,39 @@ class PromptAssistantService {
         routeFingerprint: '',
       );
     }
-
     final execution = await _resolveTaskExecution(AssistantTaskType.translate);
+    operation.throwIfCancelled();
+    final results = await Future.wait([
+      for (var offset = 0; offset < tags.length; offset += 8)
+        _translateTagBatch(
+          tags.skip(offset).take(8).toList(growable: false),
+          sessionId: sessionId,
+          operation: operation,
+          execution: execution,
+          naturalLanguage: naturalLanguage,
+        ).catchError((Object error, StackTrace stack) {
+          operation.cancel('tag batch failed');
+          Error.throwWithStackTrace(error, stack);
+        }),
+    ], eagerError: true);
+    operation.throwIfCancelled();
+    return TagTranslationBatchResult(
+      translations: {for (final result in results) ...result.translations},
+      routeFingerprint: results.first.routeFingerprint,
+    );
+  }
+
+  Future<TagTranslationBatchResult> _translateTagBatch(
+    List<String> tags, {
+    required String sessionId,
+    bool naturalLanguage = false,
+    required CancelToken operation,
+    required _TaskExecution execution,
+  }) async {
+    operation.throwIfCancelled();
     final systemPrompt =
         '''
-You translate Danbooru image-generation tags into concise Simplified Chinese labels.
+${naturalLanguage ? 'Translate image-generation tags and natural-language descriptions into Simplified Chinese. Underscores may represent spaces. Preserve the complete meaning of each description.' : 'You translate Danbooru image-generation tags into concise Simplified Chinese labels.'}
 Return exactly one JSON object. Every key must be copied verbatim from the input array and every value must be a non-empty Simplified Chinese string.
 Do not add keys, Markdown, comments, explanations, or code fences.
 Example JSON: {"blue_eyes":"蓝眼睛"}
@@ -133,22 +279,34 @@ Prompt version: $tagTranslationPromptVersion
     await for (final chunk in _apiClient.complete(
       request: PromptAssistantRequest(
         sessionId: sessionId,
+        responseTimeout: Duration(
+          seconds: _ref
+              .read(promptAssistantConfigProvider)
+              .responseTimeoutSeconds,
+        ),
         provider: execution.provider,
         model: execution.model.name,
         systemPrompt: systemPrompt,
         userParts: [PromptAssistantContentPart.text(jsonEncode(tags))],
         apiKey: execution.apiKey,
         responseFormat: PromptAssistantResponseFormat.jsonObject,
-        maxOutputTokens: 512,
-        reasoningMode: PromptAssistantReasoningMode.disabled,
+        maxOutputTokens: execution.reasoning?.enabled == false
+            ? (naturalLanguage ? 4096 : 512)
+            : execution.maxOutputTokens,
+        reasoningRequest: execution.reasoning,
+        modelMaxOutputTokens: execution.maxOutputTokens,
+        cancelToken: operation,
+        allowConcurrentInSession: true,
       ),
     )) {
       output.write(chunk.delta);
     }
 
+    operation.throwIfCancelled();
     final translations = validateTagTranslationResponse(
       output.toString(),
       tags,
+      allowLongText: naturalLanguage,
     );
     return TagTranslationBatchResult(
       translations: translations,
@@ -159,8 +317,9 @@ Prompt version: $tagTranslationPromptVersion
 
   static Map<String, String> validateTagTranslationResponse(
     String raw,
-    List<String> canonicalTags,
-  ) {
+    List<String> canonicalTags, {
+    bool allowLongText = false,
+  }) {
     final decoded = jsonDecode(raw.trim());
     if (decoded is! Map<String, dynamic>) {
       throw const FormatException(
@@ -177,7 +336,7 @@ Prompt version: $tagTranslationPromptVersion
       }
       final value = (entry.value as String).trim();
       if (value.isEmpty ||
-          value.length > 64 ||
+          (!allowLongText && value.length > 64) ||
           value.contains(RegExp(r'[\r\n]'))) {
         throw const FormatException('Tag translation text is invalid');
       }
@@ -344,33 +503,54 @@ Prompt version: $tagTranslationPromptVersion
     required AssistantTaskType taskType,
     required Object userContent,
     required String userInstruction,
+    CancelToken? operation,
   }) async* {
-    final config = _ref.read(promptAssistantConfigProvider);
-    final execution = await _resolveTaskExecution(taskType);
+    final token = operation ?? _startOperation(sessionId);
+    try {
+      final config = _ref.read(promptAssistantConfigProvider);
+      final execution = await _resolveTaskExecution(taskType);
+      token.throwIfCancelled();
 
-    final activeRules =
-        config.rules.where((r) => r.taskType == taskType && r.enabled).toList()
-          ..sort((a, b) => a.order.compareTo(b.order));
+      final activeRules =
+          config.rules
+              .where((r) => r.taskType == taskType && r.enabled)
+              .toList()
+            ..sort((a, b) => a.order.compareTo(b.order));
 
-    final systemPrompt = [
-      ...activeRules.map((e) => e.content.trim()).where((e) => e.isNotEmpty),
-      userInstruction,
-    ].join('\n\n');
+      final systemPrompt = [
+        ...activeRules.map((e) => e.content.trim()).where((e) => e.isNotEmpty),
+        userInstruction,
+      ].join('\n\n');
 
-    yield* _apiClient.complete(
-      request: PromptAssistantRequest(
-        sessionId: sessionId,
-        provider: execution.provider,
-        model: execution.model.name,
-        systemPrompt: systemPrompt,
-        userParts: _toContentParts(userContent),
-        apiKey: execution.apiKey,
-      ),
-    );
+      yield* _apiClient.complete(
+        request: PromptAssistantRequest(
+          sessionId: sessionId,
+          responseTimeout: Duration(
+            seconds: _ref
+                .read(promptAssistantConfigProvider)
+                .responseTimeoutSeconds,
+          ),
+          provider: execution.provider,
+          model: execution.model.name,
+          systemPrompt: systemPrompt,
+          userParts: _toContentParts(userContent),
+          apiKey: execution.apiKey,
+          reasoningRequest: execution.reasoning,
+          modelMaxOutputTokens: execution.maxOutputTokens,
+          cancelToken: token,
+          maxOutputTokens: execution.reasoning?.enabled == true
+              ? execution.maxOutputTokens
+              : null,
+        ),
+      );
+    } finally {
+      if (operation == null) _finishOperation(sessionId, token);
+    }
   }
 
-  Future<({ProviderConfig provider, ModelConfig model, String? apiKey})>
-  _resolveTaskExecution(AssistantTaskType taskType) async {
+  Future<_TaskExecution> _resolveTaskExecution(
+    AssistantTaskType taskType,
+  ) async {
     final config = _ref.read(promptAssistantConfigProvider);
     final routingProviderId = config.routing.providerIdFor(taskType);
     final routingModel = config.routing.modelFor(taskType);
@@ -408,7 +588,27 @@ Prompt version: $tagTranslationPromptVersion
     final apiKey = await _ref
         .read(promptAssistantConfigProvider.notifier)
         .getProviderApiKey(provider.id);
-    return (provider: provider, model: model, apiKey: apiKey);
+    final metadata = AssistantModelCatalog.resolveProvider(
+      provider: provider,
+      model: model.name,
+    );
+    final level = config.routing.thinkingFor(taskType);
+    final supported = metadata.selectableThinkingLevels.any(
+      (value) => value.name == level.name,
+    );
+    return (
+      provider: provider,
+      model: model,
+      apiKey: apiKey,
+      reasoning: level == AssistantThinkingLevel.automatic || !supported
+          ? null
+          : metadata.resolveReasoningRequest(
+              level == AssistantThinkingLevel.off ? null : level.name,
+            ),
+      maxOutputTokens: metadata.maxOutputTokens > 0
+          ? metadata.maxOutputTokens
+          : null,
+    );
   }
 
   ModelConfig _fallbackModelForProvider({
@@ -514,3 +714,11 @@ Prompt version: $tagTranslationPromptVersion
     return 'image/png';
   }
 }
+
+typedef _TaskExecution = ({
+  ProviderConfig provider,
+  ModelConfig model,
+  String? apiKey,
+  AgentReasoningRequest? reasoning,
+  int? maxOutputTokens,
+});

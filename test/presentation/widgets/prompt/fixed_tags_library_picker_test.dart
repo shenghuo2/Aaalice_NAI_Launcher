@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' show PointerDeviceKind;
 
@@ -30,6 +31,34 @@ void main() {
     }
   });
 
+  testWidgets('320dp、3x 字号、SafeArea 与 IME 下全屏选择器可返回', (tester) async {
+    _setViewport(tester, const Size(320, 900));
+
+    await _openPicker(
+      tester,
+      entries: [
+        for (var index = 0; index < 20; index++)
+          _entry(id: 'compact-$index', name: '紧凑预设 $index'),
+      ],
+      textScaler: const TextScaler.linear(3),
+      padding: const EdgeInsets.only(top: 24, bottom: 16),
+      viewInsets: const EdgeInsets.only(bottom: 180),
+    );
+
+    expect(find.byType(FixedTagLibraryPickerDialog), findsOneWidget);
+    expect(find.byKey(const ValueKey('adaptive-bottom-sheet')), findsOneWidget);
+    final dialogRect = tester.getRect(
+      find.byKey(const ValueKey('adaptive-bottom-sheet')),
+    );
+    expect(dialogRect.top, greaterThanOrEqualTo(24));
+    expect(dialogRect.bottom, lessThanOrEqualTo(720));
+    expect(tester.takeException(), isNull);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(FixedTagLibraryPickerDialog), findsNothing);
+  });
+
   testWidgets('有图条目悬浮显示共享预览且窄窗口内不越界', (tester) async {
     _setViewport(tester, const Size(500, 360));
     final entry = _entry(
@@ -41,7 +70,7 @@ void main() {
     await _openPicker(tester, entries: [entry]);
     final mouse = await _hoverEntry(tester, entry.id);
     addTearDown(mouse.removePointer);
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 800));
 
     const previewKey = ValueKey('tag-library-entry-preview-overlay');
     expect(find.byKey(previewKey), findsOneWidget);
@@ -62,14 +91,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('无图条目悬浮不创建预览浮层', (tester) async {
+  testWidgets('无图条目悬浮显示文字预览并在离开后清理', (tester) async {
     _setViewport(tester, const Size(800, 600));
     final entry = _entry(id: 'without-image', name: '纯文本预设');
 
     await _openPicker(tester, entries: [entry]);
     final mouse = await _hoverEntry(tester, entry.id);
     addTearDown(mouse.removePointer);
-    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 800));
+
+    final preview = find.byKey(
+      const ValueKey('tag-library-entry-preview-overlay'),
+    );
+    expect(preview, findsOneWidget);
+    expect(
+      find.descendant(of: preview, matching: find.text(entry.name)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: preview, matching: find.byType(ThumbnailDisplay)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: preview,
+        matching: find.textContaining(entry.content),
+      ),
+      findsWidgets,
+    );
+    await mouse.moveTo(const Offset(5, 5));
+    await tester.pump(const Duration(milliseconds: 150));
 
     expect(
       find.byKey(const ValueKey('tag-library-entry-preview-overlay')),
@@ -82,19 +133,23 @@ void main() {
     _setViewport(tester, const Size(900, 640));
     final entries = [
       for (var index = 0; index < 30; index++)
-        _entry(id: 'entry-$index', name: '预设 $index', thumbnail: thumbnailPath),
+        _entry(
+          id: 'entry-$index',
+          name: '预设 $index',
+          thumbnail: index.isEven ? null : thumbnailPath,
+        ),
     ];
 
     await _openPicker(tester, entries: entries);
     final mouse = await _hoverEntry(tester, entries.first.id);
     addTearDown(mouse.removePointer);
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 800));
 
     const previewKey = ValueKey('tag-library-entry-preview-overlay');
     expect(find.byKey(previewKey), findsOneWidget);
 
     await mouse.moveTo(const Offset(5, 5));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
     expect(find.byKey(previewKey), findsNothing);
 
     await mouse.moveTo(
@@ -102,16 +157,14 @@ void main() {
         find.byKey(ValueKey('fixed-tag-library-entry-${entries.first.id}')),
       ),
     );
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 800));
     expect(find.byKey(previewKey), findsOneWidget);
 
     final scrollable = tester.state<ScrollableState>(
-      find
-          .descendant(
-            of: find.byType(ListView),
-            matching: find.byType(Scrollable),
-          )
-          .first,
+      find.descendant(
+        of: find.byKey(const ValueKey('fixed-tag-library-entry-list')),
+        matching: find.byType(Scrollable),
+      ),
     );
     scrollable.position.jumpTo(100);
     await tester.pump();
@@ -123,7 +176,7 @@ void main() {
         find.byKey(ValueKey('fixed-tag-library-entry-${visibleEntry.id}')),
       ),
     );
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 800));
     expect(find.byKey(previewKey), findsOneWidget);
 
     Navigator.of(
@@ -151,7 +204,7 @@ void main() {
     );
     final mouse = await _hoverEntry(tester, entry.id);
     addTearDown(mouse.removePointer);
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 800));
     expect(
       find.byKey(const ValueKey('tag-library-entry-preview-overlay')),
       findsOneWidget,
@@ -193,6 +246,13 @@ void main() {
       find.byKey(const ValueKey('fixed-tag-library-entry-target')),
       findsOneWidget,
     );
+    final mouse = await _hoverEntry(tester, targetEntry.id);
+    addTearDown(mouse.removePointer);
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(
+      find.byKey(const ValueKey('tag-library-entry-preview-overlay')),
+      findsOneWidget,
+    );
     await tester.tap(
       find.byKey(const ValueKey('fixed-tag-library-entry-target')),
     );
@@ -200,6 +260,10 @@ void main() {
 
     expect(selected, targetEntry);
     expect(find.byType(FixedTagLibraryPickerDialog), findsNothing);
+    expect(
+      find.byKey(const ValueKey('tag-library-entry-preview-overlay')),
+      findsNothing,
+    );
     expect(tester.takeException(), isNull);
   });
 }
@@ -228,22 +292,35 @@ Future<void> _openPicker(
   WidgetTester tester, {
   required List<TagLibraryEntry> entries,
   ValueChanged<TagLibraryEntry>? onSelect,
+  TextScaler textScaler = TextScaler.noScaling,
+  EdgeInsets padding = EdgeInsets.zero,
+  EdgeInsets viewInsets = EdgeInsets.zero,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
       locale: const Locale('zh'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: textScaler,
+          padding: padding,
+          viewPadding: padding,
+          viewInsets: viewInsets,
+        ),
+        child: child!,
+      ),
       home: Scaffold(
         body: Builder(
           builder: (context) => FilledButton(
             onPressed: () {
-              showDialog<void>(
-                context: context,
-                builder: (_) => FixedTagLibraryPickerDialog(
+              unawaited(
+                FixedTagLibraryPickerDialog.show(
+                  context: context,
                   entries: entries,
-                  onSelect: onSelect ?? (_) {},
-                ),
+                ).then((entry) {
+                  if (entry != null) onSelect?.call(entry);
+                }),
               );
             },
             child: const Text('打开'),

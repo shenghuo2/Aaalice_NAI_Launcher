@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../../../data/datasources/remote/nai_image_generation_api_service.dart';
 import '../../../data/models/image/image_params.dart';
+import '../../../data/models/image/image_postprocess_phase.dart';
 import 'generation_command.dart';
 import 'generation_models.dart';
 import 'image_generation_coordinator.dart';
@@ -54,11 +55,15 @@ class ImageGenerationService {
     ],
     Future<void> Function(Duration) delay = Future<void>.delayed,
     this.streamPreviewEnabled = true,
+    ImagePostprocessor? postprocess,
+    void Function(Object)? onPostprocessError,
   }) : _apiService = apiService,
        _coordinator = ImageGenerationCoordinator(
          apiService: apiService,
          retryDelays: retryDelays,
          delay: delay,
+         postprocess: postprocess,
+         onPostprocessError: onPostprocessError,
        );
 
   final NAIImageGenerationApiService _apiService;
@@ -69,6 +74,7 @@ class ImageGenerationService {
   var _cancelled = false;
 
   bool get isCancelled => _cancelled;
+  bool get isPostprocessing => _coordinator.isPostprocessing;
 
   void cancel() {
     _cancelled = true;
@@ -175,17 +181,16 @@ class ImageGenerationService {
             :final currentStep,
             :final totalSteps,
           ):
-            if (progress < 1) {
-              onProgress?.call(
-                imageNumber,
-                totalImages,
-                ((imageNumber - 1) + progress) / totalImages,
-                previewImage: bytes,
-              );
-              onStepProgress?.call(currentStep, totalSteps);
-            } else {
-              onCompleting?.call();
-            }
+            onProgress?.call(
+              imageNumber,
+              totalImages,
+              ((imageNumber - 1) + progress) / totalImages,
+              previewImage: bytes,
+            );
+            onStepProgress?.call(currentStep, totalSteps);
+          case GenerationImageFinalizing():
+          case GenerationPostprocessChanged():
+            onCompleting?.call();
           case GenerationRequestCompleted(
             :final params,
             images: final bytes,
@@ -221,7 +226,11 @@ class ImageGenerationService {
       }
       if (cancelled || handle.isCancelled || _isCancelledError(error)) {
         _cancelled = true;
-        return ImageGenerationResult.cancelled();
+        return ImageGenerationResult(
+          images: images,
+          vibeEncodings: encodings,
+          isCancelled: true,
+        );
       }
       if (images.isEmpty && error != null) {
         return ImageGenerationResult.error(error.toString());

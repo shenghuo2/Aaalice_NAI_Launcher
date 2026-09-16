@@ -1,11 +1,12 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../core/utils/image_share_sanitizer.dart';
 import '../../../core/utils/keyboard_modifier_utils.dart';
+import '../../../data/models/image/image_stream_chunk.dart';
 import 'image_card_models.dart';
 
 class ImageCardController extends ChangeNotifier {
@@ -22,34 +23,25 @@ class ImageCardController extends ChangeNotifier {
     glossAnimation = Tween<double>(begin: -1.5, end: 1.5).animate(
       CurvedAnimation(parent: glossController, curve: Curves.easeInOut),
     );
-    _lastStreamPreviewBytes = data.streamPreview?.isNotEmpty == true
-        ? data.streamPreview
-        : null;
+    _lastStreamPreview = _capturedStreamPreview(data);
     showPreparedIndexBadge = data.dragPreparationReady;
-    completedImageHasFrame = effectiveCompletionPlaceholderBytes == null;
-    _scheduleCompletionPlaceholderFallback();
     if (data.isGenerating) _initGlowAnimation(vsync);
     _shareTransferCache = _createShareTransferCache();
   }
 
   static const dragPreparationProgressValue = 0.96;
   static const dragPreparationOverlayFadeDuration = Duration(milliseconds: 140);
-  static const completionPlaceholderFallbackDuration = Duration(
-    milliseconds: 900,
-  );
 
   ImageCardViewData _data;
   ImageCardCapabilities _capabilities;
   bool isPointerInside = false;
   bool isHovering = false;
   bool showPreparedIndexBadge = false;
-  bool completedImageHasFrame = false;
-  bool _completionPlaceholderSettledNotified = false;
-  int _completionImageEpoch = 0;
-  Uint8List? _precachingCompletedImageBytes;
-  Uint8List? _lastStreamPreviewBytes;
-  Timer? _completionPlaceholderFallbackTimer;
+  bool hasPaintedCompletedImage = false;
+  StreamPreviewFrame? _lastStreamPreview;
   bool _isTapping = false;
+  bool _reducedMotion = false;
+  bool _motionPreferenceInitialized = false;
   DateTime? _lastTapTime;
   Offset? _lastTapPosition;
   PointerDeviceKind? _lastTapKind;
@@ -67,26 +59,16 @@ class ImageCardController extends ChangeNotifier {
   ImageCardCapabilities get capabilities => _capabilities;
   ShareImageTransferCache? get shareTransferCache => _shareTransferCache;
 
-  Uint8List? get effectiveCompletionPlaceholderBytes {
+  /// 完成卡片在自己首帧到达前继续画的那一帧。
+  StreamPreviewFrame? get effectiveCompletionPreview {
     if (_data.isGenerating || _data.imageBytes == null) return null;
-    return _data.completionPlaceholderBytes ?? _lastStreamPreviewBytes;
+    return _data.completionPreview ?? _lastStreamPreview;
   }
-
-  Uint8List? get displayedImageBytes {
-    final placeholder = effectiveCompletionPlaceholderBytes;
-    return placeholder != null && !completedImageHasFrame
-        ? placeholder
-        : _data.imageBytes;
-  }
-
-  bool get showCompletionPlaceholder =>
-      effectiveCompletionPlaceholderBytes != null && !completedImageHasFrame;
 
   void update({
     required TickerProvider vsync,
     required ImageCardViewData data,
     required ImageCardCapabilities capabilities,
-    required BuildContext context,
   }) {
     final oldData = _data;
     final oldCapabilities = _capabilities;
@@ -102,11 +84,11 @@ class ImageCardController extends ChangeNotifier {
     }
 
     if (data.streamPreview?.isNotEmpty == true) {
-      _lastStreamPreviewBytes = data.streamPreview;
+      _lastStreamPreview = _capturedStreamPreview(data);
     } else if (oldData.imageBytes != null &&
         (oldData.imageIdentity != data.imageIdentity ||
             oldData.imageBytes != data.imageBytes)) {
-      _lastStreamPreviewBytes = null;
+      _lastStreamPreview = null;
     }
 
     if (oldData.imageBytes != data.imageBytes ||
@@ -116,16 +98,10 @@ class ImageCardController extends ChangeNotifier {
       if (previousCache != null) unawaited(previousCache.dispose());
     }
 
-    if (oldData.imageBytes != data.imageBytes ||
-        oldData.imageIdentity != data.imageIdentity ||
-        oldData.completionPlaceholderBytes != data.completionPlaceholderBytes ||
-        (oldData.isGenerating && !data.isGenerating)) {
-      _completionImageEpoch++;
-      completedImageHasFrame = effectiveCompletionPlaceholderBytes == null;
-      _completionPlaceholderSettledNotified = false;
-      _precachingCompletedImageBytes = null;
-      _scheduleCompletionPlaceholderFallback();
-      scheduleCompletedImagePrecache(context);
+    // 只有这两种切换会重建表面层的 Image element；同一 element 换字节时旧帧仍在 gapless 画。
+    if (oldData.isGenerating != data.isGenerating ||
+        (oldData.imageBytes == null) != (data.imageBytes == null)) {
+      hasPaintedCompletedImage = false;
     }
 
     final hoverEffectsBecameAvailable =
@@ -136,7 +112,7 @@ class ImageCardController extends ChangeNotifier {
       isHovering = false;
     } else if (isPointerInside && hoverEffectsBecameAvailable) {
       isHovering = true;
-      if (capabilities.enableGlossEffect) {
+      if (capabilities.enableGlossEffect && !_reducedMotion) {
         glossController.forward(from: 0);
       }
     }
@@ -151,12 +127,34 @@ class ImageCardController extends ChangeNotifier {
     }
   }
 
+  void setReducedMotion(bool reducedMotion) {
+    if (_motionPreferenceInitialized && _reducedMotion == reducedMotion) return;
+    _motionPreferenceInitialized = true;
+    _reducedMotion = reducedMotion;
+    if (reducedMotion) {
+      glossController.stop();
+      glossController.value = 0;
+    }
+    final controller = glowController;
+    if (controller == null) return;
+    if (reducedMotion) {
+      controller.stop();
+      controller.value = 1 / 3;
+    } else if (!controller.isAnimating) {
+      controller.repeat(reverse: true);
+    }
+  }
+
   void _initGlowAnimation(TickerProvider vsync) {
     glowController?.dispose();
     glowController = AnimationController(
       duration: const Duration(milliseconds: 2000),
+      value: 1 / 3,
       vsync: vsync,
-    )..repeat(reverse: true);
+    );
+    if (_motionPreferenceInitialized && !_reducedMotion) {
+      glowController!.repeat(reverse: true);
+    }
     glowAnimation = Tween<double>(begin: 0.04, end: 0.1).animate(
       CurvedAnimation(parent: glowController!, curve: Curves.easeInOut),
     );
@@ -174,7 +172,9 @@ class ImageCardController extends ChangeNotifier {
       isHovering = true;
       notifyListeners();
     }
-    if (_capabilities.enableGlossEffect) glossController.forward(from: 0);
+    if (_capabilities.enableGlossEffect && !_reducedMotion) {
+      glossController.forward(from: 0);
+    }
   }
 
   void hoverExit() {
@@ -194,84 +194,26 @@ class ImageCardController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void scheduleCompletedImagePrecache(BuildContext context) {
-    final imageBytes = _data.imageBytes;
-    if (imageBytes == null ||
-        effectiveCompletionPlaceholderBytes == null ||
-        completedImageHasFrame ||
-        identical(_precachingCompletedImageBytes, imageBytes)) {
-      return;
-    }
-    final epoch = _completionImageEpoch;
-    _precachingCompletedImageBytes = imageBytes;
-    unawaited(
-      precacheImage(MemoryImage(imageBytes), context).then((_) {
-        if (_disposed ||
-            epoch != _completionImageEpoch ||
-            !identical(_precachingCompletedImageBytes, imageBytes)) {
-          return;
-        }
-        markCompletedImageReady(epoch);
-      }),
-    );
-  }
-
-  void _scheduleCompletionPlaceholderFallback() {
-    _completionPlaceholderFallbackTimer?.cancel();
-    if (effectiveCompletionPlaceholderBytes == null || completedImageHasFrame) {
-      return;
-    }
-    final epoch = _completionImageEpoch;
-    _completionPlaceholderFallbackTimer = Timer(
-      completionPlaceholderFallbackDuration,
-      () {
-        if (_disposed || epoch != _completionImageEpoch) return;
-        markCompletedImageReady(epoch);
-      },
-    );
-  }
-
-  void markCompletedImageReady([int? expectedEpoch]) {
-    if (_disposed ||
-        (expectedEpoch != null && expectedEpoch != _completionImageEpoch) ||
-        completedImageHasFrame) {
-      return;
-    }
-    _completionPlaceholderFallbackTimer?.cancel();
-    _completionPlaceholderFallbackTimer = null;
-    completedImageHasFrame = true;
-    _lastStreamPreviewBytes = null;
-    notifyListeners();
-    if (!_completionPlaceholderSettledNotified) {
-      _completionPlaceholderSettledNotified = true;
-      _capabilities.onCompletionPlaceholderSettled?.call();
-    }
-  }
-
   Widget completedImageFrameBuilder(
     BuildContext context,
     Widget child,
     int? frame,
     bool wasSynchronouslyLoaded,
   ) {
-    if ((frame != null || wasSynchronouslyLoaded) && !completedImageHasFrame) {
-      final epoch = _completionImageEpoch;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_disposed ||
-            epoch != _completionImageEpoch ||
-            completedImageHasFrame) {
-          return;
-        }
-        markCompletedImageReady(epoch);
-      });
+    if (frame != null || wasSynchronouslyLoaded) {
+      // 本帧自己已经算出 ready，标记只影响后续 build，通知反而多刷一帧。
+      hasPaintedCompletedImage = true;
+      _lastStreamPreview = null;
     }
     return child;
   }
 
   void handleLegacyTap() {
     final bypass =
+        _capabilities.selectionMode ||
         _capabilities.allowRepeatedModifierTaps &&
-        isPrimarySelectionModifierPressed();
+            (isPrimarySelectionModifierPressed() ||
+                HardwareKeyboard.instance.isShiftPressed);
     if (_isTapping && !bypass) return;
     if (!bypass) _isTapping = true;
     (_capabilities.onTap ?? _capabilities.onFullscreen)?.call();
@@ -284,7 +226,9 @@ class ImageCardController extends ChangeNotifier {
   }
 
   void handleLinkedTapUp(TapUpDetails details) {
-    if (isPrimarySelectionModifierPressed()) {
+    if (_capabilities.selectionMode ||
+        isPrimarySelectionModifierPressed() ||
+        HardwareKeyboard.instance.isShiftPressed) {
       clearPendingDoubleTap();
       _capabilities.onTap?.call();
       return;
@@ -318,6 +262,15 @@ class ImageCardController extends ChangeNotifier {
     _lastTapKind = null;
   }
 
+  static StreamPreviewFrame? _capturedStreamPreview(ImageCardViewData data) {
+    final bytes = data.streamPreview;
+    if (bytes == null || bytes.isEmpty) return null;
+    return StreamPreviewFrame(
+      bytes: bytes,
+      placement: data.focusedPreviewPlacement,
+    );
+  }
+
   ShareImageTransferCache? _createShareTransferCache() {
     final bytes = _data.imageBytes;
     if (bytes == null) return null;
@@ -337,7 +290,6 @@ class ImageCardController extends ChangeNotifier {
     _disposed = true;
     glossController.dispose();
     glowController?.dispose();
-    _completionPlaceholderFallbackTimer?.cancel();
     _legacyTapResetTimer?.cancel();
     _doubleTapResetTimer?.cancel();
     final cache = _shareTransferCache;

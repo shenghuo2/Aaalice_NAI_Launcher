@@ -1,3 +1,4 @@
+import '../../../widgets/common/delayed_rich_tooltip.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -8,12 +9,14 @@ import '../../../providers/image_generation_provider.dart';
 import '../../../providers/quality_preset_provider.dart';
 import '../../../providers/uc_preset_provider.dart';
 import '../../../../data/services/alias_resolver_service.dart';
+import '../../../adaptive/interaction_policy.dart';
+import '../../../themes/prompt_semantic_colors.dart';
+import '../../../themes/prompt_control_colors.dart';
+import '../../../widgets/prompt/prompt_control_button.dart';
+import '../../../widgets/common/rich_tooltip_surface.dart';
 import 'prompt_input_controller.dart';
 import 'prompt_input_models.dart';
 import 'prompt_input_tooltips.dart';
-
-bool shouldUseRichPromptTypeTooltip(TargetPlatform platform) =>
-    platform != TargetPlatform.windows;
 
 class PromptTypeSwitch extends ConsumerWidget {
   const PromptTypeSwitch({
@@ -49,52 +52,66 @@ class PromptTypeSwitch extends ConsumerWidget {
     final characters = ref.watch(characterPromptNotifierProvider);
     final aliases = ref.read(aliasResolverServiceProvider.notifier);
 
-    final positive = PromptTypeButton(
-      icon: Icons.auto_awesome,
-      label: context.l10n.prompt_positive,
-      count: controller.promptCount,
-      isSelected: !controller.isNegativeMode,
-      color: theme.colorScheme.primary,
-      compact: compact,
-      onTap: () => commands.setNegativeMode(false),
-      tooltipBuilder: (theme) => PositivePromptTooltip(
-        theme: theme,
-        userPrompt: controller.promptController.text,
-        prefixes: fixedTags.enabledPrefixes,
-        suffixes: fixedTags.enabledSuffixes,
-        qualityContent: qualityContent,
-        characters: characters.characters,
-        globalAiChoice: characters.globalAiChoice,
-        l10n: context.l10n,
-        aliasResolver: aliases,
-      ),
-    );
-    final negative = PromptTypeButton(
-      icon: Icons.block,
-      label: context.l10n.prompt_negative,
-      count: controller.negativePromptCount,
-      isSelected: controller.isNegativeMode,
-      color: theme.colorScheme.error,
-      compact: compact,
-      onTap: () => commands.setNegativeMode(true),
-      tooltipBuilder: (theme) => NegativePromptTooltip(
-        theme: theme,
-        userNegativePrompt: controller.negativeController.text,
-        prefixes: fixedTags.negativeEnabledPrefixes,
-        suffixes: fixedTags.negativeEnabledSuffixes,
-        ucPresetContent: ucContent,
-        l10n: context.l10n,
-        aliasResolver: aliases,
-      ),
-    );
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        controller.promptController,
+        controller.negativeController,
+      ]),
+      builder: (context, _) {
+        final positive = PromptTypeButton(
+          key: const ValueKey('generation_prompt_positive_mode'),
+          icon: Icons.auto_awesome,
+          label: context.l10n.prompt_positive,
+          count: controller.promptCount,
+          isSelected: !controller.isNegativeMode,
+          color: theme.promptSemanticColors.positivePrompt,
+          compact: compact,
+          onTap: () => commands.setNegativeMode(false),
+          tooltipBuilder: (theme) => PositivePromptTooltip(
+            theme: theme,
+            userPrompt: controller.promptController.text,
+            prefixes: fixedTags.enabledPrefixes,
+            suffixes: fixedTags.enabledSuffixes,
+            qualityContent: qualityContent,
+            characters: characters.characters,
+            globalAiChoice: characters.globalAiChoice,
+            l10n: context.l10n,
+            aliasResolver: aliases,
+          ),
+        );
+        final negative = PromptTypeButton(
+          key: const ValueKey('generation_prompt_negative_mode'),
+          icon: Icons.block,
+          label: context.l10n.prompt_negative,
+          count: controller.negativePromptCount,
+          isSelected: controller.isNegativeMode,
+          color: theme.promptSemanticColors.negativePrompt,
+          compact: compact,
+          onTap: () => commands.setNegativeMode(true),
+          tooltipBuilder: (theme) => NegativePromptTooltip(
+            theme: theme,
+            userNegativePrompt: controller.negativeController.text,
+            prefixes: fixedTags.negativeEnabledPrefixes,
+            suffixes: fixedTags.negativeEnabledSuffixes,
+            ucPresetContent: ucContent,
+            l10n: context.l10n,
+            aliasResolver: aliases,
+          ),
+        );
 
-    return Row(
-      mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
-      children: [
-        if (expand) Expanded(child: positive) else positive,
-        SizedBox(width: compact ? 6 : 8),
-        if (expand) Expanded(child: negative) else negative,
-      ],
+        return SizedBox(
+          key: const ValueKey('generation_prompt_type_switch'),
+          width: expand ? double.infinity : null,
+          child: Row(
+            mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+            children: [
+              if (expand) Expanded(child: positive) else positive,
+              SizedBox(width: compact ? 6 : 8),
+              if (expand) Expanded(child: negative) else negative,
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -125,161 +142,110 @@ class PromptTypeButton extends StatefulWidget {
   State<PromptTypeButton> createState() => _PromptTypeButtonState();
 }
 
-class _PromptTypeButtonState extends State<PromptTypeButton>
-    with SingleTickerProviderStateMixin {
-  bool _isHovering = false;
-  late final AnimationController _animation = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 150),
-  );
-  late final Animation<double> _scale = Tween<double>(
-    begin: 1,
-    end: 0.96,
-  ).animate(CurvedAnimation(parent: _animation, curve: Curves.easeInOut));
-
-  @override
-  void dispose() {
-    _animation.dispose();
-    super.dispose();
-  }
-
+class _PromptTypeButtonState extends State<PromptTypeButton> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final button = MouseRegion(
-      onEnter: (_) => setState(() => _isHovering = true),
-      onExit: (_) => setState(() => _isHovering = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTapDown: (_) => _animation.forward(),
-        onTapUp: (_) {
-          _animation.reverse();
-          widget.onTap();
-        },
-        onTapCancel: _animation.reverse,
-        child: AnimatedBuilder(
-          animation: _scale,
-          builder: (context, child) =>
-              Transform.scale(scale: _scale.value, child: child),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOutCubic,
-            constraints: const BoxConstraints(minHeight: 48),
-            padding: EdgeInsets.symmetric(
-              horizontal: widget.compact ? 8 : 14,
-              vertical: 8,
-            ),
-            decoration: BoxDecoration(
-              color: widget.isSelected
-                  ? widget.color.withValues(alpha: 0.16)
-                  : _isHovering
-                  ? theme.colorScheme.surfaceContainerHighest
-                  : theme.colorScheme.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              mainAxisSize: widget.compact
+    final button = ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 52),
+      child: PromptControlButton(
+        color: widget.color,
+        active: widget.isSelected,
+        selected: widget.isSelected,
+        onPressed: widget.onTap,
+        padding: EdgeInsets.symmetric(
+          horizontal: widget.compact ? 6 : 14,
+          vertical: 8,
+        ),
+        builder: (colors) => LayoutBuilder(
+          builder: (context, constraints) {
+            final fillsAvailableWidth =
+                widget.compact && constraints.hasBoundedWidth;
+            final label = Text(
+              widget.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: widget.isSelected
+                    ? FontWeight.w600
+                    : FontWeight.w500,
+                color: colors.foreground,
+                letterSpacing: 0.3,
+              ),
+            );
+            return Row(
+              mainAxisSize: fillsAvailableWidth
                   ? MainAxisSize.max
                   : MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: widget.isSelected
-                        ? widget.color.withValues(alpha: 0.15)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Icon(
-                    widget.icon,
-                    size: 16,
-                    color: widget.isSelected
-                        ? widget.color
-                        : theme.colorScheme.onSurface.withValues(alpha: 0.5),
-                  ),
+                Padding(
+                  padding: EdgeInsets.all(widget.compact ? 2 : 4),
+                  child: Icon(widget.icon, size: 16, color: colors.accent),
                 ),
-                SizedBox(width: widget.compact ? 5 : 8),
-                if (widget.compact)
-                  Expanded(child: _label(theme))
-                else
-                  _label(theme),
-                if (widget.count > 0 && !widget.compact) ...[
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 6,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: widget.isSelected
-                          ? widget.color.withValues(alpha: 0.2)
-                          : theme.colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      '${widget.count}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: widget.isSelected
-                            ? widget.color
-                            : theme.colorScheme.onSurface.withValues(
-                                alpha: 0.6,
-                              ),
-                      ),
-                    ),
-                  ),
-                ],
+                SizedBox(width: widget.compact ? 4 : 8),
+                if (fillsAvailableWidth) Flexible(child: label) else label,
+                SizedBox(width: widget.compact ? 3 : 6),
+                PromptTagCountBadge(
+                  count: widget.count,
+                  selected: widget.isSelected,
+                  color: widget.color,
+                  compact: widget.compact,
+                ),
               ],
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
     final tooltipBuilder = widget.tooltipBuilder;
     if (tooltipBuilder == null) return button;
-    final rich = shouldUseRichPromptTypeTooltip(theme.platform);
-    return Tooltip(
-      message: rich ? null : widget.label,
-      richMessage: rich
-          ? WidgetSpan(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: tooltipBuilder(theme),
-              ),
-            )
-          : null,
-      preferBelow: true,
-      verticalOffset: 20,
-      waitDuration: const Duration(milliseconds: 300),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.2),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(12),
+    final rich = context.interactionPolicy.precisePointerAvailable;
+    if (!rich) return Tooltip(message: widget.label, child: button);
+    return DelayedRichTooltip(
+      content: RichTooltipSurface(maxWidth: 420, child: tooltipBuilder(theme)),
       child: button,
     );
   }
+}
 
-  Widget _label(ThemeData theme) => Text(
-    widget.label,
-    maxLines: 1,
-    overflow: TextOverflow.ellipsis,
-    style: TextStyle(
-      fontSize: 13,
-      fontWeight: widget.isSelected ? FontWeight.w600 : FontWeight.w500,
-      color: widget.isSelected
-          ? widget.color
-          : theme.colorScheme.onSurface.withValues(alpha: 0.7),
-      letterSpacing: 0.3,
-    ),
-  );
+class PromptTagCountBadge extends StatelessWidget {
+  const PromptTagCountBadge({
+    super.key,
+    required this.count,
+    required this.selected,
+    required this.color,
+    this.compact = false,
+  });
+
+  final int count;
+  final bool selected;
+  final Color color;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = PromptControlColors(
+      Theme.of(context),
+      color,
+      active: selected,
+    );
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: compact ? 4 : 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: colors.background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        '$count',
+        style: TextStyle(
+          fontSize: compact ? 10 : 11,
+          fontWeight: FontWeight.w600,
+          color: colors.foreground,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    );
+  }
 }

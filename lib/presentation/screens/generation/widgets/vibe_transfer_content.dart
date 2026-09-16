@@ -1,7 +1,7 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart';
 
@@ -12,7 +12,7 @@ import '../../../../data/models/vibe/vibe_library_entry.dart';
 import '../../../../data/models/vibe/vibe_reference.dart';
 import '../../../providers/image_generation_provider.dart';
 import '../../../providers/generation/generation_params_notifier.dart';
-import '../../../utils/dropped_file_reader.dart';
+import '../../../utils/card_drop_reader.dart';
 import '../../../widgets/common/app_toast.dart';
 import 'recent_vibes_section.dart';
 import 'vibe_card.dart';
@@ -68,8 +68,8 @@ class VibeTransferContent extends ConsumerStatefulWidget {
   final VoidCallback? onImportFromLibrary;
 
   /// 局部拖拽导入文件的回调
-  final Future<int> Function(String fileName, Uint8List bytes)?
-  onImportDroppedFile;
+  final Future<int> Function(List<CardDroppedResource>)?
+  onImportDroppedResources;
 
   /// 编码 Vibe 的回调
   final Future<String?> Function(
@@ -103,7 +103,7 @@ class VibeTransferContent extends ConsumerStatefulWidget {
     required this.onClearAll,
     this.onSaveToLibrary,
     this.onImportFromLibrary,
-    this.onImportDroppedFile,
+    this.onImportDroppedResources,
     this.onEncode,
     required this.recentEntries,
     required this.isRecentCollapsed,
@@ -116,7 +116,6 @@ class VibeTransferContent extends ConsumerStatefulWidget {
 }
 
 class _VibeTransferContentState extends ConsumerState<VibeTransferContent> {
-  bool _isDraggingOver = false;
   bool _isFileDraggingOver = false;
   bool _isProcessingDroppedFiles = false;
 
@@ -268,78 +267,39 @@ class _VibeTransferContentState extends ConsumerState<VibeTransferContent> {
     List<VibeReference> vibes,
     bool showBackground,
   ) {
-    return DragTarget<VibeLibraryEntry>(
-      onWillAcceptWithDetails: (details) {
-        // 检查是否超过 16 个限制
-        if (vibes.length >= 16) {
-          AppToast.warning(context, context.l10n.vibe_maxReached);
-          return false;
-        }
-        setState(() => _isDraggingOver = true);
-        return true;
-      },
-      onAcceptWithDetails: (details) async {
-        HapticFeedback.heavyImpact();
-        setState(() => _isDraggingOver = false);
-        // 在回调中重新检查限制，使用最新的 vibes 状态
-        final currentVibes = ref
-            .read(generationParamsNotifierProvider)
-            .vibeReferencesV4;
-        if (currentVibes.length >= 16) {
-          AppToast.warning(context, context.l10n.vibe_maxReached);
-          return;
-        }
-        widget.onAddLibraryVibe(details.data);
-      },
-      onLeave: (_) {
-        setState(() => _isDraggingOver = false);
-      },
-      builder: (context, candidateData, rejectedData) {
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: _isDraggingOver
-                ? Border.all(color: theme.colorScheme.primary, width: 2)
-                : null,
-            color: _isDraggingOver
-                ? theme.colorScheme.primaryContainer.withValues(alpha: 0.3)
-                : null,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (hasVibes) ...[
-                ...List.generate(vibes.length, (index) {
-                  final vibe = vibes[index];
-                  return VibeCard(
-                    key: ValueKey('${vibe.displayName}_$index'),
-                    index: index,
-                    vibe: vibe,
-                    onRemove: () => widget.onRemoveVibe(index),
-                    onStrengthChanged: (value) =>
-                        widget.onUpdateStrength(index, value),
-                    onInfoExtractedChanged: (value) =>
-                        widget.onUpdateInfoExtracted(index, value),
-                    onEnabledChanged: (value) =>
-                        widget.onUpdateEnabled(index, value),
-                    onEncode: widget.onEncode,
-                    onUpdateEncoding: widget.onUpdateEncoding,
-                  );
-                }),
-                const SizedBox(height: 12),
+    return _wrapWithFileDropRegion(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (hasVibes) ...[
+            ...List.generate(vibes.length, (index) {
+              final vibe = vibes[index];
+              return VibeCard(
+                key: ValueKey('${vibe.displayName}_$index'),
+                index: index,
+                vibe: vibe,
+                onRemove: () => widget.onRemoveVibe(index),
+                onStrengthChanged: (value) =>
+                    widget.onUpdateStrength(index, value),
+                onInfoExtractedChanged: (value) =>
+                    widget.onUpdateInfoExtracted(index, value),
+                onEnabledChanged: (value) =>
+                    widget.onUpdateEnabled(index, value),
+                onEncode: widget.onEncode,
+                onUpdateEncoding: widget.onUpdateEncoding,
+              );
+            }),
+            const SizedBox(height: 12),
 
-                // 库操作按钮行
-                _buildLibraryActions(context, theme, vibes),
-                const SizedBox(height: 8),
-              ] else ...[
-                // 空状态
-                _buildEmptyState(context, theme),
-              ],
-            ],
-          ),
-        );
-      },
+            // 库操作按钮行
+            _buildLibraryActions(context, theme, vibes),
+            const SizedBox(height: 8),
+          ] else ...[
+            // 空状态
+            _buildEmptyState(context, theme),
+          ],
+        ],
+      ),
     );
   }
 
@@ -418,19 +378,22 @@ class _VibeTransferContentState extends ConsumerState<VibeTransferContent> {
   }
 
   Widget _wrapWithFileDropRegion({required Widget child}) {
-    if (widget.onImportDroppedFile == null ||
+    if (widget.onImportDroppedResources == null ||
         !PlatformCapabilities.current.supportsExternalFileDrop) {
       return child;
     }
 
     return DropRegion(
-      formats: Formats.standardFormats,
+      formats: cardDropFormats,
       hitTestBehavior: HitTestBehavior.opaque,
       onDropOver: (event) {
         if (_isProcessingDroppedFiles || widget.vibes.length >= 16) {
           return DropOperation.none;
         }
-        if (event.session.allowedOperations.contains(DropOperation.copy)) {
+        if (event.session.allowedOperations.contains(DropOperation.copy) &&
+            const CardDropPolicy(
+              allowVibes: true,
+            ).accepts(event.session.items)) {
           if (!_isFileDraggingOver) {
             setState(() => _isFileDraggingOver = true);
           }
@@ -445,10 +408,12 @@ class _VibeTransferContentState extends ConsumerState<VibeTransferContent> {
       },
       onPerformDrop: (event) async {
         setState(() => _isFileDraggingOver = false);
-        unawaited(_handleFileDrop(event));
+        await _handleFileDrop(event);
       },
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 150),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
           border: _isFileDraggingOver
@@ -464,7 +429,7 @@ class _VibeTransferContentState extends ConsumerState<VibeTransferContent> {
   }
 
   Future<void> _handleFileDrop(PerformDropEvent event) async {
-    final importer = widget.onImportDroppedFile;
+    final importer = widget.onImportDroppedResources;
     if (importer == null || _isProcessingDroppedFiles) {
       return;
     }
@@ -475,41 +440,22 @@ class _VibeTransferContentState extends ConsumerState<VibeTransferContent> {
     }
 
     setState(() => _isProcessingDroppedFiles = true);
-    var handledAny = false;
-    var addedCount = 0;
     try {
-      for (final item in event.session.items) {
-        final reader = item.dataReader;
-        if (reader == null) {
-          continue;
-        }
-
-        final file = await DroppedFileReader.read(
-          reader,
-          allowVibeFiles: true,
-          logTag: 'VibeTransferDrop',
-        );
-        if (file == null) {
-          continue;
-        }
-
-        handledAny = true;
-        addedCount += await importer(file.fileName, file.bytes);
-        if (!mounted) {
-          return;
-        }
-      }
-
-      if (!mounted) {
-        return;
-      }
-      if (!handledAny) {
-        AppToast.warning(context, context.l10n.toast_dropNoReadableImageOrVibe);
-      } else if (addedCount > 0) {
+      final resources = await readCardDrop(
+        context,
+        event.session.items,
+        policy: const CardDropPolicy(allowVibes: true),
+      );
+      final addedCount = await importer(resources);
+      if (mounted && addedCount > 0) {
         final message = addedCount == 1
             ? context.l10n.drop_addedToVibe
             : context.l10n.drop_addedMultipleToVibe(addedCount);
         AppToast.success(context, message);
+      }
+    } catch (error) {
+      if (mounted) {
+        AppToast.error(context, '${context.l10n.common_error}: $error');
       }
     } finally {
       if (mounted) {
@@ -550,7 +496,9 @@ class _EmptyStateCardState extends State<_EmptyStateCard> {
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 150),
         curve: Curves.easeInOut,
         decoration: BoxDecoration(
           color: _isHovered

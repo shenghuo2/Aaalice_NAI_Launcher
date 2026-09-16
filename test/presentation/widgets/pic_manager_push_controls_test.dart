@@ -69,10 +69,8 @@ void main() {
     var actions = tester.widget<CardActionButtons>(
       find.byType(CardActionButtons),
     );
-    expect(actions.buttons.take(2).map((button) => button.tooltip), [
-      'Push to Pic Manager',
-      'Favorite',
-    ]);
+    var labels = actions.buttons.map((button) => button.tooltip).toList();
+    expect(labels.indexOf('Push to Pic Manager') + 1, labels.indexOf('Favorite'));
 
     const post = GalleryItem(
       id: 42,
@@ -97,10 +95,8 @@ void main() {
     );
     await tester.pump();
     actions = tester.widget<CardActionButtons>(find.byType(CardActionButtons));
-    expect(actions.buttons.take(2).map((button) => button.tooltip), [
-      'Push to Pic Manager',
-      'Favorite',
-    ]);
+    labels = actions.buttons.map((button) => button.tooltip).toList();
+    expect(labels.indexOf('Push to Pic Manager') + 1, labels.indexOf('Favorite'));
   });
 
   testWidgets('auto mode hides push and merges its busy state into favorite', (
@@ -149,7 +145,10 @@ void main() {
       ),
       isEmpty,
     );
-    expect(actions.buttons.first.isLoading, isFalse);
+    var favoriteAction = actions.buttons.singleWhere(
+      (button) => button.tooltip == 'Favorite',
+    );
+    expect(favoriteAction.isLoading, isFalse);
 
     final upload = container
         .read(picManagerUploadsProvider.notifier)
@@ -164,8 +163,10 @@ void main() {
         );
     await tester.pump();
     actions = tester.widget<CardActionButtons>(find.byType(CardActionButtons));
-    expect(actions.buttons.first.tooltip, 'Favorite');
-    expect(actions.buttons.first.isLoading, isTrue);
+    favoriteAction = actions.buttons.singleWhere(
+      (button) => button.tooltip == 'Favorite',
+    );
+    expect(favoriteAction.isLoading, isTrue);
 
     service.release();
     await tester.runAsync(() => upload);

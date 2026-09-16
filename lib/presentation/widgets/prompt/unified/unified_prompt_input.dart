@@ -1,19 +1,21 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:nai_launcher/presentation/themes/core/input_surface_style.dart';
 import 'package:nai_launcher/core/utils/localization_extension.dart';
 
+import '../../../providers/prompt_editor_preferences_provider.dart';
+import '../prompt_tag_mode_toggle.dart';
 import '../../../../core/utils/nai_prompt_formatter.dart';
-import '../../../../core/utils/disabled_prompt_tag_syntax.dart';
+import '../../../../core/utils/prompt_edit_document.dart';
 import '../../../../core/utils/prompt_regex_replacer.dart';
 import '../../../../core/utils/sd_to_nai_converter.dart';
 import '../../../../data/models/character/character_prompt.dart';
 import '../../../../data/services/alias_resolver_service.dart';
 import '../../../../presentation/utils/text_selection_utils.dart';
+import '../../../adaptive/interaction_policy.dart';
 import '../../../providers/generation/generation_settings_notifiers.dart';
 import '../../../providers/tag_library_page_provider.dart';
 import '../../../screens/tag_library_page/widgets/entry_add_dialog.dart';
@@ -30,7 +32,11 @@ import '../../../providers/fixed_tags_provider.dart';
 import '../../../providers/prompt_regex_rules_provider.dart';
 import '../comfyui_import_wrapper.dart';
 import '../nai_syntax_controller.dart';
+import '../tag_mode_prompt_field.dart';
+import '../prompt_text_selection_actions.dart';
 import 'unified_prompt_config.dart';
+import 'prompt_scroll_coordinator.dart';
+import '../prompt_weight_editing.dart';
 import 'package:nai_launcher/presentation/widgets/common/themed_input.dart';
 import 'package:nai_launcher/presentation/widgets/common/themed_text_selection_toolbar.dart';
 
@@ -92,6 +98,8 @@ class UnifiedPromptInput extends ConsumerStatefulWidget {
 
   /// 是否显示右下角助手
   final bool enableAssistant;
+  final bool showTagModeSwitch;
+  final Object? assistantTapRegionGroupId;
 
   /// 打开助手设置回调
   final VoidCallback? onOpenAssistantSettings;
@@ -119,6 +127,8 @@ class UnifiedPromptInput extends ConsumerStatefulWidget {
     this.fitContent = false,
     this.sessionId,
     this.enableAssistant = true,
+    this.showTagModeSwitch = true,
+    this.assistantTapRegionGroupId,
     this.onOpenAssistantSettings,
     this.onComfyuiImport,
   });
@@ -133,9 +143,16 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
   /// 语法高亮控制器
   NaiSyntaxController? _syntaxController;
   bool _syncingControllerValue = false;
+  Object get _modeId => widget.sessionId ?? _effectiveController;
+  bool get _tagMode =>
+      widget.config.enableTagMode && ref.read(promptTagModeProvider(_modeId));
 
   /// 焦点节点
   FocusNode? _internalFocusNode;
+  final FocusNode _tagFocusNode = FocusNode();
+  // Opening search reparents the input under a Column. Keep its editing session
+  // and viewport instead of recreating the text/tag mode container.
+  final GlobalKey _inputStackKey = GlobalKey();
 
   StreamSubscription<StreamingChunk>? _assistantStreamSub;
   late String _sessionId;
@@ -163,19 +180,8 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     ),
   };
 
-  bool get _isDesktop {
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.windows:
-      case TargetPlatform.macOS:
-      case TargetPlatform.linux:
-        return true;
-      default:
-        return false;
-    }
-  }
-
   bool _handleHardwareKeyEvent(KeyEvent event) {
-    if (!_isDesktop || event is! KeyDownEvent) {
+    if (event is! KeyDownEvent) {
       return false;
     }
 
@@ -255,6 +261,9 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
 
   /// 获取有效的文本控制器
   TextEditingController get _effectiveController => _syntaxController!;
+  TextEditingController get _textFieldController => widget.config.enableTagMode
+      ? _syntaxController!.displayController
+      : _effectiveController;
 
   /// 获取有效的焦点节点
   FocusNode get _effectiveFocusNode {
@@ -281,7 +290,6 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
       text: initialText,
       highlightEnabled: widget.config.enableSyntaxHighlight,
       numericEmphasisEnabled: widget.config.numericEmphasisEnabled,
-      highlightActiveTag: !widget.config.readOnly,
     );
     if (widget.controller != null) {
       _syntaxController!.value = widget.controller!.value;
@@ -338,7 +346,6 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     _syntaxController?.highlightEnabled = widget.config.enableSyntaxHighlight;
     _syntaxController?.numericEmphasisEnabled =
         widget.config.numericEmphasisEnabled;
-    _syntaxController?.highlightActiveTag = !widget.config.readOnly;
   }
 
   @override
@@ -352,6 +359,7 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     _syntaxController?.removeListener(_syncToExternalController);
     _syntaxController?.dispose();
     _internalFocusNode?.dispose();
+    _tagFocusNode.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     _replaceController.dispose();
@@ -385,6 +393,8 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     await _assistantStreamSub?.cancel();
     final stream = taskType == AssistantTaskType.llm
         ? service.optimizePrompt(text, sessionId: _sessionId)
+        : _tagMode
+        ? service.translateTagLabels(text, sessionId: _sessionId)
         : service.translatePrompt(text, sessionId: _sessionId);
 
     _assistantStreamSub = stream.listen(
@@ -429,97 +439,15 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
   }
 
   String _assistantInputText() {
-    final prompt = ref
+    return ref
         .read(fixedTagsNotifierProvider)
         .stripFromPrompt(_effectiveController.text);
-    return DisabledPromptTagSyntax.outputOf(prompt);
-  }
-
-  void _toggleActiveTag() {
-    final controller = _effectiveController;
-    final currentValue = controller.value;
-    final edit = DisabledPromptTagSyntax.toggleSelection(
-      currentValue.text,
-      selectionBase: currentValue.selection.baseOffset,
-      selectionExtent: currentValue.selection.extentOffset,
-    );
-    if (edit == null) return;
-
-    final nextValue = currentValue.copyWith(
-      text: edit.text,
-      selection: TextSelection(
-        baseOffset: edit.selectionBase,
-        extentOffset: edit.selectionExtent,
-        affinity: currentValue.selection.affinity,
-        isDirectional: currentValue.selection.isDirectional,
-      ),
-      composing: TextRange.empty,
-    );
-    controller.value = nextValue;
-    _handleTextChanged(edit.text);
-    ref
-        .read(promptAssistantHistoryProvider.notifier)
-        .recordExternalChange(
-          _sessionId,
-          before: currentValue.text,
-          after: edit.text,
-        );
-    _effectiveFocusNode.requestFocus();
-  }
-
-  DisabledPromptTagSegment? _activeTagSegment() {
-    final value = _effectiveController.value;
-    if (!value.selection.isValid) return null;
-    return DisabledPromptTagSyntax.segmentForSelection(
-      value.text,
-      selectionStart: value.selection.start,
-      selectionEnd: value.selection.end,
-    );
-  }
-
-  void _adjustActiveTagWeight(double step) {
-    final segment = _activeTagSegment();
-    if (segment == null) return;
-    final parsed = PromptWeightSelectionEditor.parseWeightSyntax(
-      segment.contentText(_effectiveController.text),
-    );
-    _setActiveTagWeight(segment, parsed.weight + step);
-  }
-
-  void _resetActiveTagWeight() {
-    final segment = _activeTagSegment();
-    if (segment == null) return;
-    _setActiveTagWeight(segment, 1.0);
-  }
-
-  void _setActiveTagWeight(
-    DisabledPromptTagSegment segment,
-    double weight,
-  ) {
-    final controller = _effectiveController;
-    final currentValue = controller.value;
-    final nextValue = PromptWeightSelectionEditor.weightedValueForRange(
-      currentValue,
-      TextRange(start: segment.contentStart, end: segment.contentEnd),
-      weight,
-    );
-    if (nextValue == null || nextValue.text == currentValue.text) return;
-
-    controller.value = nextValue;
-    _handleTextChanged(nextValue.text);
-    ref
-        .read(promptAssistantHistoryProvider.notifier)
-        .recordExternalChange(
-          _sessionId,
-          before: currentValue.text,
-          after: nextValue.text,
-        );
-    _effectiveFocusNode.requestFocus();
   }
 
   /// 焦点变化回调
   void _onFocusChanged() {
     if (!_effectiveFocusNode.hasFocus) {
+      if (_tagMode) return;
       _formatOnBlur();
       ref
           .read(promptAssistantHistoryProvider.notifier)
@@ -736,7 +664,7 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
       _activeSearchMatchIndex = -1;
     });
     _clearSearchHighlights();
-    _effectiveFocusNode.requestFocus();
+    (_tagMode ? _tagFocusNode : _effectiveFocusNode).requestFocus();
   }
 
   void _toggleReplaceVisible() {
@@ -1031,8 +959,6 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
   /// 开关关闭、没有选区、选区里不含可解析的 `<词库名>`。
   /// 未在词库中找到的引用由 [AliasResolverService] 原样保留，同样走默认路径。
   bool _handleExpandedClipboardAction({required bool isCut}) {
-    if (!ref.read(resolveAliasOnCopySettingsProvider)) return false;
-
     final controller = _effectiveController;
     final selection = controller.selection;
     if (!selection.isValid || selection.isCollapsed) return false;
@@ -1041,15 +967,29 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     final selectedText = selection.textInside(text);
     if (selectedText.isEmpty) return false;
 
-    final expanded = ref
-        .read(aliasResolverServiceProvider.notifier)
-        .resolveAliases(selectedText);
-    if (expanded == selectedText) return false;
+    final display = widget.config.enableTagMode
+        ? _syntaxController!.displayController
+        : null;
+    final expanded = ref.read(resolveAliasOnCopySettingsProvider)
+        ? PromptEditDocument.mapActiveText(
+            selectedText,
+            ref.read(aliasResolverServiceProvider.notifier).resolveAliases,
+          )
+        : selectedText;
+    if (expanded == selectedText &&
+        !(display?.hasProjectedSelection ?? false)) {
+      return false;
+    }
 
     unawaited(Clipboard.setData(ClipboardData(text: expanded)));
 
     // 剪切需要自行删除选中文本：默认实现会连带再写一次剪贴板，不能复用
     if (isCut && !widget.config.readOnly) {
+      if (display != null) {
+        display.deleteSelection();
+        _handleTextChanged(controller.text);
+        return true;
+      }
       final newValue = TextEditingValue(
         text: selection.textBefore(text) + selection.textAfter(text),
         selection: TextSelection.collapsed(offset: selection.start),
@@ -1116,6 +1056,12 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
       );
     }
 
+    final enabledAction = promptTextSelectionEnabledAction(
+      context,
+      editableTextState,
+    );
+    if (enabledAction != null) buttonItems.insert(0, enabledAction);
+
     return buildThemedTextSelectionToolbar(
       context,
       anchors: editableTextState.contextMenuAnchors,
@@ -1130,13 +1076,10 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
   ) async {
     final categories = ref.read(tagLibraryPageCategoriesProvider);
 
-    await showDialog<void>(
-      context: context,
-      builder: (context) => EntryAddDialog(
-        categories: categories,
-        entry: null,
-        initialContent: selectedText,
-      ),
+    await EntryAddDialog.show(
+      context,
+      categories: categories,
+      initialContent: selectedText,
     );
 
     // 注意：EntryAddDialog 会自己处理保存逻辑并显示 toast
@@ -1144,6 +1087,7 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.config.enableTagMode) ref.watch(promptTagModeProvider(_modeId));
     Widget result = _buildTextField();
 
     // 如果启用 ComfyUI 导入，包装 ComfyuiImportWrapper
@@ -1157,31 +1101,58 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     }
 
     final inputStack = Stack(
+      key: _inputStackKey,
       fit: widget.fitContent ? StackFit.loose : StackFit.expand,
       children: [
         result,
         if (widget.enableAssistant)
-          PromptAssistantOverlay(
-            sessionId: _sessionId,
-            controller: _effectiveController,
-            onChanged: widget.onChanged,
-            onOpenSettings: widget.onOpenAssistantSettings,
+          Positioned.fill(
+            child: PromptAssistantOverlay(
+              placement: PromptAssistantPlacement.viewport,
+              supportsTagMode: widget.config.enableTagMode,
+              tagModeSessionId: _modeId,
+              tapRegionGroupId: widget.assistantTapRegionGroupId,
+              iconOnly: true,
+              sessionId: _sessionId,
+              controller: _effectiveController,
+              interactionPolicy: context.interactionPolicy,
+              onChanged: widget.onChanged,
+              onOpenSettings: widget.onOpenAssistantSettings,
+            ),
           ),
       ],
     );
-    final editorArea = _buildEditorArea(inputStack);
 
+    final editor = widget.config.enableTagMode && widget.showTagModeSwitch
+        ? Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Flexible(
+                fit: widget.expands ? FlexFit.tight : FlexFit.loose,
+                child: inputStack,
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: PromptTagModeToggle(
+                  sessionId: _modeId,
+                  enabled: !widget.config.readOnly,
+                ),
+              ),
+            ],
+          )
+        : inputStack;
     if (!_searchVisible) {
-      return editorArea;
+      return editor;
     }
 
-    if (widget.expands || !widget.fitContent) {
+    if (widget.expands) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _buildSearchToolbar(context),
           const SizedBox(height: 8),
-          Expanded(child: editorArea),
+          Expanded(child: editor),
         ],
       );
     }
@@ -1192,152 +1163,8 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
       children: [
         _buildSearchToolbar(context),
         const SizedBox(height: 8),
-        editorArea,
+        editor,
       ],
-    );
-  }
-
-  Widget _buildEditorArea(Widget inputStack) {
-    return ValueListenableBuilder<TextEditingValue>(
-      valueListenable: _effectiveController,
-      child: inputStack,
-      builder: (context, value, child) {
-        final selection = value.selection;
-        final segment = widget.config.readOnly || !selection.isValid
-            ? null
-            : DisabledPromptTagSyntax.segmentForSelection(
-                value.text,
-                selectionStart: selection.start,
-                selectionEnd: selection.end,
-              );
-        final actionBar = segment == null
-            ? null
-            : _buildTagActionBar(context, value.text, segment);
-
-        if (widget.expands || !widget.fitContent) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(child: child!),
-              if (actionBar != null) ...[const SizedBox(height: 6), actionBar],
-            ],
-          );
-        }
-
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            child!,
-            if (actionBar != null) ...[const SizedBox(height: 6), actionBar],
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildTagActionBar(
-    BuildContext context,
-    String prompt,
-    DisabledPromptTagSegment segment,
-  ) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final actionLabel = segment.disabled
-        ? context.l10n.prompt_enableTag
-        : context.l10n.prompt_disableTag;
-    final parsedWeight = PromptWeightSelectionEditor.parseWeightSyntax(
-      segment.contentText(prompt),
-    );
-    final tagStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
-      color: segment.disabled
-          ? colorScheme.outline
-          : colorScheme.onSurfaceVariant,
-      decoration: segment.disabled ? TextDecoration.lineThrough : null,
-    );
-
-    return Container(
-      key: const ValueKey('prompt_tag_action_bar'),
-      height: 36,
-      padding: const EdgeInsets.only(left: 10, right: 2),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.sell_outlined,
-            size: 16,
-            color: colorScheme.onSurfaceVariant,
-          ),
-          const SizedBox(width: 7),
-          Expanded(
-            child: Text(
-              parsedWeight.baseText,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: tagStyle,
-            ),
-          ),
-          _TagActionIconButton(
-            key: const ValueKey('prompt_tag_weight_decrease_button'),
-            icon: Icons.remove,
-            tooltip: context.l10n.tooltip_decreaseWeight,
-            onPressed: () => _adjustActiveTagWeight(-0.05),
-          ),
-          SizedBox(
-            key: const ValueKey('prompt_tag_weight_value'),
-            width: 42,
-            child: Tooltip(
-              message: context.l10n.weight_title,
-              child: Text(
-                parsedWeight.weight.toStringAsFixed(2),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: colorScheme.onSurface,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ),
-          ),
-          _TagActionIconButton(
-            key: const ValueKey('prompt_tag_weight_reset_button'),
-            icon: Icons.refresh,
-            tooltip: context.l10n.tooltip_resetWeight,
-            onPressed: parsedWeight.weight == 1.0
-                ? null
-                : _resetActiveTagWeight,
-          ),
-          _TagActionIconButton(
-            key: const ValueKey('prompt_tag_weight_increase_button'),
-            icon: Icons.add,
-            tooltip: context.l10n.tooltip_increaseWeight,
-            onPressed: () => _adjustActiveTagWeight(0.05),
-          ),
-          Container(
-            width: 1,
-            height: 18,
-            margin: const EdgeInsets.symmetric(horizontal: 2),
-            color: colorScheme.outlineVariant,
-          ),
-          SizedBox(
-            width: 32,
-            height: 32,
-            child: IconButton(
-              key: const ValueKey('prompt_tag_toggle_button'),
-              icon: Icon(
-                segment.disabled ? Icons.visibility : Icons.visibility_off,
-                size: 18,
-              ),
-              tooltip: actionLabel,
-              onPressed: _toggleActiveTag,
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1401,24 +1228,21 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     final total = _searchMatches.length;
     final current = total == 0 ? 0 : _activeSearchMatchIndex + 1;
 
-    return Row(
+    final field = _buildToolbarField(
+      context: context,
+      theme: theme,
+      colorScheme: colorScheme,
+      fieldKey: const ValueKey('prompt_input_search_field'),
+      controller: _searchController,
+      focusNode: _searchFocusNode,
+      hintText: context.l10n.prompt_searchHint,
+      prefixIcon: Icons.search,
+      textInputAction: TextInputAction.search,
+      onSubmitted: (_) => _goToSearchMatch(previous: false),
+    );
+    final actions = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Expanded(
-          child: _buildToolbarField(
-            context: context,
-            theme: theme,
-            colorScheme: colorScheme,
-            fieldKey: const ValueKey('prompt_input_search_field'),
-            controller: _searchController,
-            focusNode: _searchFocusNode,
-            hintText: context.l10n.prompt_searchHint,
-            prefixIcon: Icons.search,
-            textInputAction: TextInputAction.search,
-            onSubmitted: (_) => _goToSearchMatch(previous: false),
-          ),
-        ),
-        const SizedBox(width: 8),
         Text(
           context.l10n.prompt_searchMatchCount(current, total),
           style: theme.textTheme.labelMedium?.copyWith(
@@ -1448,6 +1272,24 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
         ),
       ],
     );
+    if (MediaQuery.textScalerOf(context).scale(14) >= 20) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          field,
+          const SizedBox(height: 4),
+          Align(alignment: Alignment.centerRight, child: actions),
+        ],
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Expanded(child: field),
+        const SizedBox(width: 8),
+        actions,
+      ],
+    );
   }
 
   Widget _buildReplaceRow(
@@ -1457,24 +1299,21 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
   ) {
     final canRun = _canRunReplace;
 
-    return Row(
+    final field = _buildToolbarField(
+      context: context,
+      theme: theme,
+      colorScheme: colorScheme,
+      fieldKey: const ValueKey('prompt_input_replace_field'),
+      controller: _replaceController,
+      focusNode: _replaceFocusNode,
+      hintText: context.l10n.prompt_replaceHint,
+      prefixIcon: Icons.find_replace,
+      textInputAction: TextInputAction.done,
+      onSubmitted: (_) => _replaceActiveMatch(),
+    );
+    final actions = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Expanded(
-          child: _buildToolbarField(
-            context: context,
-            theme: theme,
-            colorScheme: colorScheme,
-            fieldKey: const ValueKey('prompt_input_replace_field'),
-            controller: _replaceController,
-            focusNode: _replaceFocusNode,
-            hintText: context.l10n.prompt_replaceHint,
-            prefixIcon: Icons.find_replace,
-            textInputAction: TextInputAction.done,
-            onSubmitted: (_) => _replaceActiveMatch(),
-          ),
-        ),
-        const SizedBox(width: 2),
         _PromptSearchIconButton(
           key: const ValueKey('prompt_input_replace_current'),
           icon: Icons.find_replace,
@@ -1487,6 +1326,23 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
           tooltip: context.l10n.prompt_replaceAll,
           onPressed: canRun ? _replaceAllMatches : null,
         ),
+      ],
+    );
+    if (MediaQuery.textScalerOf(context).scale(14) >= 20) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          field,
+          Align(alignment: Alignment.centerRight, child: actions),
+        ],
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Expanded(child: field),
+        const SizedBox(width: 2),
+        actions,
       ],
     );
   }
@@ -1503,8 +1359,10 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     required TextInputAction textInputAction,
     required ValueChanged<String> onSubmitted,
   }) {
-    return SizedBox(
-      height: 34,
+    final minHeight = (MediaQuery.textScalerOf(context).scale(14) * 1.35 + 16)
+        .clamp(34.0, double.infinity);
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: minHeight),
       child: TextField(
         key: fieldKey,
         controller: controller,
@@ -1531,26 +1389,15 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
   /// 构建文本输入框
   Widget _buildTextField() {
     final enableWheelAdjustment = ref.watch(promptWeightScrollSettingsProvider);
-    final assistantConfig = widget.enableAssistant
-        ? ref.watch(promptAssistantConfigProvider)
-        : null;
-    final shouldReserveAssistantSpace =
-        assistantConfig != null &&
-        assistantConfig.enabled &&
-        (!_isDesktop || assistantConfig.desktopOverlayEnabled);
     final requestedContentPadding =
         widget.decoration?.contentPadding ??
         const EdgeInsets.symmetric(horizontal: 12, vertical: 10);
-    final effectiveContentPadding = _withAssistantBottomClearance(
-      requestedContentPadding,
-      reserveSpace: shouldReserveAssistantSpace,
-    );
 
     // 合并 decoration：优先使用传入的 decoration，但保留 config 中的 hintText
     final effectiveDecoration =
         InputDecoration(
           hintText: widget.config.hintText,
-          contentPadding: effectiveContentPadding,
+          contentPadding: requestedContentPadding,
         ).copyWith(
           hintText: widget.config.hintText,
           filled: widget.decoration?.filled,
@@ -1581,7 +1428,7 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     // 否则 TextField 会创建自己的内部 focusNode，
     // 导致 _onFocusChanged 监听不到失焦事件
     final baseInput = ThemedInput(
-      controller: _effectiveController,
+      controller: _textFieldController,
       focusNode: _effectiveFocusNode,
       decoration: effectiveDecoration,
       surfaceColor: widget.surfaceColor,
@@ -1590,7 +1437,7 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
       expands: widget.expands,
       scrollPhysics:
           enableWheelAdjustment &&
-              supportsPromptWeightScrollPhysics(defaultTargetPlatform)
+              context.interactionPolicy.precisePointerAvailable
           ? WeightAdjustScrollPhysics(
               controllerProvider: _effectiveControllerProvider,
             )
@@ -1607,8 +1454,10 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
                 );
               }),
             ],
-      onChanged: widget.config.enableAutocomplete ? null : _handleTextChanged,
-      onSubmitted: widget.onSubmitted,
+      onChanged: widget.config.enableAutocomplete
+          ? null
+          : (_) => _handleTextChanged(_effectiveController.text),
+      onSubmitted: (_) => widget.onSubmitted?.call(_effectiveController.text),
       showClearButton: widget.config.showClearButton,
       onClearPressed: widget.config.showClearButton ? _handleClear : null,
       clearNeedsConfirm: widget.config.clearNeedsConfirm,
@@ -1616,28 +1465,51 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
     );
 
     // 接管 Ctrl+C / Ctrl+X：覆盖 EditableText 内置的 CopySelectionTextIntent
-    final clipboardAwareInput = Actions(
+    Widget clipboardAwareInput = Actions(
       actions: _clipboardActions,
       child: baseInput,
     );
 
+    if (widget.config.enableTagMode) {
+      clipboardAwareInput = TagModePromptField(
+        sessionId: _modeId,
+        fitContent: widget.fitContent && !widget.expands,
+        bottomPadding: widget.config.showClearButton ? 58 : 12,
+        showModeSwitch: false,
+        controller: _effectiveController,
+        sourceFocusNode: _effectiveFocusNode,
+        tagFocusNode: _tagFocusNode,
+        onClear: widget.config.showClearButton ? _handleClear : null,
+        clearNeedsConfirm: widget.config.clearNeedsConfirm,
+        surfaceColor: widget.surfaceColor,
+        enabled: !widget.config.readOnly,
+        enableAutocomplete: widget.config.enableAutocomplete,
+        enableWheelAdjustment: enableWheelAdjustment,
+        onChanged: _handleTextChanged,
+        onSearch: (replace) => _openSearch(showReplace: replace),
+        child: clipboardAwareInput,
+      );
+    }
+
     // 包装权重调整工具条
-    Widget result = WeightAdjustToolbarWrapper(
-      controller: _effectiveController,
-      focusNode: _effectiveFocusNode,
-      enableWheelAdjustment: enableWheelAdjustment,
-      showToolbar: false,
-      child: clipboardAwareInput,
-    );
+    Widget result = widget.config.enableTagMode
+        ? clipboardAwareInput
+        : WeightAdjustToolbarWrapper(
+            controller: _effectiveController,
+            focusNode: _effectiveFocusNode,
+            enableWheelAdjustment: enableWheelAdjustment,
+            enabled: !_tagMode && !widget.config.readOnly,
+            child: clipboardAwareInput,
+          );
 
     // 如果启用自动补全，使用 AutocompleteWrapper 包装
     if (widget.config.enableAutocomplete) {
       result = AutocompleteWrapper(
-        controller: _effectiveController,
+        controller: _textFieldController,
         focusNode: _effectiveFocusNode,
         config: widget.config.autocompleteConfig,
-        enabled: !widget.config.readOnly,
-        onChanged: _handleTextChanged,
+        enabled: !widget.config.readOnly && !_tagMode,
+        onChanged: (_) => _handleTextChanged(_effectiveController.text),
         contentPadding: effectiveDecoration.contentPadding,
         maxLines: widget.maxLines,
         expands: widget.expands,
@@ -1645,23 +1517,14 @@ class _UnifiedPromptInputState extends ConsumerState<UnifiedPromptInput> {
       );
     }
 
-    return result;
-  }
-
-  EdgeInsetsGeometry _withAssistantBottomClearance(
-    EdgeInsetsGeometry contentPadding, {
-    required bool reserveSpace,
-  }) {
-    if (!reserveSpace) {
-      return contentPadding;
-    }
-
-    final resolved = contentPadding.resolve(Directionality.of(context));
-    if (resolved.bottom >= PromptAssistantOverlay.contentBottomClearance) {
-      return resolved;
-    }
-    return resolved.copyWith(
-      bottom: PromptAssistantOverlay.contentBottomClearance,
+    return PromptScrollCoordinator(
+      tagMode: _tagMode,
+      textWheelAdjustmentActive: () =>
+          !widget.config.readOnly &&
+          enableWheelAdjustment &&
+          PromptWeightEditing.hasSelection(_effectiveController) &&
+          PromptWeightEditing.protectNegativeBlockSyntax(_effectiveController),
+      child: result,
     );
   }
 }
@@ -1718,34 +1581,6 @@ class _PromptSearchIconButton extends StatelessWidget {
       onPressed: onPressed,
       visualDensity: VisualDensity.compact,
       padding: EdgeInsets.zero,
-    );
-  }
-}
-
-class _TagActionIconButton extends StatelessWidget {
-  const _TagActionIconButton({
-    super.key,
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 30,
-      height: 32,
-      child: IconButton(
-        icon: Icon(icon, size: 17),
-        tooltip: tooltip,
-        onPressed: onPressed,
-        visualDensity: VisualDensity.compact,
-        padding: EdgeInsets.zero,
-      ),
     );
   }
 }

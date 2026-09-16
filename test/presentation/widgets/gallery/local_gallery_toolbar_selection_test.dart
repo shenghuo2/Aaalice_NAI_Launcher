@@ -1,3 +1,4 @@
+import 'package:nai_launcher/presentation/widgets/common/image_card_action.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -9,7 +10,8 @@ import 'package:nai_launcher/data/models/gallery/local_image_record.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:nai_launcher/presentation/providers/local_gallery_provider.dart';
 import 'package:nai_launcher/presentation/providers/selection_mode_provider.dart';
-import 'package:nai_launcher/presentation/widgets/common/input_surface_container.dart';
+import 'package:nai_launcher/presentation/widgets/gallery/gallery_sidebar.dart';
+import 'package:nai_launcher/presentation/widgets/gallery/gallery_library_toolbar.dart';
 import 'package:nai_launcher/presentation/widgets/gallery/local_gallery_toolbar.dart';
 
 void _noop() {}
@@ -38,6 +40,19 @@ void main() {
     },
   );
 
+  testWidgets('remove-from-album action only appears while browsing an album', (
+    tester,
+  ) async {
+    await _pumpToolbar(tester);
+    expect(find.byIcon(Icons.playlist_remove), findsNothing);
+
+    await _pumpToolbar(tester, onRemoveFromAlbum: _noop);
+
+    // 宽度不足时批量动作只显示图标；显隐条件是本用例的验证边界，
+    // 点击链路与其他批量按钮共用同一机制
+    expect(find.byIcon(Icons.playlist_remove), findsOneWidget);
+  });
+
   testWidgets('select current page only selects visible page paths', (
     tester,
   ) async {
@@ -63,10 +78,34 @@ void main() {
     await _pumpToolbar(tester, selectionActive: false);
 
     expect(find.byType(LocalGalleryToolbar), findsOneWidget);
+    expect(find.byType(GalleryLibraryToolbar), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  for (final width in [360.0, 390.0]) {
+  testWidgets(
+    'desktop toolbar keeps the page title in the unified 72px surface',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1600, 500));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await _pumpToolbar(tester, selectionActive: false);
+
+      const toolbarKey = Key('local-gallery-toolbar');
+      expect(
+        tester.getSize(find.byKey(toolbarKey)).height,
+        GalleryCollectionChrome.toolbarHeight,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(toolbarKey),
+          matching: find.text('本地画廊'),
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  for (final width in [320.0, 360.0, 600.0, 840.0, 1180.0, 1600.0]) {
     testWidgets(
       'mobile toolbar keeps search count and complete actions at ${width.toInt()}px',
       (tester) async {
@@ -75,28 +114,18 @@ void main() {
 
         await _pumpToolbar(tester, selectionActive: false);
 
+        final compact = width < 1050;
         expect(
-          find.byKey(const ValueKey('localGalleryMobileSearchRow')),
+          find.byKey(
+            ValueKey(
+              compact
+                  ? 'gallery-library-toolbar-compact'
+                  : 'gallery-library-toolbar-desktop',
+            ),
+          ),
           findsOneWidget,
         );
-        expect(
-          find.byKey(const ValueKey('localGalleryMobileActionBar')),
-          findsOneWidget,
-        );
-
-        final resultCount = find.byKey(
-          const ValueKey('localGalleryMobileSearchResultCount'),
-        );
-        final searchSurface = find.ancestor(
-          of: resultCount,
-          matching: find.byType(InputSurfaceContainer),
-        );
-        expect(resultCount, findsOneWidget);
-        expect(searchSurface, findsOneWidget);
-        expect(
-          tester.getRect(searchSurface).contains(tester.getCenter(resultCount)),
-          isTrue,
-        );
+        expect(find.text('5'), findsOneWidget);
 
         for (final label in ['分类', '筛选', '日期', '多选', '刷新']) {
           final labelFinder = find.text(label);
@@ -105,6 +134,88 @@ void main() {
             tester.renderObject<RenderParagraph>(labelFinder).didExceedMaxLines,
             isFalse,
           );
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final width in [320.0, 360.0, 600.0, 840.0, 1180.0, 1600.0]) {
+    testWidgets(
+      'toolbar preserves every compact action at 3x text and ${width.toInt()}px',
+      (tester) async {
+        await tester.binding.setSurfaceSize(Size(width, 900));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await _pumpToolbar(tester, selectionActive: false, textScaleFactor: 3);
+
+        expect(
+          find.byKey(const ValueKey('gallery-library-toolbar-compact')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('gallery-library-toolbar-actions')),
+          findsOneWidget,
+        );
+        for (final label in ['分类', '筛选', '日期', '多选', '刷新']) {
+          expect(find.text(label), findsOneWidget);
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('compact action strip shows a forward scroll hint when clipped', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 500));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: GalleryLibraryToolbar(
+            title: const Text('图库'),
+            search: const SizedBox(height: 48),
+            actions: [
+              for (var index = 0; index < 6; index++)
+                GalleryLibraryAction(
+                  icon: Icons.tune,
+                  label: '较长操作 $index',
+                  onPressed: _noop,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('gallery-library-toolbar-scroll-hint')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final width in [320.0, 360.0, 600.0, 840.0, 1180.0, 1600.0]) {
+    testWidgets(
+      'batch toolbar remains operable at 3x text and ${width.toInt()}px',
+      (tester) async {
+        await tester.binding.setSurfaceSize(Size(width, 900));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await _pumpToolbar(tester, textScaleFactor: 3);
+
+        expect(find.byIcon(Icons.close), findsOneWidget);
+        if (width < 700) {
+          expect(find.byIcon(Icons.library_add_check_outlined), findsOneWidget);
+          expect(find.byIcon(Icons.more_vert), findsOneWidget);
+        } else {
+          expect(find.byIcon(Icons.check_box_outlined), findsWidgets);
+          expect(find.byIcon(Icons.done_all), findsOneWidget);
+          expect(find.byIcon(Icons.drive_file_move_outline), findsOneWidget);
+          expect(find.byIcon(Icons.delete_outline), findsOneWidget);
         }
         expect(tester.takeException(), isNull);
       },
@@ -137,6 +248,9 @@ Future<ProviderContainer> _pumpToolbar(
   WidgetTester tester, {
   Set<String> initialSelectedIds = const {},
   bool selectionActive = true,
+  VoidCallback? onRemoveFromAlbum,
+  double textScaleFactor = 1,
+  bool showPageTitle = true,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -169,14 +283,47 @@ Future<ProviderContainer> _pumpToolbar(
           ),
         ),
       ],
-      child: const MaterialApp(
-        locale: Locale('zh'),
+      child: MaterialApp(
+        locale: const Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: LocalGalleryToolbar(
-            enableSearchAutocomplete: false,
-            onToggleCategoryPanel: _noop,
+        home: Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScaleFactor)),
+            child: Scaffold(
+              body: LocalGalleryToolbar(
+                enableSearchAutocomplete: false,
+                showPageTitle: showPageTitle,
+                onToggleCategoryPanel: _noop,
+                batchActions: [
+                  const ImageCardAction(
+                    id: ImageCardActionId.classify,
+                    icon: Icons.drive_file_move_outline,
+                    label: '移动到分类',
+                    supportsBatch: true,
+                    invoke: _noop,
+                  ),
+                  const ImageCardAction(
+                    id: ImageCardActionId.delete,
+                    icon: Icons.delete_outline,
+                    label: '删除',
+                    supportsBatch: true,
+                    isDanger: true,
+                    invoke: _noop,
+                  ),
+                  if (onRemoveFromAlbum != null)
+                    ImageCardAction(
+                      id: ImageCardActionId.removeFromAlbum,
+                      icon: Icons.playlist_remove,
+                      label: '移出相簿',
+                      supportsBatch: true,
+                      invoke: onRemoveFromAlbum,
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

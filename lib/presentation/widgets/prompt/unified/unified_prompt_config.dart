@@ -47,6 +47,9 @@ class UnifiedPromptConfig {
   /// 会弹出导入确认框，支持转换为 NAI 多角色格式。
   final bool enableComfyuiImport;
 
+  /// 是否显示支持原文编辑与本地汉化的标签模式入口。
+  final bool enableTagMode;
+
   // ==================== 外观选项 ====================
 
   /// 是否紧凑模式
@@ -94,6 +97,7 @@ class UnifiedPromptConfig {
     this.enableSdSyntaxAutoConvert = false,
     this.enableRegexReplace = true,
     this.enableComfyuiImport = false,
+    this.enableTagMode = false,
     this.compact = false,
     this.readOnly = false,
     this.maxHeight,
@@ -114,6 +118,7 @@ class UnifiedPromptConfig {
     enableSyntaxHighlight: true,
     enableAutoFormat: true,
     enableSdSyntaxAutoConvert: false,
+    enableTagMode: true,
     compact: false,
     readOnly: false,
     autocompleteConfig: AutocompleteConfig(
@@ -131,6 +136,7 @@ class UnifiedPromptConfig {
     enableSyntaxHighlight: true,
     enableAutoFormat: true,
     enableSdSyntaxAutoConvert: false,
+    enableTagMode: true,
     compact: true,
     readOnly: false,
     autocompleteConfig: AutocompleteConfig(
@@ -149,6 +155,7 @@ class UnifiedPromptConfig {
     enableAutoFormat: true,
     enableSdSyntaxAutoConvert: false,
     enableComfyuiImport: true,
+    enableTagMode: true,
     compact: false,
     readOnly: false,
     autocompleteConfig: AutocompleteConfig(
@@ -167,6 +174,7 @@ class UnifiedPromptConfig {
     bool? enableSdSyntaxAutoConvert,
     bool? enableRegexReplace,
     bool? enableComfyuiImport,
+    bool? enableTagMode,
     bool? compact,
     bool? readOnly,
     double? maxHeight,
@@ -188,6 +196,7 @@ class UnifiedPromptConfig {
           enableSdSyntaxAutoConvert ?? this.enableSdSyntaxAutoConvert,
       enableRegexReplace: enableRegexReplace ?? this.enableRegexReplace,
       enableComfyuiImport: enableComfyuiImport ?? this.enableComfyuiImport,
+      enableTagMode: enableTagMode ?? this.enableTagMode,
       compact: compact ?? this.compact,
       readOnly: readOnly ?? this.readOnly,
       maxHeight: maxHeight ?? this.maxHeight,
@@ -211,6 +220,7 @@ class UnifiedPromptConfig {
         other.enableSdSyntaxAutoConvert == enableSdSyntaxAutoConvert &&
         other.enableRegexReplace == enableRegexReplace &&
         other.enableComfyuiImport == enableComfyuiImport &&
+        other.enableTagMode == enableTagMode &&
         other.compact == compact &&
         other.readOnly == readOnly &&
         other.maxHeight == maxHeight &&
@@ -230,6 +240,7 @@ class UnifiedPromptConfig {
       enableSdSyntaxAutoConvert,
       enableRegexReplace,
       enableComfyuiImport,
+      enableTagMode,
       compact,
       readOnly,
       maxHeight,

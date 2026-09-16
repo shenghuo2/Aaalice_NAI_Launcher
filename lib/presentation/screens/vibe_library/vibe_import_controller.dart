@@ -13,6 +13,10 @@ import '../../../core/constants/model_capabilities.dart';
 import '../../../core/utils/app_logger.dart';
 import '../../../core/utils/localization_extension.dart';
 import '../../../core/utils/vibe_file_parser.dart';
+import '../../../core/utils/vibe_export_utils.dart';
+import '../../../core/agent/resources/agent_chat_resource_drag_format.dart';
+import '../../utils/card_drop_reader.dart';
+import '../../utils/gallery_drop_reader.dart';
 import '../../../core/utils/vibe_image_embedder.dart';
 import '../../../data/models/vibe/vibe_import_progress.dart';
 import '../../../data/models/vibe/vibe_library_entry.dart';
@@ -144,30 +148,103 @@ class VibeImportController {
 
   Future<void> importDrop(PerformDropEvent event) async {
     if (screenController.isBusy) return;
-    await _runImport((epoch) async {
-      final paths = await _readDropPaths(event);
-      final classified = await compute(_classifyPaths, paths);
-      for (final folder in classified.folders) {
-        final nested = await _scanFolder(folder);
-        classified.images.addAll(nested.images);
-        classified.vibes.addAll(nested.vibes);
+    try {
+      final items = List<DropItem>.unmodifiable(event.session.items);
+      if (!const CardDropPolicy(allowVibes: true).accepts(items)) {
+        throw StateError('Unsupported Vibe import resource set');
       }
-      final images = await VibeDropImportPreprocessor.collectImageItems(
-        classified.images,
+      // Start every native reader while the drop callback still owns it.
+      final inputs = await Future.wait([
+        for (final item in items)
+          if (decodeLocalAgentResource(item.localData) == null &&
+              item.canProvide(Formats.fileUri))
+            readGalleryDropPaths([item]).then(
+              (paths) => (paths: paths, resources: <CardDroppedResource>[]),
+            )
+          else
+            readCardDrop(
+              context(),
+              [item],
+              policy: const CardDropPolicy(allowVibes: true),
+            ).then((resources) => (paths: <String>[], resources: resources)),
+      ]);
+      if (!mounted()) return;
+      unawaited(
+        Future<void>(() async {
+          if (!mounted()) return;
+          await _runImport((epoch) async {
+            final paths = [for (final input in inputs) ...input.paths];
+            final classified = await compute(_classifyPaths, paths);
+            for (final folder in classified.folders) {
+              final nested = await _scanFolder(folder);
+              classified.images.addAll(nested.images);
+              classified.vibes.addAll(nested.vibes);
+            }
+            final images = await VibeDropImportPreprocessor.collectImageItems(
+              classified.images,
+            );
+            final files = <PlatformFile>[
+              for (final path in classified.vibes)
+                PlatformFile(name: p.basename(path), path: path, size: 0),
+            ];
+            final imageItems = [...images.items];
+            for (final input in inputs) {
+              for (final resource in input.resources) {
+                final vibe = resource.vibe;
+                if (vibe != null) {
+                  final bytes = await VibeExportUtils.portableEntryBytes(vibe);
+                  final extension = vibe.isBundle
+                      ? 'naiv4vibebundle'
+                      : 'naiv4vibe';
+                  files.add(
+                    PlatformFile(
+                      name: '${vibe.name}.$extension',
+                      size: bytes.length,
+                      bytes: bytes,
+                    ),
+                  );
+                } else {
+                  final file = resource.image;
+                  if (const [
+                    '.naiv4vibe',
+                    '.naiv4vibebundle',
+                  ].contains(p.extension(file.fileName).toLowerCase())) {
+                    files.add(
+                      PlatformFile(
+                        name: file.fileName,
+                        size: file.bytes.length,
+                        bytes: file.bytes,
+                      ),
+                    );
+                  } else {
+                    imageItems.add(
+                      VibeImageImportItem(
+                        source: file.fileName,
+                        bytes: file.bytes,
+                      ),
+                    );
+                  }
+                }
+              }
+            }
+            final result = await _processSources(imageItems, files, epoch);
+            return (
+              success: result.success,
+              fail:
+                  result.fail +
+                  images.failedCount +
+                  images.skippedOversizedCount +
+                  images.skippedTotalLimitCount,
+            );
+          }, preparing: true);
+        }),
       );
-      final result = await _processSources(images.items, [
-        for (final path in classified.vibes)
-          PlatformFile(name: p.basename(path), path: path, size: 0),
-      ], epoch);
-      return (
-        success: result.success,
-        fail:
-            result.fail +
-            images.failedCount +
-            images.skippedOversizedCount +
-            images.skippedTotalLimitCount,
-      );
-    }, preparing: true);
+    } catch (error, stack) {
+      AppLogger.e('Vibe drop read failed', error, stack, 'VibeLibrary');
+      if (mounted()) {
+        AppToast.error(context(), '${context().l10n.common_error}: $error');
+      }
+    }
   }
 
   Future<void> _runImport(
@@ -518,27 +595,6 @@ class VibeImportController {
       throw ArgumentError('File path is empty: ${file.name}');
     }
     return File(path).readAsBytes();
-  }
-
-  Future<List<String>> _readDropPaths(PerformDropEvent event) async {
-    final paths = <String>[];
-    for (final item in event.session.items) {
-      final reader = item.dataReader;
-      if (reader == null || !reader.canProvide(Formats.fileUri)) continue;
-      final completer = Completer<Uri?>();
-      final progress = reader.getValue<Uri>(
-        Formats.fileUri,
-        completer.complete,
-        onError: (_) => completer.complete(null),
-      );
-      if (progress == null) continue;
-      final uri = await completer.future.timeout(
-        const Duration(seconds: 5),
-        onTimeout: () => null,
-      );
-      if (uri != null) paths.add(uri.toFilePath());
-    }
-    return paths;
   }
 
   Future<void> _complete(int success, int failure) async {

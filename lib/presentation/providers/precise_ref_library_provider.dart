@@ -134,7 +134,12 @@ class PreciseRefLibraryNotifier extends _$PreciseRefLibraryNotifier {
 
   /// 切换只看收藏
   void toggleFavoritesOnly() {
-    state = state.copyWith(favoritesOnly: !state.favoritesOnly);
+    setFavoritesOnly(!state.favoritesOnly);
+  }
+
+  void setFavoritesOnly(bool value) {
+    if (state.favoritesOnly == value) return;
+    state = state.copyWith(favoritesOnly: value);
     _applyFilters();
   }
 
@@ -142,6 +147,15 @@ class PreciseRefLibraryNotifier extends _$PreciseRefLibraryNotifier {
   void setTypeFilter(PreciseRefType? type) {
     if (state.typeFilter == type) return;
     state = state.copyWith(typeFilter: type);
+    _applyFilters();
+  }
+
+  /// 侧栏分类同时切换收藏与类型，避免连续刷新产生中间态。
+  void setSidebarFilter({required bool favoritesOnly, PreciseRefType? type}) {
+    if (state.favoritesOnly == favoritesOnly && state.typeFilter == type) {
+      return;
+    }
+    state = state.copyWith(favoritesOnly: favoritesOnly, typeFilter: type);
     _applyFilters();
   }
 
@@ -291,6 +305,7 @@ class PreciseRefLibraryNotifier extends _$PreciseRefLibraryNotifier {
     PreciseRefType? type,
     double? strength,
     double? fidelity,
+    bool? isFavorite,
   }) async {
     await _ensureInitialized();
     final updated = await _storage.updateEntry(
@@ -299,11 +314,65 @@ class PreciseRefLibraryNotifier extends _$PreciseRefLibraryNotifier {
       type: type,
       strength: strength,
       fidelity: fidelity,
+      isFavorite: isFavorite,
     );
     if (updated != null) {
       _replaceEntryInState(updated);
     }
     return updated;
+  }
+
+  Future<int> updateEntriesType(
+    Iterable<String> ids,
+    PreciseRefType type,
+  ) async {
+    await _ensureInitialized();
+    var updatedCount = 0;
+    for (final id in ids) {
+      final updated = await _storage.updateEntry(id, type: type);
+      if (updated == null) continue;
+      _replaceEntryInState(updated, applyFilters: false);
+      updatedCount++;
+    }
+    _applyFilters();
+    return updatedCount;
+  }
+
+  Future<int> setEntriesFavorite(
+    Iterable<String> ids, {
+    required bool isFavorite,
+  }) async {
+    await _ensureInitialized();
+    var updatedCount = 0;
+    for (final id in ids) {
+      final updated = await _storage.updateEntry(id, isFavorite: isFavorite);
+      if (updated == null) continue;
+      _replaceEntryInState(updated, applyFilters: false);
+      updatedCount++;
+    }
+    _applyFilters();
+    return updatedCount;
+  }
+
+  Future<int> deleteEntries(Iterable<String> ids) async {
+    await _ensureInitialized();
+    var deletedCount = 0;
+    final deletedIds = <String>{};
+    for (final id in ids) {
+      if (await _storage.deleteEntry(id)) {
+        deletedIds.add(id);
+        deletedCount++;
+      }
+    }
+    if (deletedCount > 0) {
+      state = state.copyWith(
+        entries: state.entries
+            .where((entry) => !deletedIds.contains(entry.id))
+            .toList(),
+      );
+      _applyFilters();
+    }
+    return deletedCount;
   }
 
   /// 删除条目
@@ -337,14 +406,17 @@ class PreciseRefLibraryNotifier extends _$PreciseRefLibraryNotifier {
     }
   }
 
-  void _replaceEntryInState(PreciseRefLibraryEntry updated) {
+  void _replaceEntryInState(
+    PreciseRefLibraryEntry updated, {
+    bool applyFilters = true,
+  }) {
     state = state.copyWith(
       entries: [
         for (final e in state.entries)
           if (e.id == updated.id) updated else e,
       ],
     );
-    _applyFilters();
+    if (applyFilters) _applyFilters();
   }
 
   Future<void> _ensureInitialized() async {

@@ -1,3 +1,9 @@
+import '../../../providers/generation/image_card_selection_provider.dart';
+import '../../../selection/card_selection_scope.dart';
+import '../../../widgets/common/image_card_batch_scope.dart';
+import '../../../widgets/bulk_action_bar.dart';
+import '../services/generation_image_batch_actions.dart';
+import 'package:nai_launcher/data/models/image/image_postprocess_phase.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
@@ -23,11 +29,17 @@ import '../../../../core/utils/nai_resolution_adapter.dart';
 import '../../../../core/utils/prompt_preset_resolution.dart';
 import '../../../../core/utils/vibe_file_parser.dart';
 import '../../../../data/models/gallery/nai_image_metadata.dart';
+import '../../../../data/models/fixed_tag/fixed_tag_entry.dart';
+import '../../../../data/models/fixed_tag/fixed_tag_prompt_type.dart';
+import '../../../../data/models/fixed_tag/fixed_tag_usage_snapshot.dart';
 import '../../../../data/models/image/image_stream_chunk.dart';
 import '../../../../data/repositories/gallery_folder_repository.dart';
 import '../../../../data/services/alias_resolver_service.dart';
 import '../../../../data/services/image_metadata_service.dart';
+import '../../../adaptive/window_size_class.dart';
+import '../../../providers/generation/generation_error_classifier.dart';
 import '../../../providers/generation/generation_params_selectors.dart';
+import '../../../providers/generation/generation_view_state_provider.dart';
 import '../../../providers/generation/preview_selection_provider.dart';
 import '../../../providers/history_click_behavior_provider.dart';
 import '../../../providers/character_position_canvas_provider.dart';
@@ -58,7 +70,7 @@ import '../../../utils/image_detail_opener.dart';
 import '../../../utils/krita_send_helper.dart';
 import '../../../utils/precise_ref_library_import_helper.dart';
 import '../../tag_library_page/widgets/entry_add_dialog.dart';
-import 'image_comparison_view.dart';
+import '../../../widgets/common/image_comparison_view.dart';
 import 'preview_info_bar.dart';
 
 class PreviewNavShortcuts extends ConsumerWidget {
@@ -116,31 +128,112 @@ class PreviewNavShortcuts extends ConsumerWidget {
 class ImagePreviewWidget extends ConsumerStatefulWidget {
   const ImagePreviewWidget({super.key});
 
+  /// Resolves a grid that never squeezes preview cards below their usable size.
+  @visibleForTesting
+  static int resolveGridColumnCount(int imageCount, double availableWidth) {
+    const minCardWidth = 150.0;
+    const spacing = 12.0;
+    const horizontalPadding = 16.0;
+    final idealColumns = imageCount <= 4
+        ? 2
+        : imageCount <= 6
+        ? 3
+        : 4;
+    final usableWidth = max(0.0, availableWidth - horizontalPadding);
+    final fittingColumns = max(
+      1,
+      ((usableWidth + spacing) / (minCardWidth + spacing)).floor(),
+    );
+    return min(idealColumns, fittingColumns);
+  }
+
   @override
   ConsumerState<ImagePreviewWidget> createState() => _ImagePreviewWidgetState();
 }
 
 class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
-  bool _comparisonEnabled = false;
-
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(imageGenerationNotifierProvider);
     final theme = Theme.of(context);
+    final selection = ref.watch(generationImageCardSelectionProvider);
+    final selectionNotifier = ref.read(
+      generationImageCardSelectionProvider.notifier,
+    );
+    final presented = state.displayImages
+        .where((image) => image.canBulkSelect)
+        .map((image) => image.id)
+        .toList();
+    final selectedImages = state.selectableMergedImages
+        .where((image) => selection.isSelected(image.id))
+        .toList();
 
     // 使用 GestureDetector 吸收整个区域的点击事件，避免 Windows 系统提示音
-    return PreviewNavShortcuts(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          if (ref.read(historyClickBehaviorNotifierProvider) ==
-              HistoryClickBehavior.selectPreview) {
-            ref.read(generationPreviewFocusNodeProvider).requestFocus();
-          }
-        },
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          child: Center(child: _buildContent(context, ref, state, theme)),
+    return ImageCardBatchScope(
+      runner: selectionNotifier.actionRunner,
+      targetIds: selection.selectedIds,
+      actions: GenerationImageBatchActions(
+        context: context,
+        images: selectedImages,
+        gallery: ref.read(localGalleryNotifierProvider.notifier),
+        selection: selectionNotifier,
+      ).build(),
+      child: CardSelectionScope(
+        selection: selection,
+        commands: selectionNotifier,
+        orderedIds: presented,
+        child: CardSelectionShortcuts(
+          child: Column(
+            children: [
+              Expanded(
+                child: PreviewNavShortcuts(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      if (ref.read(historyClickBehaviorNotifierProvider) ==
+                          HistoryClickBehavior.selectPreview) {
+                        ref
+                            .read(generationPreviewFocusNodeProvider)
+                            .requestFocus();
+                      }
+                    },
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compact = WindowSizeClass.fromWidth(
+                          constraints.maxWidth,
+                        ).isCompact;
+                        return Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            16,
+                            16,
+                            16,
+                            compact ? 4 : 16,
+                          ),
+                          child: Center(
+                            child: _buildContent(context, ref, state, theme),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              if (selection.isActive)
+                Builder(
+                  builder: (context) => BulkActionBar(
+                    selectedCount: selection.selectedCount,
+                    isAllSelected:
+                        presented.isNotEmpty &&
+                        presented.every(selection.isSelected),
+                    onExit: selectionNotifier.exit,
+                    onSelectAll: () => presented.every(selection.isSelected)
+                        ? selectionNotifier.deselectAll(presented)
+                        : selectionNotifier.selectAll(presented),
+                    actions: imageCardBulkItems(context),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -220,47 +313,6 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
     return _buildEmptyState(theme, context);
   }
 
-  /// 计算自适应列数（基于可用宽度和最小/最大卡片尺寸）
-  int _calculateColumnCount(int imageCount, double availableWidth) {
-    // 最小卡片宽度: 150px，最大卡片宽度: 280px
-    const minCardWidth = 150.0;
-    const maxCardWidth = 280.0;
-    const spacing = 12.0;
-
-    // 计算基于图片数量的理想列数
-    int idealColumns;
-    if (imageCount <= 2) {
-      idealColumns = 2;
-    } else if (imageCount <= 4) {
-      idealColumns = 2;
-    } else if (imageCount <= 6) {
-      idealColumns = 3;
-    } else {
-      idealColumns = 4;
-    }
-
-    // 根据可用宽度调整列数，确保卡片尺寸在合理范围内
-    // 计算每种列数下的卡片宽度
-    for (int cols = idealColumns; cols >= 2; cols--) {
-      final cardWidth =
-          (availableWidth - spacing * (cols - 1) - 16) / cols; // 16 = padding
-      if (cardWidth >= minCardWidth && cardWidth <= maxCardWidth) {
-        return cols;
-      }
-    }
-
-    // 如果空间不足，尝试更多列数
-    for (int cols = idealColumns + 1; cols <= 6; cols++) {
-      final cardWidth = (availableWidth - spacing * (cols - 1) - 16) / cols;
-      if (cardWidth >= minCardWidth) {
-        return cols;
-      }
-    }
-
-    // 回退到理想列数
-    return idealColumns;
-  }
-
   List<StreamPreviewSlot> _visibleStreamPreviewSlots(
     ImageGenerationState state,
   ) {
@@ -277,6 +329,7 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
     required int currentImage,
     required int totalImages,
     required double progress,
+    ImagePostprocessPhase? postprocessPhase,
     Uint8List? streamPreview,
     FocusedStreamPreviewPlacement? focusedPreviewPlacement,
   }) {
@@ -285,6 +338,7 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
       currentImage: currentImage,
       totalImages: totalImages,
       progress: progress,
+      postprocessPhase: postprocessPhase,
       streamPreview: streamPreview,
       focusedPreviewPlacement: focusedPreviewPlacement,
       imageWidth: imageWidth,
@@ -305,7 +359,7 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final crossAxisCount = _calculateColumnCount(
+        final crossAxisCount = ImagePreviewWidget.resolveGridColumnCount(
           images.length,
           constraints.maxWidth,
         );
@@ -351,7 +405,7 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final crossAxisCount = _calculateColumnCount(
+        final crossAxisCount = ImagePreviewWidget.resolveGridColumnCount(
           totalItems,
           constraints.maxWidth,
         );
@@ -388,6 +442,7 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
                 currentImage: slot.imageNumber,
                 totalImages: slot.totalImages,
                 progress: slot.progress,
+                postprocessPhase: slot.postprocessPhase,
                 streamPreview: slot.previewBytes,
                 focusedPreviewPlacement: slot.focusedPreviewPlacement,
               );
@@ -427,6 +482,7 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
         currentImage: slot?.imageNumber ?? state.currentImage,
         totalImages: slot?.totalImages ?? state.totalImages,
         progress: slot?.progress ?? state.progress,
+        postprocessPhase: slot?.postprocessPhase,
         streamPreview: slot?.previewBytes ?? state.streamPreview,
         focusedPreviewPlacement:
             slot?.focusedPreviewPlacement ?? state.focusedPreviewPlacement,
@@ -509,6 +565,13 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
       return (context.l10n.generation_generationFailed, null);
     }
 
+    if (isStreamingGenerationUnsupportedError(message)) {
+      return (
+        context.l10n.generation_streamingUnsupported,
+        context.l10n.generation_streamingUnsupportedHint,
+      );
+    }
+
     // 取消操作
     if (message == 'Cancelled') {
       return (context.l10n.generation_cancelGeneration, null);
@@ -527,8 +590,8 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
         );
       case UnsupportedRandomPromptModelException.errorCode:
         return (
-          context.l10n.randomMode_unsupportedModel,
-          context.l10n.randomMode_unsupportedModelHint,
+          context.l10n.randomPrompt_unsupportedModel,
+          context.l10n.randomPrompt_unsupportedModelHint,
         );
       case 'GENERATION_ERROR_INVALID_RESOLUTION':
         if (parts.length >= 5) {
@@ -590,16 +653,22 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
     GeneratedImage image,
     ThemeData theme,
   ) {
-    const gap = 8.0;
     final comparisonAvailable = image.canCompareWithSource;
-    final comparisonEnabled = comparisonAvailable && _comparisonEnabled;
+    final comparisonEnabled =
+        comparisonAvailable && ref.watch(generationComparisonEnabledProvider);
 
     // 信息条紧贴图片下沿并与图片左对齐（官网 bottom.start 口径），
     // 因此先扣掉信息条高度再按比例算卡片尺寸，避免二者互相挤压。
     return LayoutBuilder(
       builder: (context, constraints) {
+        final gap = WindowSizeClass.fromWidth(constraints.maxWidth).isCompact
+            ? 4.0
+            : 8.0;
         final availableHeight = constraints.maxHeight.isFinite
-            ? max(0.0, constraints.maxHeight - PreviewInfoBar.barHeight - gap)
+            ? max(
+                0.0,
+                constraints.maxHeight - PreviewInfoBar.heightFor(context) - gap,
+              )
             : constraints.maxHeight;
         final cardSize = _fitAspectRatio(
           aspectRatio: image.aspectRatio,
@@ -620,7 +689,7 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
                 comparisonEnabled: comparisonEnabled,
               ),
             ),
-            const SizedBox(height: gap),
+            SizedBox(height: gap),
             SizedBox(
               width: cardSize.width,
               child: Align(
@@ -630,7 +699,13 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
                   comparisonEnabled: comparisonEnabled,
                   onComparisonChanged: comparisonAvailable
                       ? (enabled) =>
-                            setState(() => _comparisonEnabled = enabled)
+                            ref
+                                    .read(
+                                      generationComparisonEnabledProvider
+                                          .notifier,
+                                    )
+                                    .state =
+                                enabled
                       : null,
                 ),
               ),
@@ -663,6 +738,11 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
       underlay: TransparencyBackgroundLayer(
         style: ref.watch(previewTransparencyNotifierProvider),
       ),
+      completionPreview: ref.watch(
+        imageGenerationNotifierProvider.select(
+          (state) => state.completionPreviews[image.id],
+        ),
+      ),
       imageContent: comparisonEnabled
           ? ImageComparisonView(
               key: ValueKey('generation-image-comparison-${image.id}'),
@@ -672,14 +752,39 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
           : null,
       hoverEffectsEnabled: !comparisonEnabled,
       enableHoverScale: !comparisonEnabled,
-      enableSelection: false,
+      enableSelection: image.canBulkSelect && !comparisonEnabled,
+      showSelectionOnHover: false,
+      selectionMode: ref.watch(generationImageCardSelectionProvider).isActive,
+      isSelected: ref
+          .watch(generationImageCardSelectionProvider)
+          .isSelected(image.id),
+      allowRepeatedModifierTaps: true,
+      onSelectionChanged: image.canBulkSelect
+          ? (selected) {
+              final selection = ref.read(
+                generationImageCardSelectionProvider.notifier,
+              );
+              selected
+                  ? selection.enterAndSelect(image.id)
+                  : selection.deselect(image.id);
+            }
+          : null,
+      onLongPress: image.canBulkSelect
+          ? () => ref
+                .read(generationImageCardSelectionProvider.notifier)
+                .enterAndSelect(image.id)
+          : null,
       enableSaveAction: image.canSave,
       enableCopyAction: image.canSave,
       statusBadgeLabel: isFailedSnapshot
           ? context.l10n.generation_failedStreamSnapshot
+          : image.postprocessError != null
+          ? context.l10n.generation_enhancementFailed
           : null,
       statusBadgeTooltip: isFailedSnapshot
           ? context.l10n.generation_failedStreamSnapshotHint
+          : image.postprocessError != null
+          ? context.l10n.generation_enhancementRetryHint
           : null,
       onTap: () => _showFullscreenImage(image),
       onReversePrompt: canUseAsInput
@@ -1075,6 +1180,7 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
         showSaveButton: img.canSave,
         showCopyButton: img.canSave,
         preserveOriginalBytesOnSave: img.preserveOriginalBytesOnSave,
+        fixedTagUsageSnapshot: img.fixedTagUsageSnapshot,
       );
     }).toList();
 
@@ -1124,6 +1230,9 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
       final actualSeed = finalSeed < 0
           ? Random().nextInt(4294967295)
           : finalSeed;
+      final capturedFixedTags = image is GeneratedImageDetailData
+          ? image.fixedTagUsageSnapshot
+          : null;
 
       // 构建最终字节：外部结果可要求保留原始字节；其他图像缺少 NAI
       // 元数据时仍按当前参数重建。
@@ -1131,10 +1240,18 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
       if (image.preserveOriginalBytesOnSave) {
         finalBytes = imageBytes;
       } else if (ImageSaveUtils.hasEmbeddedNovelAiMetadata(imageBytes)) {
-        finalBytes = imageBytes;
+        finalBytes = capturedFixedTags == null
+            ? imageBytes
+            : await ImageSaveUtils.mergeFixedTagUsageMetadata(
+                imageBytes: imageBytes,
+                snapshot: capturedFixedTags,
+              );
       } else {
         final characterConfig = ref.read(characterPromptNotifierProvider);
         final fixedTagsState = ref.read(fixedTagsNotifierProvider);
+        final fixedTagUsageSnapshot =
+            capturedFixedTags ??
+            FixedTagUsageSnapshot.capture(fixedTagsState.entries);
 
         // 解析别名
         final aliasResolver = ref.read(aliasResolverServiceProvider.notifier);
@@ -1202,22 +1319,35 @@ class _ImagePreviewWidgetState extends ConsumerState<ImagePreviewWidget> {
           imageBytes: imageBytes,
           params: paramsForSave,
           actualSeed: actualSeed,
-          fixedPrefixTags: fixedTagsState.enabledPrefixes
-              .map((entry) => entry.weightedContent)
-              .where((content) => content.isNotEmpty)
-              .toList(growable: false),
-          fixedSuffixTags: fixedTagsState.enabledSuffixes
-              .map((entry) => entry.weightedContent)
-              .where((content) => content.isNotEmpty)
-              .toList(growable: false),
-          fixedNegativePrefixTags: fixedTagsState.negativeEnabledPrefixes
-              .map((entry) => entry.weightedContent)
-              .where((content) => content.isNotEmpty)
-              .toList(growable: false),
-          fixedNegativeSuffixTags: fixedTagsState.negativeEnabledSuffixes
-              .map((entry) => entry.weightedContent)
-              .where((content) => content.isNotEmpty)
-              .toList(growable: false),
+          fixedPrefixTags: fixedTagUsageSnapshot
+              .entriesFor(
+                promptType: FixedTagPromptType.positive,
+                position: FixedTagPosition.prefix,
+              )
+              .map((entry) => entry.renderedContent)
+              .toList(),
+          fixedSuffixTags: fixedTagUsageSnapshot
+              .entriesFor(
+                promptType: FixedTagPromptType.positive,
+                position: FixedTagPosition.suffix,
+              )
+              .map((entry) => entry.renderedContent)
+              .toList(),
+          fixedNegativePrefixTags: fixedTagUsageSnapshot
+              .entriesFor(
+                promptType: FixedTagPromptType.negative,
+                position: FixedTagPosition.prefix,
+              )
+              .map((entry) => entry.renderedContent)
+              .toList(),
+          fixedNegativeSuffixTags: fixedTagUsageSnapshot
+              .entriesFor(
+                promptType: FixedTagPromptType.negative,
+                position: FixedTagPosition.suffix,
+              )
+              .map((entry) => entry.renderedContent)
+              .toList(),
+          fixedTagUsageSnapshot: fixedTagUsageSnapshot,
           charCaptions: charCaptions,
           charNegCaptions: charNegCaptions,
           useCoords: !characterConfig.globalAiChoice,

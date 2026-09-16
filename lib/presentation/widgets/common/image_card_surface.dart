@@ -1,17 +1,21 @@
+import 'image_card_frame.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../../core/platform/platform_capabilities.dart';
+import 'image_viewport_surface.dart';
+import '../../adaptive/interaction_policy.dart';
 import '../../../core/utils/localization_extension.dart';
 import '../../themes/theme_extension.dart';
 import 'animated_favorite_button.dart';
+import 'card_action_buttons.dart';
 import 'decoded_memory_image.dart';
 import 'image_card_actions.dart';
+import 'image_card_action_dispatch.dart';
 import 'image_card_controller.dart';
 import 'image_card_effects.dart';
-import 'image_card_hover_motion.dart';
 import 'image_card_models.dart';
+import 'image_card_stream_preview.dart';
 
 class ImageCardSurface extends StatelessWidget {
   const ImageCardSurface({
@@ -74,259 +78,261 @@ class ImageCardSurface extends StatelessWidget {
                 }
               }
             : null,
-        onSecondaryTapDown: capabilities.enableContextMenu
+        // 必须抬起后弹菜单：按住时 push 会合成 touch 取消事件，令 DraggableWidget 整批重建闪烁
+        onSecondaryTapUp: capabilities.enableContextMenu
             ? (details) => unawaited(onShowContextMenu(details.globalPosition))
             : null,
-        child: ImageCardHoverMotion(
+        child: ImageCardFrame(
           hovered: controller.isHovering,
-          enabled: capabilities.enableHoverScale,
-          child: AnimatedContainer(
-            duration: reducedMotion || !capabilities.hoverEffectsEnabled
-                ? Duration.zero
-                : motion.fastDuration,
-            curve: motion.standardCurve,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: data.isSelected
-                  ? Border.all(color: theme.colorScheme.primary, width: 2)
-                  : data.isPreviewActive
-                  ? Border.all(color: theme.colorScheme.tertiary, width: 2)
-                  : null,
-              boxShadow: [
-                BoxShadow(
-                  color: data.isSelected
-                      ? theme.colorScheme.primary.withValues(alpha: 0.16)
-                      : Colors.black.withValues(
-                          alpha: controller.isHovering ? 0.16 : 0.08,
-                        ),
-                  blurRadius: controller.isHovering ? 14 : 6,
-                  offset: Offset(0, controller.isHovering ? 6 : 2),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (data.underlay != null) data.underlay!,
-                  RepaintBoundary(
-                    child:
-                        data.imageContent ??
-                        DecodedMemoryImage(
-                          key: const ValueKey('selectable-image-content'),
-                          bytes: controller.displayedImageBytes!,
-                          fit: BoxFit.cover,
-                          frameBuilder: controller.showCompletionPlaceholder
-                              ? null
-                              : controller.completedImageFrameBuilder,
-                        ),
+          selected: data.isSelected,
+          previewActive: data.isPreviewActive,
+          restingShadow: true,
+          hoverScaleEnabled: capabilities.enableHoverScale,
+          animate: capabilities.hoverEffectsEnabled,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (data.imageContent != null && data.underlay != null)
+                data.underlay!,
+              RepaintBoundary(
+                child: data.imageContent ?? _completedImage(theme),
+              ),
+              _DragPreparationOverlay(data: data, controller: controller),
+              if (controller.isHovering && capabilities.enableGlossEffect)
+                Positioned.fill(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: 1),
+                    duration: reducedMotion
+                        ? Duration.zero
+                        : motion.fastDuration,
+                    curve: motion.standardCurve,
+                    builder: (context, glowIntensity, _) => AnimatedBuilder(
+                      animation: controller.glossAnimation,
+                      builder: (context, _) => ImageCardEffects(
+                        glowColor: theme.colorScheme.primary,
+                        glowIntensity: glowIntensity,
+                        glossProgress: controller.glossAnimation.value,
+                      ),
+                    ),
                   ),
-                  _DragPreparationOverlay(data: data, controller: controller),
-                  if (controller.isHovering && capabilities.enableGlossEffect)
-                    Positioned.fill(
-                      child: TweenAnimationBuilder<double>(
-                        tween: Tween(begin: 0, end: 1),
-                        duration: const Duration(milliseconds: 200),
-                        curve: Curves.easeOut,
-                        builder: (context, glowIntensity, _) => AnimatedBuilder(
-                          animation: controller.glossAnimation,
-                          builder: (context, _) => ImageCardEffects(
-                            glowColor: theme.colorScheme.primary,
-                            glowIntensity: glowIntensity,
-                            glossProgress: controller.glossAnimation.value,
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (controller.isHovering || data.isSelected)
-                    IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.center,
-                            colors: [
-                              Colors.black.withValues(alpha: 0.4),
-                              Colors.transparent,
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (data.statusBadgeLabel != null)
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: _StatusBadge(data: data),
-                    ),
-                  if (capabilities.enableSelection &&
-                      data.statusBadgeLabel == null &&
-                      (controller.isHovering || data.isSelected))
-                    Positioned(
-                      top: 8,
-                      left: 8,
-                      child: _SelectionCheckbox(
-                        selected: data.isSelected,
-                        onChanged: capabilities.onSelectionChanged,
-                      ),
-                    ),
-                  if (capabilities.onFavoriteToggle != null ||
-                      capabilities.onPushToPicManager != null)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (capabilities.onPushToPicManager != null)
-                            _CardPicManagerPushButton(
-                              isPushing: data.isPushingToPicManager,
-                              onPush: capabilities.onPushToPicManager!,
-                            ),
-                          if (capabilities.onPushToPicManager != null &&
-                              capabilities.onFavoriteToggle != null)
-                            const SizedBox(width: 4),
-                          if (capabilities.onFavoriteToggle != null)
-                            CardFavoriteButton(
-                              isFavorite: data.isFavorite,
-                              isBusy:
-                                  data.isPushingToPicManager &&
-                                  capabilities.onPushToPicManager == null,
-                              onToggle: capabilities.onFavoriteToggle,
-                              size: 17,
-                              borderRadius: 999,
-                              tooltip:
-                                  data.isPushingToPicManager &&
-                                      capabilities.onPushToPicManager == null
-                                  ? context.l10n.picManager_pushing
-                                  : null,
-                            ),
+                ),
+              if (controller.isHovering || data.isSelected)
+                IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.center,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.4),
+                          Colors.transparent,
                         ],
                       ),
                     ),
-                  if (controller.isHovering && hoverActions.isNotEmpty)
-                    Positioned(
-                      bottom: 12,
-                      left: 0,
-                      right: 0,
-                      child: ImageCardHoverActionBar(actions: hoverActions),
-                    ),
-                  Positioned(
-                    bottom: 8,
-                    left: 8,
-                    child: Offstage(
-                      key: const ValueKey(
-                        'selectable-image-index-badge-offstage',
-                      ),
-                      offstage: !showIndexBadge,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          data.index == null ? '' : '${data.index! + 1}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
+                  ),
+                ),
+              if (data.statusBadgeLabel != null)
+                Positioned(top: 8, left: 8, child: _StatusBadge(data: data)),
+              if (capabilities.enableSelection &&
+                  data.statusBadgeLabel == null &&
+                  (capabilities.selectionMode ||
+                      (capabilities.showSelectionOnHover &&
+                          controller.isHovering) ||
+                      data.isSelected))
+                Positioned(
+                  top: 8,
+                  left: 8,
+                  child: _SelectionCheckbox(
+                    selected: data.isSelected,
+                    onChanged: capabilities.onSelectionChanged,
+                  ),
+                ),
+              if ((capabilities.onFavoriteToggle != null ||
+                      capabilities.onPushToPicManager != null) &&
+                  !capabilities.selectionMode)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (capabilities.onPushToPicManager != null)
+                        _PicManagerPushButton(
+                          action: actions.firstWhere(
+                            (a) =>
+                                a.id == ImageCardActionId.pushToPicManager,
                           ),
                         ),
+                      if (capabilities.onPushToPicManager != null &&
+                          capabilities.onFavoriteToggle != null)
+                        const SizedBox(width: 4),
+                      if (capabilities.onFavoriteToggle != null)
+                        CardFavoriteButton(
+                          isFavorite: data.isFavorite,
+                          isBusy: data.isPushingToPicManager &&
+                              capabilities.onPushToPicManager == null,
+                          onToggle: () => unawaited(
+                            dispatchImageCardAction(
+                              context,
+                              actions.firstWhere(
+                                (a) => a.id == ImageCardActionId.favorite,
+                              ),
+                            ),
+                          ),
+                          size: 17,
+                          borderRadius: 999,
+                          tooltip: data.isPushingToPicManager &&
+                                  capabilities.onPushToPicManager == null
+                              ? context.l10n.picManager_pushing
+                              : null,
+                        ),
+                    ],
+                  ),
+                ),
+              if (controller.isHovering &&
+                  hoverActions.isNotEmpty &&
+                  !capabilities.selectionMode)
+                Positioned(
+                  bottom: 12,
+                  left: 0,
+                  right: 0,
+                  child: ImageCardHoverActionBar(actions: hoverActions),
+                ),
+              Positioned(
+                bottom: 8,
+                left: 8,
+                child: Offstage(
+                  key: const ValueKey('selectable-image-index-badge-offstage'),
+                  offstage: !showIndexBadge,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      data.index == null ? '' : '${data.index! + 1}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ),
-                  if (data.isSelected)
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.primary.withValues(
-                              alpha: 0.15,
-                            ),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (PlatformCapabilities.current.hasTouchInput &&
-                      capabilities.enableContextMenu &&
-                      actions.isNotEmpty)
-                    Positioned(
-                      right: 8,
-                      bottom: 8,
-                      child: IconButton.filledTonal(
-                        onPressed: () =>
-                            unawaited(onShowContextMenu(Offset.zero)),
-                        tooltip: context.l10n.common_moreActions,
-                        constraints: const BoxConstraints.tightFor(
-                          width: 48,
-                          height: 48,
-                        ),
-                        icon: const Icon(Icons.more_horiz_rounded),
-                      ),
-                    ),
-                ],
+                ),
               ),
-            ),
+              if (data.isSelected)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withValues(
+                          alpha: 0.15,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              if (context.interactionPolicy.usesTouchActionMenu &&
+                  (!controller.isHovering ||
+                      context.interactionPolicy.prefersTouchPresentation) &&
+                  capabilities.enableContextMenu &&
+                  actions.isNotEmpty)
+                Positioned(
+                  right: 8,
+                  bottom: 8,
+                  child: IconButton(
+                    onPressed: () => unawaited(onShowContextMenu(Offset.zero)),
+                    tooltip: context.l10n.common_moreActions,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 48,
+                      height: 48,
+                    ),
+                    style: ImageOverlayControlStyle.iconButton(
+                      context,
+                      extent: 48,
+                    ),
+                    icon: const Icon(Icons.more_horiz_rounded),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
     );
   }
+
+  Widget _completedImage(ThemeData theme) {
+    return DecodedMemoryImage(
+      key: const ValueKey('selectable-image-content'),
+      bytes: data.imageBytes!,
+      fit: BoxFit.cover,
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) =>
+          _composeCompletedImage(
+            theme: theme,
+            ready: frame != null || wasSynchronouslyLoaded,
+            child: controller.completedImageFrameBuilder(
+              context,
+              child,
+              frame,
+              wasSynchronouslyLoaded,
+            ),
+          ),
+      errorBuilder: (context, _, _) => const SizedBox.shrink(),
+    );
+  }
+
+  /// 首帧之前继续画生成中卡片的最后一帧，不铺底层，避免闪出棋盘格。
+  Widget _composeCompletedImage({
+    required ThemeData theme,
+    required bool ready,
+    required Widget child,
+  }) {
+    // 换源会把 frame 归零，但旧帧仍在 gapless 画，此时藏底层会让透明区闪一下。
+    final showsImage = ready || controller.hasPaintedCompletedImage;
+    final holdover = controller.effectiveCompletionPreview;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (!showsImage) ...[
+          if (holdover != null)
+            ImageCardStreamPreview(
+              previewBytes: holdover.bytes,
+              placement: holdover.placement,
+            )
+          // 只有铺了底层的卡片需要兜底色遮住它，其余卡片首帧前保持原本的空白。
+          else if (data.underlay != null)
+            const ColoredBox(color: ImageViewportSurface.background),
+        ],
+        if (showsImage && data.underlay != null) data.underlay!,
+        child,
+      ],
+    );
+  }
 }
 
-class _CardPicManagerPushButton extends StatelessWidget {
-  const _CardPicManagerPushButton({
-    required this.isPushing,
-    required this.onPush,
-  });
+class _PicManagerPushButton extends StatelessWidget {
+  const _PicManagerPushButton({required this.action});
 
-  final bool isPushing;
-  final VoidCallback onPush;
+  final ImageCardAction action;
 
   @override
   Widget build(BuildContext context) {
-    final tooltip = isPushing
-        ? context.l10n.picManager_pushing
-        : context.l10n.picManager_push;
     return IconButton(
-      onPressed: isPushing ? null : onPush,
-      tooltip: tooltip,
-      style: ButtonStyle(
-        foregroundColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.disabled)
-              ? Colors.white70
-              : Colors.white,
-        ),
-        backgroundColor: WidgetStateProperty.resolveWith(
-          (states) => Colors.black.withValues(
-            alpha:
-                states.contains(WidgetState.hovered) ||
-                    states.contains(WidgetState.focused) ||
-                    states.contains(WidgetState.pressed)
-                ? 0.68
-                : 0.5,
-          ),
-        ),
-        overlayColor: const WidgetStatePropertyAll(Colors.transparent),
-        minimumSize: const WidgetStatePropertyAll(Size.square(40)),
-        padding: const WidgetStatePropertyAll(EdgeInsets.all(6)),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
-        ),
-      ),
-      icon: isPushing
+      onPressed: action.canInvoke
+          ? () => unawaited(dispatchImageCardAction(context, action))
+          : null,
+      tooltip: action.label,
+      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+      style: ImageOverlayControlStyle.iconButton(context, extent: 40),
+      icon: action.isLoading
           ? const SizedBox.square(
               dimension: 17,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.white,
-              ),
+              child: CircularProgressIndicator(strokeWidth: 2),
             )
           : const Icon(Icons.cloud_upload_outlined, size: 17),
     );
@@ -335,75 +341,32 @@ class _CardPicManagerPushButton extends StatelessWidget {
 
 class ImageCardHoverActionBar extends StatelessWidget {
   const ImageCardHoverActionBar({super.key, required this.actions});
-
   final List<ImageCardAction> actions;
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.7),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          alignment: WrapAlignment.center,
-          children: [
-            for (final action in actions) _HoverAction(action: action),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HoverAction extends StatefulWidget {
-  const _HoverAction({required this.action});
-  final ImageCardAction action;
-
-  @override
-  State<_HoverAction> createState() => _HoverActionState();
-}
-
-class _HoverActionState extends State<_HoverAction> {
-  bool hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-    return MouseRegion(
-      onEnter: (_) => setState(() => hovered = true),
-      onExit: (_) => setState(() => hovered = false),
-      child: Tooltip(
-        message: widget.action.label,
-        child: GestureDetector(
-          onTap: widget.action.invoke,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: widget.action.isPrimary
-                  ? (hovered ? primary : primary.withValues(alpha: 0.9))
-                  : (hovered
-                        ? Colors.white.withValues(alpha: 0.2)
-                        : Colors.transparent),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Icon(
-              widget.action.icon,
-              size: 20,
-              color: widget.action.isPrimary
-                  ? Colors.white
-                  : Colors.white.withValues(alpha: hovered ? 1 : 0.8),
-            ),
+  Widget build(BuildContext context) => Center(
+    child: Container(
+      key: const ValueKey('image-card-hover-action-bar-surface'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: ImageOverlayControlStyle.toolbarSurface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: ImageOverlayControlStyle.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
-        ),
+        ],
       ),
-    );
-  }
+      child: CardActionButtons(
+        buttons: actions,
+        visible: true,
+        pointerExtent: 40,
+      ),
+    ),
+  );
 }
 
 class _DragPreparationOverlay extends StatelessWidget {
@@ -417,8 +380,10 @@ class _DragPreparationOverlay extends StatelessWidget {
       child: IgnorePointer(
         child: AnimatedOpacity(
           key: const ValueKey('drag-preparation-preview-overlay-opacity'),
-          duration: ImageCardController.dragPreparationOverlayFadeDuration,
-          curve: Curves.easeOutCubic,
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : ImageCardController.dragPreparationOverlayFadeDuration,
+          curve: Theme.of(context).appTheme.standardCurve,
           opacity: data.dragPreparationReady ? 0 : 1,
           onEnd: controller.markPreparedIndexBadgeVisible,
           child: Stack(
@@ -431,7 +396,9 @@ class _DragPreparationOverlay extends StatelessWidget {
                     end: Alignment.bottomCenter,
                     colors: [
                       Colors.transparent,
-                      Colors.black.withValues(alpha: 0.38),
+                      Theme.of(
+                        context,
+                      ).colorScheme.scrim.withValues(alpha: 0.38),
                     ],
                   ),
                 ),
@@ -442,15 +409,19 @@ class _DragPreparationOverlay extends StatelessWidget {
                 bottom: 8,
                 child: Row(
                   children: [
-                    const SizedBox(
+                    SizedBox(
                       width: 20,
                       height: 20,
                       child: CircularProgressIndicator(
-                        key: ValueKey('drag-preparation-preview-progress-ring'),
+                        key: const ValueKey(
+                          'drag-preparation-preview-progress-ring',
+                        ),
                         value: ImageCardController.dragPreparationProgressValue,
                         strokeWidth: 2,
-                        backgroundColor: Color(0x33FFFFFF),
-                        color: Colors.white,
+                        backgroundColor: Theme.of(
+                          context,
+                        ).colorScheme.onInverseSurface.withValues(alpha: 0.2),
+                        color: Theme.of(context).colorScheme.onInverseSurface,
                       ),
                     ),
                     const Spacer(),
@@ -459,7 +430,10 @@ class _DragPreparationOverlay extends StatelessWidget {
                       key: const ValueKey(
                         'drag-preparation-preview-progress-percent',
                       ),
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onInverseSurface,
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ),
@@ -485,15 +459,17 @@ class _StatusBadge extends StatelessWidget {
         constraints: const BoxConstraints(maxWidth: 120),
         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.62),
+          color: Theme.of(
+            context,
+          ).colorScheme.inverseSurface.withValues(alpha: 0.82),
           borderRadius: BorderRadius.circular(999),
         ),
         child: Text(
           label,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onInverseSurface,
             fontSize: 11,
             fontWeight: FontWeight.w600,
           ),
@@ -525,14 +501,14 @@ class _SelectionCheckbox extends StatelessWidget {
           (states) => BorderSide(
             color: states.contains(WidgetState.selected)
                 ? theme.colorScheme.primary
-                : Colors.white70,
+                : theme.colorScheme.onInverseSurface.withValues(alpha: 0.7),
             width: 1.5,
           ),
         ),
         fillColor: WidgetStateProperty.resolveWith(
           (states) => states.contains(WidgetState.selected)
               ? theme.colorScheme.primary
-              : Colors.black45,
+              : theme.colorScheme.inverseSurface.withValues(alpha: 0.72),
         ),
         checkColor: theme.colorScheme.onPrimary,
       ),

@@ -53,8 +53,6 @@ class PlatformCapabilities {
   bool get isLinux => platform == TargetPlatform.linux;
   bool get isDesktop => isWindows || isMacOS || isLinux;
 
-  bool get hasTouchInput => isMobile;
-  bool get hasPrecisePointer => isDesktop;
   bool get supportsDesktopWindowControls => isDesktop;
   bool get supportsSystemTray => isDesktop;
   bool get supportsExternalFileDrop => isDesktop;
@@ -62,7 +60,9 @@ class PlatformCapabilities {
   bool get supportsCustomStorageDirectories => isDesktop;
   bool get usesAppManagedStorage => isMobile;
   bool get supportsComfyUiIntegration => isDesktop;
+  bool get supportsDlssEnhancement => isWindows;
   bool get supportsDesktopOverlayInteractions => isDesktop;
+  bool get supportsKeyboardShortcutConfiguration => isDesktop;
   bool get supportsKritaBridge => isDesktop;
   bool get supportsSystemFontEnumeration => isWindows;
   bool get supportsNativeShare => isMobile || isMacOS;

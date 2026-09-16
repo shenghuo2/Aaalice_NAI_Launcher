@@ -1,8 +1,12 @@
 import 'dart:convert';
+import 'package:nai_launcher/presentation/agent_chat/widgets/agent_question_notifications.dart';
+import 'package:nai_launcher/presentation/agent_chat/models/agent_user_question_request.dart';
+import '../../../fixtures/user_questions.dart';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart' as md;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,10 +17,12 @@ import 'package:nai_launcher/core/shortcuts/shortcut_config.dart';
 import 'package:hive/hive.dart';
 import 'package:nai_launcher/core/constants/storage_keys.dart';
 import 'package:nai_launcher/core/network/web_access/web_access_models.dart';
+import 'package:nai_launcher/core/platform/platform_capabilities.dart';
 import 'package:nai_launcher/core/storage/local_storage_service.dart';
 import 'package:nai_launcher/core/storage/secure_storage_service.dart';
 import 'package:nai_launcher/data/models/agent/agent_settings.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
+import 'package:nai_launcher/presentation/adaptive/interaction_policy.dart';
 import 'package:nai_launcher/presentation/agent_chat/providers/agent_chat_notifier.dart';
 import 'package:nai_launcher/presentation/agent_chat/widgets/agent_chat_panel.dart';
 import 'package:nai_launcher/presentation/agent_settings/providers/agent_settings_provider.dart';
@@ -43,6 +49,102 @@ void main() {
     await Hive.close();
     if (hiveDir.existsSync()) hiveDir.deleteSync(recursive: true);
   });
+
+  setUp(() {
+    PlatformCapabilities.debugOverride = PlatformCapabilities.forPlatform(
+      TargetPlatform.windows,
+    );
+  });
+
+  tearDown(() => PlatformCapabilities.debugOverride = null);
+
+  testWidgets(
+    'pending question card and footer fit the real panel constraints',
+    (tester) async {
+      final tempDir = Directory.systemTemp.createTempSync(
+        'agent_question_panel_',
+      );
+      final container = ProviderContainer(
+        overrides: [
+          localStorageServiceProvider.overrideWithValue(_MemoryLocalStorage()),
+          agentChatNotifierProvider.overrideWith(
+            (ref) => _TestAgentChatNotifier(
+              ref,
+              supportDir: tempDir,
+              workspaceDir: tempDir,
+            ),
+          ),
+        ],
+      );
+      addTearDown(() {
+        container.dispose();
+        tempDir.deleteSync(recursive: true);
+      });
+      await tester.runAsync(() async {
+        container.read(agentChatNotifierProvider);
+        await _waitForInitialized(container);
+      });
+      final notifier =
+          container.read(agentChatNotifierProvider.notifier)
+              as _TestAgentChatNotifier;
+      notifier.setRunStatus(AgentChatRunStatus.running);
+      notifier.setQuestion(
+        AgentUserQuestionRequest(
+          toolCallId: 'panel-question',
+          questions: testQuestions(),
+          expiresAt: DateTime.now().add(const Duration(minutes: 2)),
+        ),
+      );
+      tester.view.physicalSize = const Size(1000, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      for (final (width, height) in [
+        (360.0, 420.0),
+        (700.0, 420.0),
+        (360.0, 900.0),
+        (700.0, 900.0),
+      ]) {
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: MaterialApp(
+              locale: const Locale('zh'),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: SizedBox(
+                  width: width,
+                  height: height,
+                  child: const AgentChatPanel(),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        final panel = find.byType(AgentChatPanel);
+        final cancel = find.byKey(const ValueKey('user-question-cancel'));
+        expect(
+          find.byKey(const ValueKey('user-question-card')),
+          findsOneWidget,
+        );
+        expect(cancel.hitTestable(), findsOneWidget);
+        expect(
+          tester
+              .getRect(find.byKey(const ValueKey('user-question-card')))
+              .bottom,
+          closeTo(tester.getRect(panel).bottom - 8, 0.01),
+        );
+        expect(
+          tester.getRect(panel).contains(tester.getRect(cancel).bottomRight),
+          isTrue,
+        );
+        expect(tester.takeException(), isNull);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('session selector is disabled during a session transition', (
     tester,
@@ -246,7 +348,8 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byKey(const ValueKey('agent-chat-stop')), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-chat-send')), findsOneWidget);
+    expect(find.bySemanticsLabel('Stop'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
@@ -455,16 +558,16 @@ void main() {
         find.descendant(of: image, matching: find.byType(DraggableImageCard)),
       );
       expect(fileDrag.localData, {'source': 'agent_chat_internal'});
-      final mouseRegion = tester.widget<MouseRegion>(
-        find.descendant(of: image, matching: find.byType(MouseRegion)).first,
-      );
-      expect(mouseRegion.cursor, SystemMouseCursors.click);
-
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       addTearDown(mouse.removePointer);
       await mouse.addPointer(location: Offset.zero);
       await mouse.moveTo(tester.getCenter(image));
       await tester.pump();
+      // Wrappers may defer to the card's cursor; check the hit-tested result.
+      expect(
+        RendererBinding.instance.mouseTracker.debugDeviceActiveCursor(1),
+        SystemMouseCursors.click,
+      );
       expect(
         tester
             .widget<ImageCardHoverMotion>(
@@ -616,12 +719,21 @@ void main() {
       find.byKey(const ValueKey('agent-assistant-message-retry-3')),
       findsOneWidget,
     );
+    final transcript = find.byKey(
+      ValueKey(
+        'agent-chat-thread-${container.read(agentChatNotifierProvider).activeSessionId}',
+      ),
+    );
+    await tester.drag(transcript, const Offset(0, 300));
+    await tester.pump();
     expect(
       tester
-          .getSize(find.byKey(const ValueKey('agent-user-message-bubble-0')))
+          .getSize(find.byKey(const ValueKey('agent-user-message-bubble-2')))
           .width,
-      lessThan(100),
+      lessThan(300),
     );
+    await tester.drag(transcript, const Offset(0, -300));
+    await tester.pump();
 
     final latestMessage = find.byKey(const ValueKey('agent-user-message-2'));
     final actions = find.byKey(const ValueKey('agent-user-message-actions-2'));
@@ -783,20 +895,26 @@ void main() {
               textScaler: textScaler,
             ),
             child: Scaffold(
-              body: SizedBox(
-                width: width,
-                height: height,
-                child: AgentChatPanel(
-                  mobile: true,
-                  onClose: () => closed = true,
-                  onOpenSettings: () => settingsOpened = true,
-                  // Session picker scaling is covered by its own shared-widget
-                  // tests; keep this regression focused on the composer.
-                  mobileHeaderWrapper: (child) =>
-                      MediaQuery.withClampedTextScaling(
-                        maxScaleFactor: 1.6,
-                        child: child,
-                      ),
+              body: InteractionPolicyScope(
+                initialPolicy: const InteractionPolicy(
+                  modality: InteractionModality.touch,
+                  touchAvailable: true,
+                  precisePointerAvailable: false,
+                ),
+                child: SizedBox(
+                  width: width,
+                  height: height,
+                  child: AgentChatPanel(
+                    onClose: () => closed = true,
+                    onOpenSettings: () => settingsOpened = true,
+                    // Session picker scaling is covered by its own shared-widget
+                    // tests; keep this regression focused on the composer.
+                    mobileHeaderWrapper: (child) =>
+                        MediaQuery.withClampedTextScaling(
+                          maxScaleFactor: 1.6,
+                          child: child,
+                        ),
+                  ),
                 ),
               ),
             ),
@@ -815,14 +933,14 @@ void main() {
     await tester.pump();
     expect(
       tester
-          .getTopLeft(find.byKey(const ValueKey('agent-chat-mobile-header')))
+          .getTopLeft(find.byKey(const ValueKey('agent-chat-compact-header')))
           .dy,
       greaterThanOrEqualTo(24),
     );
 
     for (final key in [
-      'agent-chat-mobile-close',
-      'agent-chat-mobile-new-session',
+      'agent-chat-collapse',
+      'agent-chat-new-session',
       'agent-chat-session-selector',
       'agent-chat-open-settings',
     ]) {
@@ -859,7 +977,7 @@ void main() {
     }
     expect(
       tester.getSize(find.byKey(const ValueKey('agent-chat-context-target'))),
-      const Size.square(44),
+      const Size.square(48),
     );
 
     for (final width in const [320.0, 360.0, 412.0, 600.0]) {
@@ -882,18 +1000,33 @@ void main() {
           const Size.square(48),
           reason: 'attachment target at width=$width, textScale=$scale',
         );
-        for (final key in [
-          'agent-chat-permission-mode',
-          'agent-chat-web-access-toggle',
-          'agent-chat-context-target',
-          'agent-chat-send',
-        ]) {
-          final size = tester.getSize(find.byKey(ValueKey(key)));
+        expect(
+          tester
+              .getSize(find.byKey(const ValueKey('agent-chat-send')))
+              .shortestSide,
+          greaterThanOrEqualTo(44),
+        );
+        final compactControls = find.byKey(
+          const ValueKey('agent-chat-compact-controls'),
+        );
+        if (compactControls.evaluate().isNotEmpty) {
           expect(
-            size.shortestSide,
+            tester.getSize(compactControls).shortestSide,
             greaterThanOrEqualTo(44),
-            reason: '$key target at width=$width, textScale=$scale',
           );
+        } else {
+          for (final key in [
+            'agent-chat-permission-mode',
+            'agent-chat-web-access-toggle',
+            'agent-chat-context-target',
+          ]) {
+            final size = tester.getSize(find.byKey(ValueKey(key)));
+            expect(
+              size.shortestSide,
+              greaterThanOrEqualTo(44),
+              reason: '$key target at width=$width, textScale=$scale',
+            );
+          }
         }
       }
     }
@@ -983,20 +1116,19 @@ void main() {
     notifier.setQueuedMessages(20);
     await tester.pumpWidget(buildPanel(width: 320, height: 640));
     await tester.pump();
-    expect(find.byKey(const ValueKey('agent-chat-stop')), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-chat-send')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('agent-chat-follow-up')),
       findsNothing,
       reason: 'queued actions stay inside the collapsed queue disclosure',
     );
-    for (final key in ['agent-chat-stop', 'agent-chat-send']) {
-      expect(
-        tester.getSize(find.byKey(ValueKey(key))).shortestSide,
-        greaterThanOrEqualTo(44),
-        reason: '$key running target',
-      );
-    }
-    expect(find.bySemanticsLabel('Steer current work'), findsWidgets);
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('agent-chat-send')))
+          .shortestSide,
+      greaterThanOrEqualTo(44),
+      reason: 'agent-chat-send running target',
+    );
     expect(find.bySemanticsLabel('Stop'), findsWidgets);
     await tester.tap(find.byKey(const ValueKey('agent-chat-queue')));
     await tester.pump(const Duration(milliseconds: 300));
@@ -1006,13 +1138,14 @@ void main() {
           .shortestSide,
       greaterThanOrEqualTo(44),
     );
+    expect(find.byTooltip('Steer current work'), findsWidgets);
     expect(find.bySemanticsLabel('Continue after current task'), findsWidgets);
     final layoutError = tester.takeException();
     expect(
       layoutError,
       isNull,
       reason:
-          'header=${tester.getSize(find.byKey(const ValueKey('agent-chat-mobile-header')))}, '
+          'header=${tester.getSize(find.byKey(const ValueKey('agent-chat-compact-header')))}, '
           'input=${tester.getSize(find.byKey(const ValueKey('agent-chat-input-container')))}',
     );
 
@@ -1029,7 +1162,7 @@ void main() {
       expect(find.byKey(const ValueKey('agent-chat-send')), findsOneWidget);
     }
 
-    await tester.tap(find.byKey(const ValueKey('agent-chat-mobile-close')));
+    await tester.tap(find.byKey(const ValueKey('agent-chat-collapse')));
     await tester.pump();
 
     expect(closed, isTrue);
@@ -1078,13 +1211,30 @@ void main() {
               body: SizedBox(
                 width: 360,
                 height: 720,
-                child: MobileGenerationLayout(),
+                child: AgentQuestionNotifications(
+                  child: MobileGenerationLayout(),
+                ),
               ),
             ),
           ),
         ),
       );
       await tester.pump();
+
+      final statusRow = find.byKey(
+        const ValueKey('generation-mobile-status-row'),
+      );
+      final bottomBar = find.byKey(
+        const ValueKey('generation-mobile-bottom-bar'),
+      );
+      expect(tester.getSize(statusRow).height, 44);
+      expect(tester.getRect(statusRow).top - tester.getRect(bottomBar).top, 3);
+      expect(
+        tester.getSize(
+          find.byKey(const ValueKey('generation-add-current-to-queue')),
+        ),
+        const Size.square(44),
+      );
 
       var hapticCount = 0;
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -1210,6 +1360,35 @@ void main() {
       await tester.pump();
       final chatInput = find.byKey(const ValueKey('agent-chat-input'));
       await tester.enterText(chatInput, '保留的会话草稿');
+      final inputFocus = tester.widget<TextField>(chatInput).focusNode!;
+      expect(inputFocus.hasFocus, isTrue);
+      await tester.binding.handlePopRoute();
+      await tester.pump();
+      expect(inputFocus.hasFocus, isFalse);
+      expect(
+        container.read(mobileShellOverlayNotifierProvider),
+        contains(MobileShellOverlay.agentChat),
+      );
+
+      await tester.tap(chatInput);
+      await tester.pump();
+      expect(inputFocus.hasFocus, isTrue);
+      await tester.tap(find.byKey(const ValueKey('agent-chat-mobile-close')));
+      await tester.pump();
+      expect(inputFocus.hasFocus, isFalse);
+      expect(
+        container.read(mobileShellOverlayNotifierProvider),
+        contains(MobileShellOverlay.agentChat),
+      );
+
+      await tester.tap(chatInput);
+      await tester.pump();
+      await tester.tapAt(
+        tester.getTopLeft(fullScreen) + const Offset(180, 200),
+      );
+      await tester.pump();
+      expect(inputFocus.hasFocus, isFalse);
+      expect(tester.widget<TextField>(chatInput).controller!.text, '保留的会话草稿');
       await tester.timedDrag(
         chatInput,
         const Offset(0, 120),
@@ -1244,10 +1423,49 @@ void main() {
         find.descendant(of: chatInput, matching: find.byType(EditableText)),
       );
       expect(editable.controller.text, '保留的会话草稿');
+      notifier.setRunStatus(AgentChatRunStatus.running);
+      await tester.pump();
       await tester.binding.handlePopRoute();
       await tester.pump(const Duration(milliseconds: 220));
       expect(
         find.byKey(const ValueKey('generation-agent-drawer-action')),
+        findsOneWidget,
+      );
+
+      final runningIndicator = find.byKey(
+        const ValueKey('agent-chat-entry-running'),
+      );
+      expect(runningIndicator, findsOneWidget);
+      expect(find.byTooltip('聊天 · 回复中'), findsOneWidget);
+      notifier.setQuestion(
+        AgentUserQuestionRequest(
+          toolCallId: 'question-status',
+          questions: testQuestions(),
+          expiresAt: DateTime.now().add(const Duration(minutes: 2)),
+        ),
+      );
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('agent-chat-entry-question')),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('聊天 · 等待回答'), findsOneWidget);
+      expect(find.text('智能体有问题需要你回答，请打开对话查看。'), findsOneWidget);
+      notifier.setRunStatus(AgentChatRunStatus.running);
+      await tester.pump();
+      expect(find.text('智能体有问题需要你回答，请打开对话查看。'), findsOneWidget);
+      expect(runningIndicator, findsNothing);
+      notifier.setQuestion(null);
+      await tester.pump();
+      expect(runningIndicator, findsOneWidget);
+      notifier.setRunStatus(AgentChatRunStatus.idle);
+      await tester.pump();
+      expect(runningIndicator, findsNothing);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('generation-agent-drawer-action')),
+          matching: find.byIcon(Icons.smart_toy_outlined),
+        ),
         findsOneWidget,
       );
 
@@ -1465,6 +1683,17 @@ class _TestAgentChatNotifier extends AgentChatNotifier {
       status: AgentChatRunStatus.running,
       activities: [activity],
     );
+  }
+
+  void setQuestion(AgentUserQuestionRequest? value) {
+    state = state.copyWith(
+      questionRequest: value,
+      clearQuestionRequest: value == null,
+    );
+  }
+
+  void setRunStatus(AgentChatRunStatus value) {
+    state = state.copyWith(status: value);
   }
 
   void setQueuedMessages(int count) {

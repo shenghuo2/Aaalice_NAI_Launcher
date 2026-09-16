@@ -4,7 +4,7 @@ import 'package:nai_launcher/presentation/providers/cloud_sync/cloud_sync_capabi
 import 'package:nai_launcher/presentation/providers/cloud_sync/cloud_sync_ui_provider.dart';
 
 void main() {
-  test('maps every backend capability and the real provider limit', () {
+  test('maps every backend capability without imposing a backup-size cap', () {
     final result = mapCloudSyncCapability(
       const CloudSyncConnectionDraft(backend: CloudSyncBackendKind.github),
       const CloudBackendCapability(
@@ -12,14 +12,13 @@ void main() {
         message: 'probe complete',
         supportsHistory: false,
         supportsDelete: false,
-        warnings: ['history remains in Git'],
+        warnings: [CloudBackendWarning.githubPublicRepository],
       ),
     );
 
     expect(result.mode, CloudSyncCapabilityMode.manualBackupOnly);
     expect(result.supportsHistory, isFalse);
     expect(result.supportsDelete, isFalse);
-    expect(result.warnings, ['history remains in Git']);
-    expect(result.limit, contains('100 MiB'));
+    expect(result.warnings, [CloudBackendWarning.githubPublicRepository]);
   });
 }

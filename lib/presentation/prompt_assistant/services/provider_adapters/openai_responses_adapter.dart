@@ -8,6 +8,7 @@ import '../../models/prompt_assistant_models.dart';
 import 'agent_wire_helpers.dart';
 import 'openai_chat_completions_adapter.dart';
 import 'prompt_assistant_adapter.dart';
+import 'reasoning_payload.dart';
 
 class OpenAiResponsesAdapter extends PromptAssistantProviderAdapter {
   const OpenAiResponsesAdapter();
@@ -42,6 +43,15 @@ class OpenAiResponsesAdapter extends PromptAssistantProviderAdapter {
         'model': request.model,
         'stream': false,
         'instructions': request.systemPrompt,
+        if (responsesReasoningEffort(request.reasoningRequest, null)
+            case final effort?)
+          'reasoning': {'effort': effort},
+        if (request.maxOutputTokens case final count?)
+          'max_output_tokens': count,
+        if (request.responseFormat == PromptAssistantResponseFormat.jsonObject)
+          'text': {
+            'format': {'type': 'json_object'},
+          },
         'input': [
           {'role': 'user', 'content': _inputParts(request.userParts)},
         ],
@@ -49,7 +59,7 @@ class OpenAiResponsesAdapter extends PromptAssistantProviderAdapter {
       options: Options(
         headers: headers,
         sendTimeout: const Duration(seconds: 30),
-        receiveTimeout: const Duration(minutes: 2),
+        receiveTimeout: request.responseTimeout,
       ),
       cancelToken: cancelToken,
     );
@@ -325,38 +335,31 @@ class OpenAiResponsesAdapter extends PromptAssistantProviderAdapter {
           }
         }
       } else if (message is ToolResultMessage) {
+        final images = toolResultImagesOf(message);
+        // Pi keeps multimodal output on the call itself. A synthetic user
+        // turn here can split the outputs of a parallel tool-call batch.
         input.add({
           'type': 'function_call_output',
           'call_id': message.toolCallId,
-          'output': message.text,
+          'output': images.isEmpty
+              ? message.text
+              : [
+                  if (message.text.isNotEmpty)
+                    {'type': 'input_text', 'text': message.text},
+                  for (final image in images)
+                    if (_openAiImageUrl(image) case final url?)
+                      {
+                        'type': 'input_image',
+                        'image_url': url,
+                        'detail': 'auto',
+                      },
+                ],
         });
-        final images = toolResultImagesOf(message);
-        if (images.isNotEmpty) {
-          input.add({
-            'type': 'message',
-            'role': 'user',
-            'content': [
-              {
-                'type': 'input_text',
-                'text': 'Visual output returned by ${message.toolName}.',
-              },
-              for (final image in images)
-                if (_openAiImageUrl(image) case final url?)
-                  {'type': 'input_image', 'image_url': url, 'detail': 'auto'},
-            ],
-          });
-        }
       }
     }
 
     final reasoning = request.reasoningRequest;
-    final effort = reasoning?.api == AgentReasoningApi.openAiResponses
-        ? reasoning!.enabled
-              ? reasoning.effort
-              : reasoning.sendWhenDisabled
-              ? reasoning.effort ?? 'none'
-              : null
-        : request.reasoning;
+    final effort = responsesReasoningEffort(reasoning, request.reasoning);
     return {
       'model': request.model,
       'stream': true,
@@ -457,7 +460,7 @@ class OpenAiResponsesAdapter extends PromptAssistantProviderAdapter {
       if (output is List) {
         final parts = <String>[];
         for (final item in output) {
-          if (item is Map<String, dynamic>) {
+          if (item is Map<String, dynamic> && item['type'] == 'message') {
             final content = item['content'];
             if (content is List) {
               for (final part in content) {

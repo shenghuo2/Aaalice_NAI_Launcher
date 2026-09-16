@@ -9,6 +9,7 @@ import '../../../core/platform/platform_capabilities.dart';
 import 'global_drop_action_coordinator.dart';
 import 'global_drop_controller.dart';
 import 'global_drop_overlay.dart';
+import '../../utils/card_drop_reader.dart';
 
 export 'dropped_image_inspector.dart'
     show
@@ -48,7 +49,7 @@ class _GlobalDropHandlerState extends ConsumerState<GlobalDropHandler> {
       ref: ref,
     );
     _controller = GlobalDropController(
-      performDrop: _actionCoordinator.handleDrop,
+      readDrop: _actionCoordinator.readDrop,
       processFile: _actionCoordinator.processDroppedFile,
     )..addListener(_handleControllerChanged);
   }
@@ -87,7 +88,7 @@ class _GlobalDropHandlerState extends ConsumerState<GlobalDropHandler> {
     );
     final dropTarget = PlatformCapabilities.current.supportsExternalFileDrop
         ? DropRegion(
-            formats: Formats.standardFormats,
+            formats: cardDropFormats,
             hitTestBehavior: HitTestBehavior.opaque,
             onDropOver: _controller.onDropOver,
             onDropLeave: _controller.onDropLeave,

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
-
 import '../../../core/platform/platform_capabilities.dart';
 import '../../../core/utils/localization_extension.dart';
+import '../common/image_card_action.dart';
+import '../common/image_card_context_menu.dart';
 
 enum LocalImageContextAction {
   addToAgent,
+  moveToCategory,
   sendToTextToImage,
   sendToImg2Img,
   sendToReversePrompt,
@@ -13,16 +15,51 @@ enum LocalImageContextAction {
   saveToPreciseRefLibrary,
   sendToKrita,
   upscale,
+  dlssEnhance,
   shareToDiscord,
+  createWatermark,
+  createMosaic,
   importMetadata,
   copyPrompt,
   copySeed,
+  saveToSystemGallery,
   showInFolder,
   delete,
 }
 
 class LocalImageContextMenu {
   const LocalImageContextMenu._();
+
+  static ImageCardActionId idFor(
+    LocalImageContextAction action,
+  ) => switch (action) {
+    LocalImageContextAction.addToAgent => ImageCardActionId.addToAgent,
+    LocalImageContextAction.moveToCategory => ImageCardActionId.classify,
+    LocalImageContextAction.sendToTextToImage =>
+      ImageCardActionId.sendToGeneration,
+    LocalImageContextAction.sendToImg2Img => ImageCardActionId.imageToImage,
+    LocalImageContextAction.sendToReversePrompt =>
+      ImageCardActionId.reversePrompt,
+    LocalImageContextAction.sendToStyleTransfer =>
+      ImageCardActionId.vibeTransfer,
+    LocalImageContextAction.sendToPreciseReference =>
+      ImageCardActionId.preciseReference,
+    LocalImageContextAction.saveToPreciseRefLibrary =>
+      ImageCardActionId.saveToPreciseRefLibrary,
+    LocalImageContextAction.sendToKrita => ImageCardActionId.sendToKrita,
+    LocalImageContextAction.upscale => ImageCardActionId.upscale,
+    LocalImageContextAction.dlssEnhance => ImageCardActionId.dlssEnhance,
+    LocalImageContextAction.shareToDiscord => ImageCardActionId.shareDiscord,
+    LocalImageContextAction.createWatermark =>
+      ImageCardActionId.createWatermark,
+    LocalImageContextAction.createMosaic => ImageCardActionId.createMosaic,
+    LocalImageContextAction.importMetadata => ImageCardActionId.importMetadata,
+    LocalImageContextAction.copyPrompt => ImageCardActionId.copyPrompt,
+    LocalImageContextAction.copySeed => ImageCardActionId.copySeed,
+    LocalImageContextAction.saveToSystemGallery => ImageCardActionId.save,
+    LocalImageContextAction.showInFolder => ImageCardActionId.openFolder,
+    LocalImageContextAction.delete => ImageCardActionId.delete,
+  };
 
   static Future<LocalImageContextAction?> show(
     BuildContext context, {
@@ -31,198 +68,228 @@ class LocalImageContextMenu {
     required bool hasPrompt,
     required bool hasSeed,
     required bool isKritaConnected,
-  }) {
-    return showMenu<LocalImageContextAction>(
+    bool watermarkEnabled = false,
+    bool isWatermarkDerivative = false,
+    bool mosaicEnabled = false,
+    bool isMosaicDerivative = false,
+  }) async {
+    LocalImageContextAction? selected;
+    await ImageCardContextMenu.show(
       context: context,
-      constraints: const BoxConstraints(minWidth: 320, maxWidth: 420),
-      position: RelativeRect.fromLTRB(
-        position.dx,
-        position.dy,
-        position.dx + 1,
-        position.dy + 1,
-      ),
-      popUpAnimationStyle: AnimationStyle.noAnimation,
-      items: buildEntries(
+      position: position,
+      actions: buildActions(
         context,
+        onAction: (action) async {
+          selected = action;
+        },
         hasImportableMetadata: hasImportableMetadata,
         hasPrompt: hasPrompt,
         hasSeed: hasSeed,
         isKritaConnected: isKritaConnected,
+        watermarkEnabled: watermarkEnabled,
+        isWatermarkDerivative: isWatermarkDerivative,
+        mosaicEnabled: mosaicEnabled,
+        isMosaicDerivative: isMosaicDerivative,
       ),
     );
+    return selected;
   }
 
-  static Future<LocalImageContextAction?> showSendActions(
+  static List<ImageCardAction> buildActions(
     BuildContext context, {
-    required Offset position,
-    required bool isKritaConnected,
-  }) {
-    return showMenu<LocalImageContextAction>(
-      context: context,
-      constraints: const BoxConstraints(minWidth: 320, maxWidth: 420),
-      position: RelativeRect.fromLTRB(
-        position.dx,
-        position.dy,
-        position.dx + 1,
-        position.dy + 1,
-      ),
-      popUpAnimationStyle: AnimationStyle.noAnimation,
-      items: buildSendEntries(context, isKritaConnected: isKritaConnected),
-    );
-  }
-
-  static List<PopupMenuEntry<LocalImageContextAction>> buildEntries(
-    BuildContext context, {
+    required Future<void> Function(LocalImageContextAction) onAction,
     required bool hasImportableMetadata,
     required bool hasPrompt,
     required bool hasSeed,
     required bool isKritaConnected,
+    bool watermarkEnabled = false,
+    bool isWatermarkDerivative = false,
+    bool mosaicEnabled = false,
+    bool isMosaicDerivative = false,
   }) {
-    final hasImageInfoActions = hasImportableMetadata || hasPrompt || hasSeed;
-
+    final action = _factory(context, onAction);
     return [
-      _item(
+      ...buildSendActions(
         context,
+        onAction: onAction,
+        isKritaConnected: isKritaConnected,
+      ),
+      action(
         value: LocalImageContextAction.addToAgent,
         icon: Icons.auto_awesome_outlined,
         label: context.l10n.agentChat_addResource,
       ),
-      const PopupMenuDivider(),
-      ...buildSendEntries(context, isKritaConnected: isKritaConnected),
-      if (hasImageInfoActions) const PopupMenuDivider(),
+      action(
+        value: LocalImageContextAction.moveToCategory,
+        icon: Icons.drive_file_move_outline,
+        label: context.l10n.localGallery_moveToCategory,
+      ),
+      if (watermarkEnabled)
+        action(
+          value: LocalImageContextAction.createWatermark,
+          icon: Icons.branding_watermark_outlined,
+          label: isWatermarkDerivative
+              ? context.l10n.watermark_actionRegenerate
+              : context.l10n.watermark_actionCreate,
+        ),
+      if (mosaicEnabled)
+        action(
+          value: LocalImageContextAction.createMosaic,
+          icon: Icons.grid_on_rounded,
+          label: isMosaicDerivative
+              ? context.l10n.mosaic_actionRegenerate
+              : context.l10n.mosaic_actionCreate,
+        ),
       if (hasImportableMetadata)
-        _item(
-          context,
+        action(
           value: LocalImageContextAction.importMetadata,
           icon: Icons.data_object,
           label: context.l10n.localGallery_importImageMetadata,
         ),
       if (hasPrompt)
-        _item(
-          context,
+        action(
           value: LocalImageContextAction.copyPrompt,
-          icon: Icons.content_copy,
+          icon: Icons.text_snippet_outlined,
           label: context.l10n.localGallery_copyPrompt,
         ),
       if (hasSeed)
-        _item(
-          context,
+        action(
           value: LocalImageContextAction.copySeed,
           icon: Icons.tag,
           label: context.l10n.localGallery_copySeed,
         ),
-      const PopupMenuDivider(),
+      if (PlatformCapabilities.current.supportsSystemGalleryExport)
+        action(
+          value: LocalImageContextAction.saveToSystemGallery,
+          icon: Icons.save_alt_rounded,
+          label: context.l10n.localGallery_saveToSystemGallery,
+        ),
       if (PlatformCapabilities.current.supportsOpenFolder)
-        _item(
-          context,
+        action(
           value: LocalImageContextAction.showInFolder,
           icon: Icons.folder_open,
           label: context.l10n.localGallery_showInFolder,
         ),
-      _item(
-        context,
+      action(
         value: LocalImageContextAction.delete,
         icon: Icons.delete_outline,
         label: context.l10n.common_delete,
-        destructive: true,
+        isDanger: true,
       ),
     ];
   }
 
-  static List<PopupMenuEntry<LocalImageContextAction>> buildSendEntries(
+  static List<ImageCardAction> buildSendActions(
     BuildContext context, {
+    required Future<void> Function(LocalImageContextAction) onAction,
     required bool isKritaConnected,
+    bool watermarkEnabled = false,
+    bool isWatermarkDerivative = false,
+    bool mosaicEnabled = false,
+    bool isMosaicDerivative = false,
   }) {
+    final action = _factory(context, onAction);
     return [
-      _item(
-        context,
+      action(
         value: LocalImageContextAction.sendToTextToImage,
         icon: Icons.text_fields,
         label: context.l10n.onlineGallery_sendToTextToImage,
       ),
-      _item(
-        context,
+      action(
         value: LocalImageContextAction.sendToImg2Img,
         icon: Icons.image_outlined,
         label: context.l10n.localGallery_sendToImg2Img,
       ),
-      _item(
-        context,
+      action(
         value: LocalImageContextAction.sendToReversePrompt,
         icon: Icons.manage_search_rounded,
         label: context.l10n.localGallery_sendToReversePrompt,
       ),
-      _item(
-        context,
+      action(
         value: LocalImageContextAction.sendToStyleTransfer,
         icon: Icons.palette_outlined,
         label: context.l10n.localGallery_sendToStyleTransfer,
       ),
-      _item(
-        context,
+      action(
         value: LocalImageContextAction.sendToPreciseReference,
         icon: Icons.center_focus_strong,
         label: context.l10n.localGallery_sendToPreciseReference,
       ),
-      _item(
-        context,
+      action(
         value: LocalImageContextAction.saveToPreciseRefLibrary,
         icon: Icons.bookmark_add_outlined,
         label: context.l10n.localGallery_saveToPreciseRefLibrary,
       ),
-      _item(
-        context,
+      action(
         value: LocalImageContextAction.sendToKrita,
         icon: Icons.brush_outlined,
         label: context.l10n.localGallery_sendToKrita,
         enabled: isKritaConnected,
       ),
-      _item(
-        context,
+      action(
         value: LocalImageContextAction.upscale,
         icon: Icons.zoom_in,
         label: context.l10n.gallery_upscale,
       ),
-      _item(
-        context,
+      if (PlatformCapabilities.current.supportsDlssEnhancement)
+        action(
+          value: LocalImageContextAction.dlssEnhance,
+          icon: Icons.auto_awesome,
+          label: context.l10n.dlss_menu,
+        ),
+      action(
         value: LocalImageContextAction.shareToDiscord,
         icon: Icons.send_rounded,
         label: context.l10n.discordShare_action,
       ),
+      if (watermarkEnabled)
+        action(
+          value: LocalImageContextAction.createWatermark,
+          icon: Icons.branding_watermark_outlined,
+          label: isWatermarkDerivative
+              ? context.l10n.watermark_actionRegenerate
+              : context.l10n.watermark_actionCreate,
+        ),
+      if (mosaicEnabled)
+        action(
+          value: LocalImageContextAction.createMosaic,
+          icon: Icons.grid_on_rounded,
+          label: isMosaicDerivative
+              ? context.l10n.mosaic_actionRegenerate
+              : context.l10n.mosaic_actionCreate,
+        ),
     ];
   }
 
-  static PopupMenuItem<LocalImageContextAction> _item(
-    BuildContext context, {
+  static ImageCardAction Function({
     required LocalImageContextAction value,
     required IconData icon,
     required String label,
-    bool enabled = true,
-    bool destructive = false,
-  }) {
-    final color = !enabled
-        ? Theme.of(context).disabledColor
-        : destructive
-        ? Theme.of(context).colorScheme.error
-        : null;
-
-    return PopupMenuItem<LocalImageContextAction>(
-      value: value,
-      enabled: enabled,
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: color == null ? null : TextStyle(color: color),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+    bool enabled,
+    bool isDanger,
+  })
+  _factory(
+    BuildContext context,
+    Future<void> Function(LocalImageContextAction) onAction,
+  ) =>
+      ({
+        required value,
+        required icon,
+        required label,
+        enabled = true,
+        isDanger = false,
+      }) => ImageCardAction(
+        id: idFor(value),
+        icon: icon,
+        label: label,
+        invoke: () => onAction(value),
+        enabled: enabled,
+        isDanger: isDanger,
+        showOnHover: const {
+          LocalImageContextAction.addToAgent,
+          LocalImageContextAction.copyPrompt,
+          LocalImageContextAction.delete,
+          LocalImageContextAction.dlssEnhance,
+        }.contains(value),
+      );
 }

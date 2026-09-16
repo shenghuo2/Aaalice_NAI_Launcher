@@ -8,6 +8,7 @@ import '../../../../data/models/image/image_params.dart';
 import '../../../providers/image_generation_provider.dart';
 import '../../../widgets/common/app_toast.dart';
 import '../../../widgets/common/themed_dropdown.dart';
+import '../../../widgets/common/model_family_icon.dart';
 import '../../../widgets/common/themed_input.dart';
 import '../../../widgets/common/themed_slider.dart';
 import 'generation_toggle_button.dart';
@@ -58,8 +59,9 @@ class ModelSection extends ConsumerWidget {
           ) {
             return DropdownMenuItem(
               value: model,
-              child: Text(
-                ImageModels.modelDisplayNames[model] ?? model,
+              child: ModelNameLabel(
+                modelId: model,
+                displayName: ImageModels.modelDisplayNames[model] ?? model,
                 style: const TextStyle(fontSize: 13),
               ),
             );
@@ -309,36 +311,41 @@ class CfgScaleSection extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 12,
+          runSpacing: 8,
           children: [
             ParamSectionTitle(
               context.l10n.generation_cfgScale(data.scale.toStringAsFixed(1)),
             ),
-            const Spacer(),
-            // Decrisp (仅 V3 模型)
-            if (data.isV3Model) ...[
-              GenerationToggleButton(
-                label: 'Decrisp',
-                isEnabled: data.decrisp,
-                onChanged: (value) {
-                  ref
-                      .read(generationParamsNotifierProvider.notifier)
-                      .updateDecrisp(value);
-                },
-              ),
-              const SizedBox(width: 8),
-            ],
-            // Variety+ (V3 起；V5 网页端隐藏，启动器刻意保留)
-            if (data.supportsVarietyPlus)
-              GenerationToggleButton(
-                label: 'Variety+',
-                isEnabled: data.varietyPlus,
-                onChanged: (value) {
-                  ref
-                      .read(generationParamsNotifierProvider.notifier)
-                      .updateVarietyPlus(value);
-                },
-              ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (data.isV3Model)
+                  GenerationToggleButton(
+                    label: 'Decrisp',
+                    isEnabled: data.decrisp,
+                    onChanged: (value) {
+                      ref
+                          .read(generationParamsNotifierProvider.notifier)
+                          .updateDecrisp(value);
+                    },
+                  ),
+                if (data.supportsVarietyPlus)
+                  GenerationToggleButton(
+                    label: 'Variety+',
+                    isEnabled: data.varietyPlus,
+                    onChanged: (value) {
+                      ref
+                          .read(generationParamsNotifierProvider.notifier)
+                          .updateVarietyPlus(value);
+                    },
+                  ),
+              ],
+            ),
           ],
         ),
         ThemedSlider(
@@ -516,7 +523,7 @@ class _SeedSectionState extends ConsumerState<SeedSection> {
                         .watch(generationParamsNotifierProvider.notifier)
                         .isSeedLocked
                     ? theme.colorScheme.primary.withValues(alpha: 0.15)
-                    : theme.colorScheme.surfaceContainerHighest,
+                    : Colors.transparent,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -584,7 +591,10 @@ class AdvancedSamplingOptions extends ConsumerWidget {
           // 选项行
           Padding(
             padding: const EdgeInsets.only(bottom: 4),
-            child: Row(
+            child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 16,
+              runSpacing: 8,
               children: [
                 _SmeaAutoButton(
                   isAuto: data.smeaAuto,
@@ -594,7 +604,6 @@ class AdvancedSamplingOptions extends ConsumerWidget {
                         .updateSmeaAuto(value);
                   },
                 ),
-                const SizedBox(width: 16),
                 _SmeaOptions(
                   smea: data.smea,
                   smeaDyn: data.smeaDyn,
@@ -684,7 +693,7 @@ class _SmeaAutoButton extends StatelessWidget {
     return Material(
       color: isAuto
           ? theme.colorScheme.primary.withValues(alpha: 0.15)
-          : theme.colorScheme.surfaceContainerHighest,
+          : Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: () => onChanged(!isAuto),

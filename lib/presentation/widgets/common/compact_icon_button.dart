@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../adaptive/interaction_policy.dart';
 
 import '../shortcuts/shortcut_tooltip.dart';
 
@@ -10,6 +11,7 @@ class CompactIconButton extends StatelessWidget {
     super.key,
     required this.icon,
     this.label,
+    this.trailingIcon,
     this.tooltip,
     this.onPressed,
     this.isActive = false,
@@ -20,6 +22,7 @@ class CompactIconButton extends StatelessWidget {
 
   final IconData icon;
   final String? label;
+  final IconData? trailingIcon;
   final String? tooltip;
   final VoidCallback? onPressed;
   final bool isActive;
@@ -30,6 +33,7 @@ class CompactIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final interaction = context.interactionPolicy;
     final colorScheme = theme.colorScheme;
     final message = tooltip ?? label;
     final enabled = onPressed != null && !isLoading;
@@ -47,16 +51,12 @@ class CompactIconButton extends StatelessWidget {
     Color background(Set<WidgetState> states) {
       if (states.contains(WidgetState.disabled)) return Colors.transparent;
       if (isActive) {
-        return states.contains(WidgetState.hovered) ||
-                states.contains(WidgetState.focused) ||
-                states.contains(WidgetState.pressed)
+        return interaction.isControlHighlighted(states)
             ? colorScheme.primaryContainer
             : colorScheme.primaryContainer.withValues(alpha: 0.72);
       }
       if (isDanger) {
-        return states.contains(WidgetState.hovered) ||
-                states.contains(WidgetState.focused) ||
-                states.contains(WidgetState.pressed)
+        return interaction.isControlHighlighted(states)
             ? colorScheme.errorContainer
             : Colors.transparent;
       }
@@ -64,7 +64,7 @@ class CompactIconButton extends StatelessWidget {
         return colorScheme.surfaceContainerHighest;
       }
       if (states.contains(WidgetState.hovered) ||
-          states.contains(WidgetState.focused)) {
+          interaction.isFocusVisible(states)) {
         return colorScheme.surfaceContainerHigh;
       }
       return Colors.transparent;
@@ -88,9 +88,12 @@ class CompactIconButton extends StatelessWidget {
     );
 
     final iconWidget = isLoading
-        ? const SizedBox.square(
+        ? SizedBox.square(
             dimension: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
+            child: CircularProgressIndicator(
+              value: MediaQuery.disableAnimationsOf(context) ? 0.75 : null,
+              strokeWidth: 2,
+            ),
           )
         : Icon(icon, size: 18);
 
@@ -100,7 +103,16 @@ class CompactIconButton extends StatelessWidget {
         onPressed: enabled ? onPressed : null,
         style: style,
         icon: iconWidget,
-        label: Text(label!),
+        label: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label!),
+            if (trailingIcon != null) ...[
+              const SizedBox(width: 4),
+              Icon(trailingIcon, size: 18),
+            ],
+          ],
+        ),
       );
     } else {
       button = IconButton(

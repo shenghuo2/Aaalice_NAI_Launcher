@@ -1,5 +1,4 @@
-import 'dart:async';
-
+import 'package:nai_launcher/presentation/widgets/common/horizontal_action_strip.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,17 +6,118 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/utils/character_prompt_block_parser.dart';
 import '../../../data/models/character/character_prompt.dart';
+import '../../adaptive/interaction_policy.dart';
 import '../../providers/character_position_canvas_provider.dart';
 import '../../providers/character_prompt_provider.dart';
-import '../../providers/generation/generation_panel_expansion_provider.dart';
 import '../../providers/image_generation_provider.dart';
 import '../../providers/tag_library_page_provider.dart';
-import '../common/collapsible_image_panel.dart';
 import '../tag_library/tag_library_picker_dialog.dart';
 import 'add_to_library_dialog.dart';
 import 'character_position_canvas.dart';
 import 'inline_character_card.dart';
 import 'inline_character_editor.dart';
+
+class _InlineCharacterHeader extends ConsumerWidget {
+  const _InlineCharacterHeader({
+    required this.count,
+    required this.compact,
+    required this.forceExitMaximizedPrompt,
+  });
+
+  final int count;
+  final bool compact;
+  final bool forceExitMaximizedPrompt;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
+    final controlExtent = context.interactionPolicy.minimumControlExtent;
+    final modeOrTitle = count == 0
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.people_outline_rounded,
+                size: 18,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  l10n.prompt_characterPrompts,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          )
+        : HorizontalActionStrip(
+            scrollKey: const ValueKey('character-position-mode-scroll'),
+
+            child: CharacterPositionModeSegments(
+              forceExitMaximizedPrompt: forceExitMaximizedPrompt,
+            ),
+          );
+    final actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (!compact || count == 0)
+          Container(
+            constraints: const BoxConstraints(minWidth: 24),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.primaryContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '$count',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onPrimaryContainer,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        if (count > 0) ...[
+          SizedBox(width: compact ? 4 : 8),
+          TextButton.icon(
+            key: const ValueKey('character-manager-clear-all'),
+            onPressed: () => confirmClearAllCharacters(context, ref),
+            icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+            label: Text(l10n.characterEditor_clearAll),
+            style: TextButton.styleFrom(
+              foregroundColor: theme.colorScheme.error,
+              minimumSize: Size(0, controlExtent),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        ],
+      ],
+    );
+
+    final largeText = MediaQuery.textScalerOf(context).scale(14) >= 20;
+    if (largeText) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          modeOrTitle,
+          const SizedBox(height: 4),
+          Align(alignment: Alignment.centerRight, child: actions),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        Expanded(child: modeOrTitle),
+        const SizedBox(width: 8),
+        actions,
+      ],
+    );
+  }
+}
 
 enum _CharacterAddAction {
   female(CharacterGender.female),
@@ -30,74 +130,10 @@ enum _CharacterAddAction {
   final CharacterGender? gender;
 }
 
-/// 经典布局角色二级菜单。
+/// 移动端全屏角色管理器的卡片与编辑器主体。
 ///
-/// 只折叠角色管理界面，不改变角色启用状态或生成参数；展开后继续复用原有
-/// 横向卡片和全宽编辑器，避免为两种布局维护两套角色业务逻辑。
-class ClassicCharacterSection extends ConsumerWidget {
-  const ClassicCharacterSection({super.key});
-
-  static const panel = GenerationWorkbenchPanel.characters;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final isV4Model = ref.watch(
-      generationParamsNotifierProvider.select(
-        (params) => ImageModels.isV4Model(params.model),
-      ),
-    );
-    if (!isV4Model) return const SizedBox.shrink();
-
-    final characters = ref.watch(characterPromptNotifierProvider).characters;
-    if (characters.isEmpty) return const SizedBox.shrink();
-
-    final isExpanded = ref.watch(
-      generationPanelExpansionProvider.select(
-        (state) => state.isExpanded(panel),
-      ),
-    );
-    final theme = Theme.of(context);
-
-    return CollapsibleImagePanel(
-      key: const Key('classic-character-secondary-menu'),
-      title: AppLocalizations.of(context)!.character_buttonLabel,
-      icon: Icons.people_outline_rounded,
-      isExpanded: isExpanded,
-      onToggle: () => unawaited(
-        ref.read(generationPanelExpansionProvider.notifier).toggle(panel),
-      ),
-      hasData: true,
-      badge: Container(
-        key: const Key('classic-character-count'),
-        constraints: const BoxConstraints(minWidth: 22),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: theme.colorScheme.primaryContainer,
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Text(
-          '${characters.length}',
-          style: theme.textTheme.labelSmall?.copyWith(
-            color: theme.colorScheme.onPrimaryContainer,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
-      ),
-      childBuilder: (context) => const InlineCharacterRow(),
-    );
-  }
-}
-
-/// 内联角色行（经典布局用，横排）
-///
-/// 位于提示词横条正下方，与主提示词同屏相邻：
-/// - 角色卡固定宽度横排（Wrap 换行），网格始终整齐
-/// - 选中的角色在网格下方展开全宽编辑面板，不打乱卡片排版
-/// - 行尾「+」按钮弹出添加菜单（女/男/其他/词库）
-/// - 无角色或非 V4 模型时整行隐藏，零高度成本
-///
-/// 全屏编辑与非全屏共用此组件，始终紧贴提示词区下方。
+/// 管理器使用单列卡片和全宽编辑器；角色状态仍由共享 Provider 持有，
+/// 与桌面侧栏角色菜单保持一致。
 class InlineCharacterRow extends ConsumerWidget {
   const InlineCharacterRow({
     super.key,
@@ -172,64 +208,10 @@ class InlineCharacterRow extends ConsumerWidget {
           if (!managerLayout || characters.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                children: [
-                  if (characters.isEmpty) ...[
-                    Icon(
-                      Icons.people_outline_rounded,
-                      size: 18,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      AppLocalizations.of(context)!.prompt_characterPrompts,
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ] else
-                    CharacterPositionModeSegments(
-                      forceExitMaximizedPrompt: managerLayout,
-                    ),
-                  const Spacer(),
-                  if (!compactHeader || characters.isEmpty)
-                    Container(
-                      constraints: const BoxConstraints(minWidth: 24),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        '${characters.length}',
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: theme.colorScheme.onPrimaryContainer,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ),
-                  if (characters.isNotEmpty) ...[
-                    SizedBox(width: compactHeader ? 4 : 8),
-                    IconButton(
-                      onPressed: () => confirmClearAllCharacters(context, ref),
-                      icon: const Icon(Icons.delete_sweep_outlined),
-                      iconSize: 18,
-                      tooltip: AppLocalizations.of(
-                        context,
-                      )!.characterEditor_clearAll,
-                      color: theme.colorScheme.error,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 40,
-                        height: 40,
-                      ),
-                      padding: EdgeInsets.zero,
-                    ),
-                  ],
-                ],
+              child: _InlineCharacterHeader(
+                count: characters.length,
+                compact: compactHeader,
+                forceExitMaximizedPrompt: managerLayout,
               ),
             ),
           // 等宽占满网格：每排卡片等分行宽（含尾部添加卡），排列整齐
@@ -271,11 +253,15 @@ class InlineCharacterRow extends ConsumerWidget {
           ),
           // 面板展开/收起用高度生长 + 交叉淡化，切换角色时两面板淡化过渡
           AnimatedSize(
-            duration: const Duration(milliseconds: 180),
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 180),
             curve: Curves.easeOutCubic,
             alignment: Alignment.topCenter,
             child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 120),
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 120),
               switchInCurve: Curves.easeOut,
               switchOutCurve: Curves.easeIn,
               child: editingCharacter == null
@@ -353,6 +339,9 @@ class _RowEditorPanelState extends ConsumerState<_RowEditorPanel> {
     if (route != null && !route.isCurrent) return;
     // 位置画布打开时，点画布拖锚点是位置编辑的一部分，不退出编辑态
     if (ref.read(characterPositionCanvasProvider)) return;
+    // 第一次点空白区域只收起软键盘并保留角色编辑器；没有输入焦点时
+    // 再点外部区域才沿用原来的退出编辑行为。
+    if (_panelFocusNode.hasFocus) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final currentRoute = ModalRoute.of(context);
@@ -372,8 +361,95 @@ class _RowEditorPanelState extends ConsumerState<_RowEditorPanel> {
     final l10n = AppLocalizations.of(context)!;
     final notifier = ref.read(characterPromptNotifierProvider.notifier);
     final iconColor = colorScheme.onSurfaceVariant;
+    final largeText =
+        widget.borderless && MediaQuery.textScalerOf(context).scale(14) >= 20;
+
+    final nameField = CharacterNameField(
+      key: ValueKey('panel-name-${widget.character.id}'),
+      character: widget.character,
+      style: theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+    );
+    final nameBlock = widget.borderless
+        ? Row(
+            children: [
+              Text(
+                l10n.characterEditor_editing,
+                key: ValueKey(
+                  'character-editor-context-${widget.character.id}',
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 6),
+              // 面板即编辑态，名字就地可改。剩余宽度交给名字，
+              // 避免窄屏时把右侧操作挤出可见区。
+              Expanded(child: nameField),
+            ],
+          )
+        : nameField;
+    final actions = <Widget>[
+      _PanelIconButton(
+        icon: Icons.arrow_upward,
+        color: iconColor,
+        tooltip: l10n.characterEditor_moveUp,
+        enabled: widget.index > 0,
+        comfortable: widget.borderless,
+        onTap: () => notifier.moveCharacterUp(widget.index),
+      ),
+      _PanelIconButton(
+        icon: Icons.arrow_downward,
+        color: iconColor,
+        tooltip: l10n.characterEditor_moveDown,
+        enabled: widget.index < widget.total - 1,
+        comfortable: widget.borderless,
+        onTap: () => notifier.moveCharacterDown(widget.index),
+      ),
+      _PanelIconButton(
+        icon: Icons.library_add_outlined,
+        color: iconColor,
+        tooltip: l10n.tagLibrary_addToLibrary,
+        comfortable: widget.borderless,
+        onTap: () => _openModal(
+          () => AddToLibraryDialog.show(
+            context,
+            name: widget.character.name,
+            content: CharacterPromptBlockParser.compose(
+              positivePrompt: widget.character.prompt,
+              negativePrompt: widget.character.negativePrompt,
+            ),
+          ),
+        ),
+      ),
+      _PanelIconButton(
+        icon: Icons.close,
+        color: iconColor,
+        tooltip: l10n.characterEditor_close,
+        comfortable: widget.borderless,
+        onTap: () => ref.read(selectedCharacterIdProvider.notifier).clear(),
+      ),
+    ];
+
+    Widget buildIdentity() => Row(
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+            color: _genderColor(widget.character.effectiveGender),
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(child: nameBlock),
+      ],
+    );
 
     return TapRegion(
+      groupId: CharacterPromptEditor.tapRegionGroupId(widget.character.id),
       onTapOutside: (_) => _handleTapOutside(),
       child: Focus(
         focusNode: _panelFocusNode,
@@ -392,69 +468,20 @@ class _RowEditorPanelState extends ConsumerState<_RowEditorPanel> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: _genderColor(widget.character.effectiveGender),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    // 面板即编辑态，名字就地可改
-                    child: CharacterNameField(
-                      key: ValueKey('panel-name-${widget.character.id}'),
-                      character: widget.character,
-                      style: theme.textTheme.labelMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  _PanelIconButton(
-                    icon: Icons.arrow_upward,
-                    color: iconColor,
-                    tooltip: l10n.characterEditor_moveUp,
-                    enabled: widget.index > 0,
-                    comfortable: widget.borderless,
-                    onTap: () => notifier.moveCharacterUp(widget.index),
-                  ),
-                  _PanelIconButton(
-                    icon: Icons.arrow_downward,
-                    color: iconColor,
-                    tooltip: l10n.characterEditor_moveDown,
-                    enabled: widget.index < widget.total - 1,
-                    comfortable: widget.borderless,
-                    onTap: () => notifier.moveCharacterDown(widget.index),
-                  ),
-                  _PanelIconButton(
-                    icon: Icons.library_add_outlined,
-                    color: iconColor,
-                    tooltip: l10n.tagLibrary_addToLibrary,
-                    comfortable: widget.borderless,
-                    onTap: () => _openModal(
-                      () => AddToLibraryDialog.show(
-                        context,
-                        name: widget.character.name,
-                        content: CharacterPromptBlockParser.compose(
-                          positivePrompt: widget.character.prompt,
-                          negativePrompt: widget.character.negativePrompt,
-                        ),
-                      ),
-                    ),
-                  ),
-                  _PanelIconButton(
-                    icon: Icons.close,
-                    color: iconColor,
-                    tooltip: l10n.characterEditor_close,
-                    comfortable: widget.borderless,
-                    onTap: () =>
-                        ref.read(selectedCharacterIdProvider.notifier).clear(),
-                  ),
-                ],
-              ),
+              if (largeText) ...[
+                buildIdentity(),
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Row(mainAxisSize: MainAxisSize.min, children: actions),
+                ),
+              ] else
+                Row(
+                  children: [
+                    Expanded(child: buildIdentity()),
+                    ...actions,
+                  ],
+                ),
               const SizedBox(height: 6),
               CharacterPromptEditor(
                 character: widget.character,
@@ -647,10 +674,7 @@ class _AddCharacterChip extends ConsumerWidget {
     }
 
     // 词库导入
-    final entry = await showDialog(
-      context: context,
-      builder: (context) => const TagLibraryPickerDialog(),
-    );
+    final entry = await TagLibraryPickerDialog.show(context);
     if (entry != null) {
       final parsed = CharacterPromptBlockParser.parse(entry.content);
       ref.read(tagLibraryPageNotifierProvider.notifier).recordUsage(entry.id);

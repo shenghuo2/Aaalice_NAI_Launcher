@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:nai_launcher/core/utils/localization_extension.dart';
 
+import '../../adaptive/adaptive_presenter.dart';
+import '../../themes/core/layered_surface_style.dart';
+
 /// 预设创建模式
 enum PresetCreationMode {
   /// 完全空白
@@ -24,13 +27,35 @@ class NewPresetResult {
 /// - 完全空白：从头开始创建
 /// - 基于默认预设：复制默认预设作为起点
 class NewPresetDialog extends StatefulWidget {
-  const NewPresetDialog({super.key});
+  const NewPresetDialog({super.key, this.scrollController});
+
+  final ScrollController? scrollController;
 
   /// 显示对话框并返回结果
   static Future<NewPresetResult?> show(BuildContext context) {
-    return showDialog<NewPresetResult>(
+    return AdaptivePresenter.showForm<NewPresetResult>(
       context: context,
-      builder: (context) => const NewPresetDialog(),
+      dialogWidth: 420,
+      maxCenteredHeight: 460,
+      titleBuilder: (panelContext) => Row(
+        children: [
+          Icon(
+            Icons.add_circle_outline,
+            color: Theme.of(panelContext).colorScheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              panelContext.l10n.newPresetDialog_title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(panelContext).textTheme.titleLarge,
+            ),
+          ),
+        ],
+      ),
+      builder: (panelContext, scrollController) =>
+          NewPresetDialog(scrollController: scrollController),
     );
   }
 
@@ -75,41 +100,17 @@ class _NewPresetDialogState extends State<NewPresetDialog> {
     final colorScheme = theme.colorScheme;
     final l10n = context.l10n;
 
-    return Dialog(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 标题栏
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(12),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.add_circle_outline, color: colorScheme.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      l10n.newPresetDialog_title,
-                      style: theme.textTheme.titleMedium,
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-            ),
-
-            // 内容区域
-            Padding(
+    return SizedBox.expand(
+      key: const ValueKey('new-preset-dialog-frame'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 内容区域在键盘、小高度和大字体下滚动，动作始终固定可达。
+          Expanded(
+            child: SingleChildScrollView(
+              key: const ValueKey('new-preset-dialog-scroll'),
+              controller: widget.scrollController,
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -168,25 +169,26 @@ class _NewPresetDialogState extends State<NewPresetDialog> {
                 ],
               ),
             ),
+          ),
 
-            // 底部按钮
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                border: Border(
-                  top: BorderSide(
-                    color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-                  ),
-                ),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+          // 底部按钮
+          Container(
+            padding: const EdgeInsets.all(16),
+            color: sectionSurfaceColor(colorScheme),
+            child: SafeArea(
+              top: false,
+              left: false,
+              right: false,
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(),
                     child: Text(l10n.common_cancel),
                   ),
-                  const SizedBox(width: 8),
                   FilledButton.icon(
                     onPressed: _validateAndSubmit,
                     icon: const Icon(Icons.check, size: 18),
@@ -195,8 +197,8 @@ class _NewPresetDialogState extends State<NewPresetDialog> {
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -226,19 +228,14 @@ class _ModeOptionCard extends StatelessWidget {
     return Material(
       color: isSelected
           ? colorScheme.primaryContainer.withValues(alpha: 0.5)
-          : colorScheme.surfaceContainerHighest,
+          : controlSurfaceColor(colorScheme),
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         child: Container(
           padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            border: isSelected
-                ? Border.all(color: colorScheme.primary, width: 2)
-                : null,
-          ),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
           child: Row(
             children: [
               Icon(
@@ -268,8 +265,14 @@ class _ModeOptionCard extends StatelessWidget {
                   ],
                 ),
               ),
-              if (isSelected)
-                Icon(Icons.check_circle, color: colorScheme.primary),
+              Icon(
+                isSelected
+                    ? Icons.radio_button_checked_rounded
+                    : Icons.radio_button_unchecked_rounded,
+                color: isSelected
+                    ? colorScheme.primary
+                    : colorScheme.onSurfaceVariant,
+              ),
             ],
           ),
         ),

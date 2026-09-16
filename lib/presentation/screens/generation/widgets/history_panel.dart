@@ -1,7 +1,12 @@
+import '../../../providers/generation/image_card_selection_provider.dart';
+import '../../../selection/card_selection_scope.dart';
+import '../../../widgets/common/image_card_action.dart';
+import '../../../widgets/common/image_card_action_dispatch.dart';
+import '../../../widgets/common/image_card_batch_scope.dart';
+import '../services/generation_image_batch_actions.dart';
 import 'dart:async';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -10,17 +15,14 @@ import 'package:path/path.dart' as p;
 
 import '../../../../core/enums/precise_ref_type.dart';
 import '../../../../core/platform/platform_capabilities.dart';
-import '../../../../core/services/android_media_store_service.dart';
-import '../../../../core/services/file_export_service.dart';
 import '../../../../core/utils/localization_extension.dart';
 import '../../../../core/utils/file_explorer_utils.dart';
 import '../../../../core/utils/image_save_utils.dart';
 import '../../../../core/utils/image_share_sanitizer.dart';
-import '../../../../core/utils/keyboard_modifier_utils.dart';
 import '../../../../core/utils/vibe_file_parser.dart';
-import '../../../../core/utils/zip_utils.dart';
 import '../../../../data/services/alias_resolver_service.dart';
 import '../../../../data/models/pic_manager/pic_manager_push_config.dart';
+import '../../../adaptive/interaction_policy.dart';
 import '../../../providers/layout_state_provider.dart';
 import '../../../providers/tag_library_page_provider.dart';
 
@@ -34,12 +36,14 @@ import '../../../providers/local_gallery_provider.dart';
 import '../../../providers/pic_manager_push_provider.dart';
 import '../../../providers/reverse_prompt_provider.dart';
 import '../../../providers/share_image_settings_provider.dart';
+import '../../../providers/copy_drag_watermark_provider.dart';
 import '../../../services/image_workflow_launcher.dart';
 import '../../../widgets/common/app_toast.dart';
 import '../../../widgets/common/image_detail/file_image_detail_data.dart';
 import '../../../widgets/common/image_detail/image_detail_data.dart';
 import '../../../widgets/common/image_detail/image_detail_viewer.dart';
 import '../../../widgets/common/draggable_memory_image.dart';
+import '../../../widgets/common/owned_scroll_controller.dart';
 import '../../../widgets/common/selectable_image_card.dart';
 import '../../../widgets/image_editor/image_editor_screen.dart';
 import '../../../utils/image_detail_opener.dart';
@@ -47,6 +51,7 @@ import '../../../utils/krita_send_helper.dart';
 import '../../../utils/precise_ref_library_import_helper.dart';
 import '../../../utils/pic_manager_localization.dart';
 import '../../../widgets/common/themed_confirm_dialog.dart';
+import '../../../widgets/common/workspace_panel_header.dart';
 import '../services/generation_save_service.dart';
 import '../../../widgets/common/themed_divider.dart';
 import '../../tag_library_page/widgets/entry_add_dialog.dart';
@@ -80,34 +85,41 @@ class _HistoryRowDescriptor {
 
 /// 历史面板组件
 class HistoryPanel extends ConsumerStatefulWidget {
-  const HistoryPanel({super.key, this.onClose, this.embedded = false});
+  const HistoryPanel({
+    super.key,
+    this.onClose,
+    this.embedded = false,
+    this.viewportOffset,
+    this.sharePreparationService,
+  });
 
+  final ShareImagePreparationService? sharePreparationService;
   final VoidCallback? onClose;
 
   /// 嵌入模式：隐藏自带标题行，由外层 Tab 栏承担标题职责。
   final bool embedded;
+  final OwnedViewportOffset? viewportOffset;
 
   @override
   ConsumerState<HistoryPanel> createState() => _HistoryPanelState();
 }
 
 class _HistoryPanelState extends ConsumerState<HistoryPanel> {
-  final Set<String> _selectedIds = {};
-  final ShareImagePreparationService _sharePreparationService =
-      ShareImagePreparationService.instance;
+  Set<String> get _selectedIds =>
+      ref.read(generationImageCardSelectionProvider).selectedIds;
+  GenerationImageCardSelection get _selection =>
+      ref.read(generationImageCardSelectionProvider.notifier);
+  late final ShareImagePreparationService _sharePreparationService;
   Timer? _historyScrollIdleTimer;
   Timer? _historyPreheatTimer;
   Timer? _hoverPreheatTimer;
   bool _isHistoryScrolling = false;
-  bool _isTrackingGenerationPreviews = false;
   String? _lastSharePreparationMaintenanceKey;
-  final Map<int, Uint8List> _streamPreviewBytesByImageNumber = {};
-  final Map<String, Uint8List> _completionPreviewPlaceholders = {};
   final Map<String, bool> _favoriteStates = {};
   final Map<String, String?> _favoriteStatePaths = {};
   final Set<String> _favoriteStatusLoadingIds = {};
   final Set<String> _favoriteToggleLoadingIds = {};
-  final ScrollController _scrollController = ScrollController();
+  late final OwnedScrollController _scrollController;
   final Map<String, GlobalKey> _imageKeys = {};
   List<_HistoryRowDescriptor> _rowDescriptors = const [];
   ProviderSubscription<String?>? _selectionSubscription;
@@ -116,6 +128,9 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
   @override
   void initState() {
     super.initState();
+    _sharePreparationService =
+        widget.sharePreparationService ?? ShareImagePreparationService.instance;
+    _scrollController = OwnedScrollController(viewport: widget.viewportOffset);
     _sharePreparationService.addListener(_handleSharePreparationChanged);
     _selectionSubscription = ref.listenManual(
       generationPreviewSelectionProvider,
@@ -143,6 +158,8 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(imageGenerationNotifierProvider);
+    final selection = ref.watch(generationImageCardSelectionProvider);
+    ref.watch(copyDragWatermarkProvider);
     final stripMetadata = ref.watch(
       shareImageSettingsProvider.select(
         (settings) => settings.effectiveStripMetadataForCopyAndDrag,
@@ -154,251 +171,263 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
         clickBehavior == HistoryClickBehavior.selectPreview
         ? ref.watch(generationPreviewSelectionProvider)
         : null;
-    _syncCompletionPreviewPlaceholder(state);
     _scheduleSharePreparationMaintenance(state, stripMetadata);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // 标题栏（嵌入模式下由外层 Tab 栏承担，仅保留操作按钮）
-        if (widget.embedded)
-          Padding(
-            padding: const EdgeInsets.only(left: 4, right: 4, top: 4),
-            child: Row(
-              children: [
-                const Spacer(),
-                if (state.history.isNotEmpty ||
-                    state.currentImages.isNotEmpty) ...[
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 5,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      '${_getAllSelectableImages(state).length}',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.onPrimaryContainer,
+    final selectedImages = state.selectableMergedImages
+        .where((image) => selection.isSelected(image.id))
+        .toList();
+    return ImageCardBatchScope(
+      runner: _selection.actionRunner,
+      targetIds: selection.selectedIds,
+      actions: GenerationImageBatchActions(
+        context: context,
+        images: selectedImages,
+        gallery: ref.read(localGalleryNotifierProvider.notifier),
+        selection: _selection,
+      ).build(),
+      child: CardSelectionScope(
+        selection: selection,
+        commands: _selection,
+        orderedIds: state.selectableMergedImages
+            .map((image) => image.id)
+            .toList(),
+        child: CardSelectionShortcuts(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 标题栏（嵌入模式下由外层 Tab 栏承担，仅保留操作按钮）
+              if (widget.embedded)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, right: 4, top: 4),
+                  child: Row(
+                    children: [
+                      const Spacer(),
+                      if (state.history.isNotEmpty ||
+                          state.currentImages.isNotEmpty) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${_getAllSelectableImages(state).length}',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onPrimaryContainer,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                      ],
+                      if (state.history.isNotEmpty ||
+                          state.currentImages.isNotEmpty)
+                        IconButton(
+                          onPressed: () {
+                            setState(() {
+                              final allImages = _getAllSelectableImages(state);
+                              if (_selectedIds.length == allImages.length) {
+                                _selection.clearSelection();
+                              } else {
+                                _selection.clearSelection();
+                                _selection.enter();
+                                _selection.selectAll(
+                                  allImages.map((img) => img.id),
+                                );
+                              }
+                            });
+                          },
+                          icon: Icon(
+                            _selectedIds.length ==
+                                    _getAllSelectableImages(state).length
+                                ? Icons.deselect
+                                : Icons.select_all,
+                            size: 18,
+                          ),
+                          tooltip:
+                              _selectedIds.length ==
+                                  _getAllSelectableImages(state).length
+                              ? context.l10n.common_deselectAll
+                              : context.l10n.common_selectAll,
+                          style: IconButton.styleFrom(
+                            foregroundColor: theme.colorScheme.primary,
+                          ),
+                          visualDensity:
+                              context.interactionPolicy.touchAvailable
+                              ? VisualDensity.standard
+                              : VisualDensity.compact,
+                          constraints: BoxConstraints.tightFor(
+                            width:
+                                context.interactionPolicy.minimumControlExtent,
+                            height:
+                                context.interactionPolicy.minimumControlExtent,
+                          ),
+                          padding: const EdgeInsets.all(8),
+                        ),
+                      if (state.history.isNotEmpty ||
+                          state.currentImages.isNotEmpty)
+                        IconButton(
+                          onPressed: () {
+                            _showClearDialog(context, ref);
+                          },
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                          tooltip: context.l10n.common_clear,
+                          style: IconButton.styleFrom(
+                            foregroundColor: theme.colorScheme.error,
+                          ),
+                          visualDensity:
+                              context.interactionPolicy.touchAvailable
+                              ? VisualDensity.standard
+                              : VisualDensity.compact,
+                          constraints: BoxConstraints.tightFor(
+                            width:
+                                context.interactionPolicy.minimumControlExtent,
+                            height:
+                                context.interactionPolicy.minimumControlExtent,
+                          ),
+                          padding: const EdgeInsets.all(8),
+                        ),
+                    ],
+                  ),
+                )
+              else
+                WorkspacePanelHeader(
+                  leading: _buildCollapseButton(),
+                  icon: Icons.history_rounded,
+                  title: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          context.l10n.generation_historyRecord,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
-                    ),
+                      if (state.history.isNotEmpty ||
+                          state.currentImages.isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${_getAllSelectableImages(state).length}',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onPrimaryContainer,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                  const SizedBox(width: 4),
-                ],
-                if (state.history.isNotEmpty || state.currentImages.isNotEmpty)
-                  IconButton(
-                    onPressed: () {
-                      setState(() {
-                        final allImages = _getAllSelectableImages(state);
-                        if (_selectedIds.length == allImages.length) {
-                          _selectedIds.clear();
-                        } else {
-                          _selectedIds.clear();
-                          _selectedIds.addAll(allImages.map((img) => img.id));
-                        }
-                      });
-                    },
-                    icon: Icon(
-                      _selectedIds.length ==
-                              _getAllSelectableImages(state).length
-                          ? Icons.deselect
-                          : Icons.select_all,
-                      size: 18,
-                    ),
-                    tooltip:
-                        _selectedIds.length ==
-                            _getAllSelectableImages(state).length
-                        ? context.l10n.common_deselectAll
-                        : context.l10n.common_selectAll,
-                    style: IconButton.styleFrom(
-                      foregroundColor: theme.colorScheme.primary,
-                    ),
-                    visualDensity: PlatformCapabilities.current.hasTouchInput
-                        ? VisualDensity.standard
-                        : VisualDensity.compact,
-                    constraints: PlatformCapabilities.current.hasTouchInput
-                        ? const BoxConstraints.tightFor(width: 48, height: 48)
-                        : const BoxConstraints(),
-                    padding: const EdgeInsets.all(8),
-                  ),
-                if (state.history.isNotEmpty || state.currentImages.isNotEmpty)
-                  IconButton(
-                    onPressed: () {
-                      _showClearDialog(context, ref);
-                    },
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    tooltip: context.l10n.common_clear,
-                    style: IconButton.styleFrom(
-                      foregroundColor: theme.colorScheme.error,
-                    ),
-                    visualDensity: PlatformCapabilities.current.hasTouchInput
-                        ? VisualDensity.standard
-                        : VisualDensity.compact,
-                    constraints: PlatformCapabilities.current.hasTouchInput
-                        ? const BoxConstraints.tightFor(width: 48, height: 48)
-                        : const BoxConstraints(),
-                    padding: const EdgeInsets.all(8),
-                  ),
-              ],
-            ),
-          )
-        else
-          Padding(
-            padding: const EdgeInsets.only(
-              left: 8,
-              right: 4,
-              top: 12,
-              bottom: 12,
-            ),
-            child: Row(
-              children: [
-                // 折叠按钮
-                _buildCollapseButton(theme),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    context.l10n.generation_historyRecord,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
+                  actions: [
+                    if (state.history.isNotEmpty ||
+                        state.currentImages.isNotEmpty)
+                      IconButton(
+                        onPressed: () {
+                          setState(() {
+                            final allImages = _getAllSelectableImages(state);
+                            if (_selectedIds.length == allImages.length) {
+                              _selection.clearSelection();
+                            } else {
+                              _selection.clearSelection();
+                              _selection.enter();
+                              _selection.selectAll(
+                                allImages.map((img) => img.id),
+                              );
+                            }
+                          });
+                        },
+                        icon: Icon(
+                          _selectedIds.length ==
+                                  _getAllSelectableImages(state).length
+                              ? Icons.deselect
+                              : Icons.select_all,
+                          size: 20,
+                        ),
+                        tooltip:
+                            _selectedIds.length ==
+                                _getAllSelectableImages(state).length
+                            ? context.l10n.common_deselectAll
+                            : context.l10n.common_selectAll,
+                        style: IconButton.styleFrom(
+                          foregroundColor: theme.colorScheme.primary,
+                        ),
+                        constraints: BoxConstraints.tightFor(
+                          width: context.interactionPolicy.minimumControlExtent,
+                          height:
+                              context.interactionPolicy.minimumControlExtent,
+                        ),
+                      ),
+                    if (state.history.isNotEmpty ||
+                        state.currentImages.isNotEmpty)
+                      IconButton(
+                        onPressed: () => _showClearDialog(context, ref),
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        tooltip: context.l10n.common_clear,
+                        style: IconButton.styleFrom(
+                          foregroundColor: theme.colorScheme.error,
+                        ),
+                        constraints: BoxConstraints.tightFor(
+                          width: context.interactionPolicy.minimumControlExtent,
+                          height:
+                              context.interactionPolicy.minimumControlExtent,
+                        ),
+                      ),
+                  ],
                 ),
-                if (state.history.isNotEmpty ||
-                    state.currentImages.isNotEmpty) ...[
-                  const SizedBox(width: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 5,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      '${_getAllSelectableImages(state).length}',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.onPrimaryContainer,
+              if (widget.embedded) const ThemedDivider(height: 1),
+
+              // 历史列表
+              Expanded(
+                child: state.history.isEmpty && !_hasCurrentGeneration(state)
+                    ? _buildEmptyState(theme, context)
+                    : _buildHistoryGrid(
+                        state,
+                        theme,
+                        ref,
+                        stripMetadata: stripMetadata,
+                        clickBehavior: clickBehavior,
+                        selectedPreviewId: selectedPreviewId,
                       ),
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                // 全选按钮
-                if (state.history.isNotEmpty || state.currentImages.isNotEmpty)
-                  IconButton(
-                    onPressed: () {
-                      setState(() {
-                        final allImages = _getAllSelectableImages(state);
-                        if (_selectedIds.length == allImages.length) {
-                          _selectedIds.clear();
-                        } else {
-                          _selectedIds.clear();
-                          _selectedIds.addAll(allImages.map((img) => img.id));
-                        }
-                      });
-                    },
-                    icon: Icon(
-                      _selectedIds.length ==
-                              _getAllSelectableImages(state).length
-                          ? Icons.deselect
-                          : Icons.select_all,
-                      size: 20,
-                    ),
-                    tooltip:
-                        _selectedIds.length ==
-                            _getAllSelectableImages(state).length
-                        ? context.l10n.common_deselectAll
-                        : context.l10n.common_selectAll,
-                    style: IconButton.styleFrom(
-                      foregroundColor: theme.colorScheme.primary,
-                    ),
-                    visualDensity: PlatformCapabilities.current.hasTouchInput
-                        ? VisualDensity.standard
-                        : VisualDensity.compact,
-                    constraints: PlatformCapabilities.current.hasTouchInput
-                        ? const BoxConstraints.tightFor(width: 48, height: 48)
-                        : const BoxConstraints(),
-                    padding: const EdgeInsets.all(8),
-                  ),
-                if (state.history.isNotEmpty || state.currentImages.isNotEmpty)
-                  IconButton(
-                    onPressed: () {
-                      _showClearDialog(context, ref);
-                    },
-                    icon: const Icon(Icons.delete_outline, size: 20),
-                    tooltip: context.l10n.common_clear,
-                    style: IconButton.styleFrom(
-                      foregroundColor: theme.colorScheme.error,
-                    ),
-                    visualDensity: PlatformCapabilities.current.hasTouchInput
-                        ? VisualDensity.standard
-                        : VisualDensity.compact,
-                    constraints: PlatformCapabilities.current.hasTouchInput
-                        ? const BoxConstraints.tightFor(width: 48, height: 48)
-                        : const BoxConstraints(),
-                    padding: const EdgeInsets.all(8),
-                  ),
-              ],
-            ),
+              ),
+
+              // 底部操作栏（有选中时显示）
+              if (_selectedIds.isNotEmpty)
+                _buildBottomActions(context, state, theme),
+            ],
           ),
-        const ThemedDivider(height: 1),
-
-        // 历史列表
-        Expanded(
-          child: state.history.isEmpty && !_hasCurrentGeneration(state)
-              ? _buildEmptyState(theme, context)
-              : _buildHistoryGrid(
-                  state,
-                  theme,
-                  ref,
-                  stripMetadata: stripMetadata,
-                  clickBehavior: clickBehavior,
-                  selectedPreviewId: selectedPreviewId,
-                ),
         ),
-
-        // 底部操作栏（有选中时显示）
-        if (_selectedIds.isNotEmpty) _buildBottomActions(context, state, theme),
-      ],
+      ),
     );
   }
 
-  Widget _buildCollapseButton(ThemeData theme) {
+  Widget _buildCollapseButton() {
     final onClose = widget.onClose;
-    if (onClose != null) {
-      return IconButton(
-        onPressed: onClose,
-        icon: const Icon(Icons.chevron_right_rounded),
-        tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
-        constraints: const BoxConstraints.tightFor(width: 48, height: 48),
-      );
-    }
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => ref
-            .read(layoutStateNotifierProvider.notifier)
-            .setRightPanelExpanded(false),
-        borderRadius: BorderRadius.circular(4),
-        child: Container(
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest.withValues(
-              alpha: 0.5,
-            ),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Icon(
-            Icons.chevron_right,
-            size: 16,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-          ),
-        ),
+    return IconButton(
+      key: const ValueKey('generation-history-collapse'),
+      onPressed:
+          onClose ??
+          () => ref
+              .read(layoutStateNotifierProvider.notifier)
+              .setRightPanelExpanded(false),
+      icon: const Icon(Icons.chevron_right),
+      tooltip: onClose != null
+          ? MaterialLocalizations.of(context).closeButtonTooltip
+          : context.l10n.common_collapse,
+      constraints: BoxConstraints.tightFor(
+        width: context.interactionPolicy.minimumControlExtent,
+        height: context.interactionPolicy.minimumControlExtent,
       ),
     );
   }
@@ -443,6 +472,7 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
     final imageIds = images.map((image) => image.id).toSet();
     final maintenanceKey =
         '${stripMetadata ? 'strip' : 'raw'}:'
+        '${ref.read(copyDragWatermarkProvider)?.cacheKey ?? 'original'}:'
         '${imageIds.join('|')}';
 
     if (_lastSharePreparationMaintenanceKey == maintenanceKey) {
@@ -525,16 +555,35 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
         return;
       }
 
+      final transform = ref.read(copyDragWatermarkProvider);
       for (final image in draggableImages) {
+        if (transform != null && !_isHistoryImageVisible(image.id)) continue;
         _sharePreparationService.enqueue(
           imageId: image.id,
           imageBytes: image.bytes,
           fileName: 'history_${image.id}.png',
           sourceFilePath: image.filePath,
           stripMetadata: stripMetadata,
+          transform: ref.read(copyDragWatermarkProvider),
         );
       }
     });
+  }
+
+  bool _isHistoryImageVisible(String imageId) {
+    final item = _imageKeys[imageId]?.currentContext?.findRenderObject();
+    final panel = context.findRenderObject();
+    if (item is! RenderBox ||
+        !item.attached ||
+        !item.hasSize ||
+        panel is! RenderBox ||
+        !panel.attached ||
+        !panel.hasSize) {
+      return false;
+    }
+    return (item.localToGlobal(Offset.zero) & item.size).overlaps(
+      panel.localToGlobal(Offset.zero) & panel.size,
+    );
   }
 
   void _scheduleHoverPreheat(GeneratedImage image, bool stripMetadata) {
@@ -557,6 +606,7 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
         fileName: 'history_${image.id}.png',
         sourceFilePath: image.filePath,
         stripMetadata: stripMetadata,
+        transform: ref.read(copyDragWatermarkProvider),
       );
     });
   }
@@ -571,53 +621,6 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
         context.l10n.history_dragFileNotReady,
       ShareImagePreparationStatus.ready => '',
     };
-  }
-
-  void _syncCompletionPreviewPlaceholder(ImageGenerationState state) {
-    if (state.isGenerating && !_isTrackingGenerationPreviews) {
-      _streamPreviewBytesByImageNumber.clear();
-      _isTrackingGenerationPreviews = true;
-    } else if (!state.isGenerating) {
-      _isTrackingGenerationPreviews = false;
-    }
-
-    for (final slot in state.streamPreviewSlots) {
-      final previewBytes = slot.previewBytes;
-      if (previewBytes != null && previewBytes.isNotEmpty) {
-        _streamPreviewBytesByImageNumber[slot.imageNumber] = previewBytes;
-      }
-    }
-    final streamPreview = state.streamPreview;
-    if (streamPreview != null &&
-        streamPreview.isNotEmpty &&
-        state.currentImage > 0) {
-      _streamPreviewBytesByImageNumber[state.currentImage] = streamPreview;
-    }
-
-    _streamPreviewBytesByImageNumber.removeWhere((imageNumber, previewBytes) {
-      final imageIndex = imageNumber - 1;
-      if (imageIndex < 0 || imageIndex >= state.currentImages.length) {
-        return false;
-      }
-      final image = state.currentImages[imageIndex];
-      _completionPreviewPlaceholders.putIfAbsent(image.id, () => previewBytes);
-      return true;
-    });
-
-    final retainedIds = <String>{
-      for (final image in state.currentImages) image.id,
-      for (final image in state.history) image.id,
-    };
-    _completionPreviewPlaceholders.removeWhere(
-      (imageId, _) => !retainedIds.contains(imageId),
-    );
-  }
-
-  void _clearCompletionPreviewPlaceholder(String imageId) {
-    if (_completionPreviewPlaceholders.remove(imageId) == null || !mounted) {
-      return;
-    }
-    setState(() {});
   }
 
   List<StreamPreviewSlot> _visibleStreamPreviewSlots(
@@ -801,6 +804,9 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
                             isFavorite: isFavorite,
                             dragPreparationReady: dragPreparationReady,
                             enableSelection: historyImage.canBulkSelect,
+                            selectionMode: ref
+                                .read(generationImageCardSelectionProvider)
+                                .isActive,
                             enableSaveAction: historyImage.canSave,
                             enableCopyAction: historyImage.canSave,
                             statusBadgeLabel: isFailedSnapshot
@@ -831,9 +837,9 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
                               }
                               setState(() {
                                 if (selected) {
-                                  _selectedIds.add(historyImage.id);
+                                  _selection.enterAndSelect(historyImage.id);
                                 } else {
-                                  _selectedIds.remove(historyImage.id);
+                                  _selection.deselect(historyImage.id);
                                 }
                               });
                             },
@@ -847,11 +853,11 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
                                     HistoryClickBehavior.selectPreview
                                 ? () => _showLinkedDetail(context, historyImage)
                                 : null,
-                            onLongPress:
-                                clickBehavior ==
-                                    HistoryClickBehavior.selectPreview
-                                ? () => _showLinkedDetail(context, historyImage)
-                                : null,
+                            onLongPress: historyImage.canBulkSelect
+                                ? () =>
+                                      _selection.enterAndSelect(historyImage.id)
+                                : () =>
+                                      _showLinkedDetail(context, historyImage),
                             onFullscreen: () =>
                                 _showLinkedDetail(context, historyImage),
                             enableContextMenu: true,
@@ -988,9 +994,11 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
       return childBuilder(true);
     }
 
+    final transform = ref.read(copyDragWatermarkProvider);
     final snapshot = _sharePreparationService.snapshotFor(
       image.id,
       stripMetadata: stripMetadata,
+      transform: transform,
     );
     final preparedFile = snapshot.isReady ? snapshot.file : null;
     final dragPreparationReady = preparedFile != null;
@@ -1009,6 +1017,7 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
         requirePreparedDragFile: true,
         preparedDragFile: preparedFile,
         preparedDragStripMetadata: preparedFile == null ? null : stripMetadata,
+        preparedDragTransformKey: transform?.cacheKey,
         disabledReason: preparedFile == null
             ? _dragDisabledReason(snapshot)
             : null,
@@ -1054,10 +1063,11 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
           allowRepeatedModifierTaps: true,
           isFavorite: isFavorite,
           dragPreparationReady: dragPreparationReady,
-          completionPlaceholderBytes: _completionPreviewPlaceholders[image.id],
-          onCompletionPlaceholderSettled: () =>
-              _clearCompletionPreviewPlaceholder(image.id),
+          completionPreview: state.completionPreviews[image.id],
           enableSelection: image.canBulkSelect,
+          selectionMode: ref
+              .read(generationImageCardSelectionProvider)
+              .isActive,
           enableSaveAction: image.canSave,
           enableCopyAction: image.canSave,
           statusBadgeLabel: isFailedSnapshot
@@ -1081,9 +1091,9 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
             }
             setState(() {
               if (selected) {
-                _selectedIds.add(image.id);
+                _selection.enterAndSelect(image.id);
               } else {
-                _selectedIds.remove(image.id);
+                _selection.deselect(image.id);
               }
             });
           },
@@ -1091,9 +1101,9 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
           onDoubleTap: clickBehavior == HistoryClickBehavior.selectPreview
               ? () => _showLinkedDetail(context, image)
               : null,
-          onLongPress: clickBehavior == HistoryClickBehavior.selectPreview
-              ? () => _showLinkedDetail(context, image)
-              : null,
+          onLongPress: image.canBulkSelect
+              ? () => _selection.enterAndSelect(image.id)
+              : () => _showLinkedDetail(context, image),
           onFullscreen: () => _showLinkedDetail(context, image),
           enableContextMenu: true,
           hoverEffectsEnabled: !_isHistoryScrolling,
@@ -1268,26 +1278,11 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
     });
   }
 
-  bool get _isMultiSelectModifierPressed {
-    return isPrimarySelectionModifierPressed();
-  }
-
-  void _toggleSelectedImage(GeneratedImage image) {
-    if (!image.canBulkSelect) return;
-    setState(() {
-      if (!_selectedIds.add(image.id)) _selectedIds.remove(image.id);
-    });
-  }
-
   void _handleImageTap(
     BuildContext context,
     GeneratedImage image,
     HistoryClickBehavior behavior,
   ) {
-    if (_isMultiSelectModifierPressed && image.canBulkSelect) {
-      _toggleSelectedImage(image);
-      return;
-    }
     if (behavior == HistoryClickBehavior.selectPreview) {
       ref.read(generationPreviewSelectionProvider.notifier).select(image.id);
       ref.read(generationPreviewFocusNodeProvider).requestFocus();
@@ -1360,18 +1355,20 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
           .read(localGalleryNotifierProvider.notifier)
           .toggleFavorite(filePath);
 
-      if (!mounted || !context.mounted) return;
+      if (!mounted) return;
       setState(() {
         _favoriteStatePaths[image.id] = filePath;
         _favoriteStates[image.id] = isFavorite;
       });
 
-      AppToast.success(
-        context,
-        isFavorite
-            ? context.l10n.toast_favorited
-            : context.l10n.toast_unfavorited,
-      );
+      if (context.mounted) {
+        AppToast.success(
+          context,
+          isFavorite
+              ? context.l10n.toast_favorited
+              : context.l10n.toast_unfavorited,
+        );
+      }
       final picManagerConfig = ref.read(picManagerSettingsProvider).valueOrNull;
       if (isFavorite &&
           picManagerConfig?.isConfigured == true &&
@@ -1561,213 +1558,61 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
     BuildContext context,
     ImageGenerationState state,
     ThemeData theme,
-  ) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.3)),
+  ) => Builder(
+    builder: (context) {
+      final batch = ImageCardBatchScope.maybeOf(context)!;
+      final extent = context.interactionPolicy.minimumControlExtent;
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          border: Border(
+            top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.3)),
+          ),
         ),
-      ),
-      child: Row(
-        children: [
-          // 打包按钮
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () => _packSelectedImages(context, state),
-              icon: const Icon(Icons.archive_outlined, size: 20),
-              label: Text(
-                '${context.l10n.common_pack} (${_selectedIds.length})',
+        child: Row(
+          children: [
+            for (var i = 0; i < batch.actions.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              Expanded(
+                child: _buildBatchButton(
+                  context,
+                  batch.actions[i],
+                  batch.targetIds.length,
+                  extent < 44 ? 44 : extent,
+                ),
               ),
-              style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
-            ),
-          ),
-          const SizedBox(width: 8),
-          // 保存按钮
-          Expanded(
-            child: FilledButton.icon(
-              onPressed: () => _saveSelectedImages(context, state),
-              icon: const Icon(Icons.save_alt, size: 20),
-              label: Text(
-                '${context.l10n.image_save} (${_selectedIds.length})',
-              ),
-              style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _saveSelectedImages(
-    BuildContext context,
-    ImageGenerationState state,
-  ) async {
-    if (_selectedIds.isEmpty) return;
-
-    try {
-      final saveDirPath = await GalleryFolderRepository.instance.getRootPath();
-      if (saveDirPath == null) return;
-
-      // 从所有可选图像中查找选中的图像
-      final allImages = _getAllSelectableImages(state);
-      final selectedImages = allImages
-          .where((img) => _selectedIds.contains(img.id))
-          .toList();
-
-      Object? systemGalleryError;
-      // 原子保存：日期分类路径 + 独占防冲突 + 失败清理，全部在工具内完成
-      for (int i = 0; i < selectedImages.length; i++) {
-        final image = selectedImages[i];
-        final filePath = await ImageSaveUtils.saveBytesToDatedPath(
-          rootPath: saveDirPath,
-          bytes: image.bytes,
-          seed: await ImageSaveUtils.resolveSeed(
-            metadata: image.metadata,
-            bytes: image.bytes,
-          ),
-        );
-        if (PlatformCapabilities.current.supportsSystemGalleryExport) {
-          try {
-            await AndroidMediaStoreService.savePng(
-              bytes: image.bytes,
-              fileName: p.basename(filePath),
-            );
-          } catch (error) {
-            systemGalleryError ??= error;
-          }
-        }
-      }
-
-      ref.read(localGalleryNotifierProvider.notifier).refresh();
-
-      if (context.mounted) {
-        if (systemGalleryError != null) {
-          AppToast.warning(
-            context,
-            context.l10n.image_savedAppOnly(systemGalleryError.toString()),
-          );
-        } else {
-          AppToast.success(
-            context,
-            PlatformCapabilities.current.supportsSystemGalleryExport
-                ? context.l10n.image_savedToSystemGallery
-                : context.l10n.image_imageSaved(saveDirPath),
-          );
-        }
-        setState(() {
-          _selectedIds.clear();
-        });
-      }
-    } catch (e) {
-      if (context.mounted) {
-        AppToast.error(context, context.l10n.image_saveFailed(e.toString()));
-      }
-    }
-  }
-
-  /// 打包选中的图片成压缩包
-  Future<void> _packSelectedImages(
-    BuildContext context,
-    ImageGenerationState state,
-  ) async {
-    if (_selectedIds.isEmpty) return;
-
-    final defaultName = 'images_${DateTime.now().millisecondsSinceEpoch}';
-    final fileName = '$defaultName.zip';
-    String? desktopOutputPath;
-    if (!PlatformCapabilities.current.supportsDocumentFileExport) {
-      final outputPath = await FilePicker.platform.saveFile(
-        dialogTitle: context.l10n.localGallery_saveZipArchive,
-        fileName: fileName,
-        type: FileType.custom,
-        allowedExtensions: ['zip'],
+            ],
+          ],
+        ),
       );
-      if (outputPath == null || !context.mounted) return;
-      desktopOutputPath = outputPath.endsWith('.zip')
-          ? outputPath
-          : '$outputPath.zip';
-    }
+    },
+  );
 
-    // 显示打包进度
-    AppToast.info(
-      context,
-      context.l10n.toast_packingImages(_selectedIds.length),
-    );
-
-    Directory? tempDir;
-    try {
-      // 先将选中的图片保存到临时目录
-      tempDir = await Directory.systemTemp.createTemp('nai_pack_');
-      final imagePaths = <String>[];
-
-      final allImages = _getAllSelectableImages(state);
-      final selectedImages = allImages
-          .where((img) => _selectedIds.contains(img.id))
-          .toList();
-
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      for (int i = 0; i < selectedImages.length; i++) {
-        final imageFileName = 'NAI_${timestamp}_${i + 1}.png';
-        final file = File('${tempDir.path}/$imageFileName');
-        await file.writeAsBytes(selectedImages[i].bytes);
-        imagePaths.add(file.path);
-      }
-
-      late bool success;
-      String? savedLocation;
-      if (PlatformCapabilities.current.supportsDocumentFileExport) {
-        savedLocation = await FileExportService.withTemporaryOutput(
-          fileName: fileName,
-          action: (temporaryPath) async {
-            success = await ZipUtils.createZipFromImages(
-              imagePaths,
-              temporaryPath,
-            );
-            if (!success || !context.mounted) return null;
-            return FileExportService.saveFileFromPath(
-              sourcePath: temporaryPath,
-              fileName: fileName,
-              dialogTitle: context.l10n.localGallery_saveZipArchive,
-              mimeType: 'application/zip',
-              allowedExtensions: const ['zip'],
-            );
-          },
-        );
-      } else {
-        success = await ZipUtils.createZipFromImages(
-          imagePaths,
-          desktopOutputPath!,
-        );
-        savedLocation = desktopOutputPath;
-      }
-
-      if (context.mounted) {
-        if (success && savedLocation != null) {
-          AppToast.success(
-            context,
-            context.l10n.toast_packedImages(selectedImages.length),
+  Widget _buildBatchButton(
+    BuildContext context,
+    ImageCardAction action,
+    int count,
+    double height,
+  ) {
+    final onPressed = action.canInvoke
+        ? () => unawaited(dispatchImageCardAction(context, action))
+        : null;
+    final label = Text('${action.label} ($count)');
+    final icon = Icon(action.icon, size: 20);
+    return action.isPrimary
+        ? FilledButton.icon(
+            onPressed: onPressed,
+            icon: icon,
+            label: label,
+            style: FilledButton.styleFrom(minimumSize: Size(0, height)),
+          )
+        : OutlinedButton.icon(
+            onPressed: onPressed,
+            icon: icon,
+            label: label,
+            style: OutlinedButton.styleFrom(minimumSize: Size(0, height)),
           );
-          setState(() {
-            _selectedIds.clear();
-          });
-        } else if (!success) {
-          AppToast.error(context, context.l10n.toast_packFailed);
-        }
-      }
-    } catch (e) {
-      if (context.mounted) {
-        AppToast.error(
-          context,
-          context.l10n.toast_packFailedWithError(e.toString()),
-        );
-      }
-    } finally {
-      if (tempDir != null && await tempDir.exists()) {
-        await tempDir.delete(recursive: true);
-      }
-    }
   }
 
   /// 在文件夹中定位图片。已保存的图片直接定位原文件，未保存时先保存再定位。
@@ -1856,6 +1701,7 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
       showSaveButton: image.canSave,
       showCopyButton: image.canSave,
       preserveOriginalBytesOnSave: image.preserveOriginalBytesOnSave,
+      fixedTagUsageSnapshot: image.fixedTagUsageSnapshot,
     );
   }
 
@@ -1908,7 +1754,7 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
     if (confirmed) {
       ref.read(imageGenerationNotifierProvider.notifier).clearHistory();
       setState(() {
-        _selectedIds.clear();
+        _selection.clearSelection();
       });
     }
   }

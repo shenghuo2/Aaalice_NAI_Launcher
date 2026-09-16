@@ -9,7 +9,6 @@ import 'package:nai_launcher/data/models/prompt/dependency_config.dart';
 import 'package:nai_launcher/data/models/prompt/post_process_rule.dart';
 import 'package:nai_launcher/data/models/prompt/random_category.dart';
 import 'package:nai_launcher/data/models/prompt/random_preset.dart';
-import 'package:nai_launcher/data/models/prompt/random_prompt_result.dart';
 import 'package:nai_launcher/data/models/prompt/random_tag_group.dart';
 import 'package:nai_launcher/data/models/prompt/tag_category.dart';
 import 'package:nai_launcher/data/models/prompt/tag_library.dart';
@@ -35,7 +34,7 @@ void main() {
     );
   });
 
-  test('generateFromPreset preserves explicit result mode', () async {
+  test('generateFromPreset returns tags from the selected preset', () async {
     final preset = _preset([
       _category(
         id: 'scene',
@@ -46,13 +45,8 @@ void main() {
       ),
     ]);
 
-    final result = await generator.generateFromPreset(
-      preset: preset,
-      seed: 1,
-      mode: RandomGenerationMode.custom,
-    );
+    final result = await generator.generateFromPreset(preset: preset, seed: 1);
 
-    expect(result.mode, RandomGenerationMode.custom);
     expect(result.mainPrompt, contains('city'));
   });
 

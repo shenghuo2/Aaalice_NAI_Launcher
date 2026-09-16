@@ -322,6 +322,14 @@ class AutocompleteUtils {
     return (effectiveStyle.fontSize ?? 14) * (effectiveStyle.height ?? 1.2);
   }
 
+  static void revealCaret(BuildContext context) {
+    final editable = _findRenderEditable(context);
+    final selection = editable?.selection;
+    if (editable == null || selection == null || !selection.isValid) return;
+    final caret = editable.getLocalRectForCaret(selection.extent);
+    editable.showOnScreen(rect: caret.inflate(8));
+  }
+
   /// 计算光标在文本框内的位置
   /// 用于多行文本框的浮层定位
   static Offset getCursorOffset({
@@ -346,7 +354,9 @@ class AutocompleteUtils {
     if (renderEditable != null) {
       // 使用 RenderEditable 获取精确的光标位置
       final caretRect = renderEditable.getLocalRectForCaret(
-        TextPosition(offset: cursorPosition),
+        TextPosition(
+          offset: renderEditable.selection?.baseOffset ?? cursorPosition,
+        ),
       );
 
       // 获取 RenderEditable 相对于 renderBox 的位置

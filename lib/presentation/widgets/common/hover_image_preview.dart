@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import 'image_viewport_surface.dart';
 import 'decoded_memory_image.dart';
 import 'thumbnail_display.dart';
 
@@ -180,7 +181,7 @@ class _HoverImagePreviewState extends State<HoverImagePreview> {
           borderRadius: BorderRadius.circular(12),
           clipBehavior: Clip.antiAlias,
           child: ColoredBox(
-            color: Theme.of(context).colorScheme.surface,
+            color: ImageViewportSurface.background,
             child: _buildPreviewContent(
               context,
               previewWidth: previewWidth,
@@ -218,11 +219,11 @@ class _HoverImagePreviewState extends State<HoverImagePreview> {
         return Container(
           width: 100,
           height: 100,
-          color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          child: Icon(
+          color: ImageViewportSurface.background,
+          child: const Icon(
             Icons.broken_image_outlined,
             size: 32,
-            color: Theme.of(context).colorScheme.outline,
+            color: ImageViewportSurface.mutedForeground,
           ),
         );
       },
