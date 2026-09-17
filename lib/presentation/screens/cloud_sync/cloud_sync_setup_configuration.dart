@@ -24,6 +24,7 @@ class CloudSyncSetupConfiguration extends StatelessWidget {
     required this.oauthAccountLabel,
     required this.onAuthorizeOAuth,
     required this.onCancelOAuth,
+    required this.availableOAuthBackends,
   });
 
   final CloudSyncBackendKind backend;
@@ -43,6 +44,7 @@ class CloudSyncSetupConfiguration extends StatelessWidget {
   final String? oauthAccountLabel;
   final VoidCallback onAuthorizeOAuth;
   final VoidCallback onCancelOAuth;
+  final Set<CloudSyncBackendKind> availableOAuthBackends;
 
   @override
   Widget build(BuildContext context) => CloudSyncSection(
@@ -59,21 +61,19 @@ class CloudSyncSetupConfiguration extends StatelessWidget {
             children: [
               _destinationChip(CloudSyncBackendKind.webDav, 'WebDAV'),
               _destinationChip(CloudSyncBackendKind.github, 'GitHub'),
-              Tooltip(
-                message: context.l10n.cloudSync_googleDriveUnavailable,
-                child: _destinationChip(
+              if (availableOAuthBackends.contains(
+                CloudSyncBackendKind.googleDrive,
+              ))
+                _destinationChip(
                   CloudSyncBackendKind.googleDrive,
                   'Google Drive',
                 ),
-              ),
-              _destinationChip(CloudSyncBackendKind.oneDrive, 'OneDrive'),
+              if (availableOAuthBackends.contains(
+                CloudSyncBackendKind.oneDrive,
+              ))
+                _destinationChip(CloudSyncBackendKind.oneDrive, 'OneDrive'),
             ],
           ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          context.l10n.cloudSync_googleDriveUnavailable,
-          style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 20),
         if (backend == CloudSyncBackendKind.webDav) ...[

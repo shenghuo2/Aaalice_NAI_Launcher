@@ -98,7 +98,7 @@ flutter analyze lib/core/cloud_sync/oauth lib/core/storage/secure_storage_servic
 
 真机诊断还必须分别检查：Google Android debug/release SHA 是否登记；macOS 构建产物 `Info.plist` 是否出现实际 reversed client ID scheme；OneDrive redirect 是否逐字符匹配 Entra；Windows 浏览器是否回到随机 `127.0.0.1` 端口。
 
-Release workflow 要求先设置 GitHub Actions repository variables：`GOOGLE_DRIVE_WINDOWS_CLIENT_ID`、`GOOGLE_DRIVE_MACOS_CLIENT_ID`、`GOOGLE_DRIVE_MACOS_REDIRECT_URI`、`GOOGLE_DRIVE_ANDROID_CLIENT_ID`、`ONEDRIVE_CLIENT_ID`、`ONEDRIVE_MACOS_REDIRECT_URI`、`ONEDRIVE_ANDROID_REDIRECT_URI`，以及 `ONEDRIVE_TENANT_ID=common`；Google Windows Desktop client secret 单独存入 repository secret `GOOGLE_DRIVE_WINDOWS_CLIENT_SECRET`。正式发布缺少任一平台必需值时会在构建前失败，避免发布一个静默缺失云盘登录能力的安装包。这些值来自外部 Google/Entra 应用注册与审核，不在仓库中提供真实值。
+配置云盘功能的 Release workflow 使用 GitHub Actions repository variables：`GOOGLE_DRIVE_WINDOWS_CLIENT_ID`、`GOOGLE_DRIVE_MACOS_CLIENT_ID`、`GOOGLE_DRIVE_MACOS_REDIRECT_URI`、`GOOGLE_DRIVE_ANDROID_CLIENT_ID`、`ONEDRIVE_CLIENT_ID`、`ONEDRIVE_MACOS_REDIRECT_URI`、`ONEDRIVE_ANDROID_REDIRECT_URI`，以及 `ONEDRIVE_TENANT_ID=common`；Google Windows Desktop client secret 单独存入 repository secret `GOOGLE_DRIVE_WINDOWS_CLIENT_SECRET`。这些值来自外部 Google/Entra 应用注册与审核，不在仓库中提供真实值。Fork 未配置完整 OAuth 注册时仍可发布，但客户端不会显示 Google Drive 或 OneDrive 新建连接入口；WebDAV 与 GitHub 云同步不受影响。
 
 ## 数据与账号隔离
 

@@ -290,11 +290,18 @@ class _CloudSyncSetupState extends ConsumerState<CloudSyncSetup> {
 
   @override
   Widget build(BuildContext context) {
+    final driveProviders = ref.watch(cloudDriveProviderRegistryProvider);
+    final availableOAuthBackends = {
+      for (final backend in const [
+        CloudSyncBackendKind.googleDrive,
+        CloudSyncBackendKind.oneDrive,
+      ])
+        if (driveProviders.find(backend.oauthProvider)?.diagnose().isConfigured ??
+            false)
+          backend,
+    };
     final oauthDiagnostic = _backend.usesOAuth
-        ? ref
-              .watch(cloudDriveProviderRegistryProvider)
-              .require(_backend.oauthProvider)
-              .diagnose()
+        ? driveProviders.require(_backend.oauthProvider).diagnose()
         : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -324,6 +331,7 @@ class _CloudSyncSetupState extends ConsumerState<CloudSyncSetup> {
           oauthAccountLabel: _oauthDraft?.accountLabel,
           onAuthorizeOAuth: _authorizeOAuth,
           onCancelOAuth: _cancelOAuth,
+          availableOAuthBackends: availableOAuthBackends,
         ),
         _dataScope(),
         const SizedBox(height: 12),

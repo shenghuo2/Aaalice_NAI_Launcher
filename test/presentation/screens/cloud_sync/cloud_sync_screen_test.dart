@@ -27,21 +27,14 @@ void main() {
       expect(find.text('尚未连接'), findsOneWidget);
       expect(find.text('WebDAV'), findsOneWidget);
       expect(find.text('GitHub'), findsOneWidget);
-      expect(find.text('Google Drive'), findsOneWidget);
-      expect(
-        tester
-            .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Google Drive'))
-            .onSelected,
-        isNull,
-      );
+      expect(find.text('Google Drive'), findsNothing);
       expect(
         tester
             .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'WebDAV'))
             .onSelected,
         isNotNull,
       );
-      expect(find.text('Google Drive 暂不可用：应用授权审核尚未通过。'), findsOneWidget);
-      expect(find.text('OneDrive'), findsOneWidget);
+      expect(find.text('OneDrive'), findsNothing);
       expect(find.text('保存连接'), findsOneWidget);
       expect(tester.takeException(), isNull, reason: 'width=$width');
     }
@@ -49,14 +42,12 @@ void main() {
   });
 
   testWidgets(
-    'Google Drive is visibly disabled and cannot change the destination',
+    'unconfigured OAuth destinations are hidden',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(700, 900));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final port = _FakePort();
       await tester.pumpWidget(_subject(port: port));
-      await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Google Drive'));
       await tester.pumpAndSettle();
       expect(
         tester
@@ -68,6 +59,8 @@ void main() {
         find.byKey(const ValueKey('cloud-sync-authorize-googleDrive')),
         findsNothing,
       );
+      expect(find.text('Google Drive'), findsNothing);
+      expect(find.text('OneDrive'), findsNothing);
       expect(port.request, isNull);
     },
   );

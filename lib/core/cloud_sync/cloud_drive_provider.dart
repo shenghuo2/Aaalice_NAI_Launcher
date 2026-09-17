@@ -103,6 +103,8 @@ final class CloudDriveProviderRegistry {
 
   final Map<CloudDriveOAuthProvider, CloudDriveProvider> _providers;
 
+  CloudDriveProvider? find(CloudDriveOAuthProvider id) => _providers[id];
+
   CloudDriveProvider require(CloudDriveOAuthProvider id) {
     final provider = _providers[id];
     if (provider == null) {
