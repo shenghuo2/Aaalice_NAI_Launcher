@@ -75,7 +75,7 @@ ResultTemporaryPath="${ResultPath}.tmp.$$"
 Mounted=0
 Swapped=0
 UpdatedExecutablePath=''
-UpdatedExecutablePid=''
+UpdatedLauncherPid=''
 
 write_log() {
   local timestamp
@@ -122,16 +122,18 @@ launch_app() {
     return 1
   fi
 
-  # `open -n` hands process ownership to LaunchServices. Its helper process can
-  # exit before the app settles, which made a healthy update look failed.
-  NAI_LAUNCHER_UPDATE_RESTART=1 \
-    "$UpdatedExecutablePath" >> "$LogPath" 2>&1 &
-  UpdatedExecutablePid=$!
+  # LaunchServices avoids carrying updater process state into the replacement
+  # app. `-W` keeps the helper alive while the app is running, so it also gives
+  # us a stable process to observe without guessing the launched app's PID.
+  /usr/bin/open -n -W "$TargetApp" >> "$LogPath" 2>&1 &
+  UpdatedLauncherPid=$!
   local iteration
-  for iteration in {1..12}; do
+  # The app can wait up to 12 seconds for the previous instance lock. Observe
+  # longer than that window before accepting the restart as healthy.
+  for iteration in {1..60}; do
     sleep 0.25
-    if ! kill -0 "$UpdatedExecutablePid" >/dev/null 2>&1; then
-      wait "$UpdatedExecutablePid" || true
+    if ! kill -0 "$UpdatedLauncherPid" >/dev/null 2>&1; then
+      wait "$UpdatedLauncherPid" || true
       return 1
     fi
   done
@@ -147,8 +149,8 @@ handle_error() {
   write_result false "$message"
 
   if [[ "$Swapped" -eq 1 && -d "$BackupApp" ]]; then
-    if [[ -n "$UpdatedExecutablePid" ]]; then
-      /bin/kill "$UpdatedExecutablePid" >> "$LogPath" 2>&1 || true
+    if [[ -n "$UpdatedLauncherPid" ]]; then
+      /bin/kill "$UpdatedLauncherPid" >> "$LogPath" 2>&1 || true
       sleep 0.25
     fi
     rm -rf -- "$TargetApp"
@@ -237,9 +239,9 @@ codesign --verify --deep --strict --verbose=2 "$TargetApp" \
 
 write_log "Starting updated application: $TargetApp"
 launch_app "$CurrentExecutable"
+Swapped=0
 write_result true 'Update installed successfully.'
 
-Swapped=0
 rm -rf -- "$BackupApp" >> "$LogPath" 2>&1 || \
   write_log "Could not remove update backup: $BackupApp"
 if hdiutil detach "$MountDir" >> "$LogPath" 2>&1; then

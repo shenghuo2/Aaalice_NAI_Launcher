@@ -32,18 +32,17 @@ void main() {
       expect(script, contains('codesign --verify --deep --strict'));
       expect(script, contains(r'mv -- "$TargetApp" "$BackupApp"'));
       expect(script, contains(r'/usr/bin/ditto "$CandidateApp" "$TargetApp"'));
-      expect(script, contains('NAI_LAUNCHER_UPDATE_RESTART=1'));
-      expect(script, contains(r'"$UpdatedExecutablePath" >> "$LogPath" 2>&1 &'));
-      expect(script, contains(r'UpdatedExecutablePid=$!'));
+      expect(script, contains(r'/usr/bin/open -n -W "$TargetApp"'));
+      expect(script, contains(r'UpdatedLauncherPid=$!'));
       expect(
         script,
         isNot(contains(r'/usr/bin/pgrep -f -- "$UpdatedExecutablePath"')),
       );
-      expect(script, contains('for iteration in {1..12}'));
-      expect(script, contains(r'kill -0 "$UpdatedExecutablePid"'));
+      expect(script, contains('for iteration in {1..60}'));
+      expect(script, contains(r'kill -0 "$UpdatedLauncherPid"'));
       expect(
         script,
-        contains(r'/bin/kill "$UpdatedExecutablePid"'),
+        contains(r'/bin/kill "$UpdatedLauncherPid"'),
       );
       expect(script, contains('Previous application version restored.'));
       expect(script, contains('write_result true'));
@@ -64,6 +63,10 @@ void main() {
       );
       expect(successResult, greaterThanOrEqualTo(0));
       expect(successResult, greaterThan(launch));
+      expect(
+        script.lastIndexOf('Swapped=0'),
+        lessThan(successResult),
+      );
     });
 
     test('rejects execution from a mounted or translocated app', () {

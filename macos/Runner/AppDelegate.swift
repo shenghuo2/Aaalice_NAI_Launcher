@@ -107,6 +107,5 @@ class AppDelegate: FlutterAppDelegate {
       close(Self.primaryInstanceLock)
       Self.primaryInstanceLock = -2
     }
-    super.applicationWillTerminate(notification)
   }
 }

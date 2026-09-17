@@ -11,5 +11,9 @@ void main() {
     expect(source, contains('updateLockWaitSeconds'));
     expect(source, contains('usleep(250_000)'));
     expect(source, contains('FD_CLOEXEC'));
+    expect(
+      source,
+      isNot(contains('super.applicationWillTerminate(notification)')),
+    );
   });
 }
