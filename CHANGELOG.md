@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [4.2.1-picmanager.2] - 2026-09-17
+
+### 🐛 修复
+
+- Fork 未配置云盘 OAuth 时不再显示 Google Drive 和 OneDrive 新建连接入口，并允许正常构建发布包；WebDAV 与 GitHub 云同步不受影响。
+
 ## [4.2.1-picmanager.1] - 2026-09-17
 
 > [!WARNING]
