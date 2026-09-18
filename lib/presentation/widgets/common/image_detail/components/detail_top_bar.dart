@@ -25,6 +25,7 @@ class DetailTopBar extends StatelessWidget {
   final VoidCallback? onShowMetadata;
   final VoidCallback? onReuseMetadata;
   final VoidCallback? onFavoriteToggle;
+  final bool favoriteBusy;
   final VoidCallback? onSave;
   final VoidCallback? onCopyImage;
   final VoidCallback? onShare;
@@ -42,6 +43,7 @@ class DetailTopBar extends StatelessWidget {
     this.onShowMetadata,
     this.onReuseMetadata,
     this.onFavoriteToggle,
+    this.favoriteBusy = false,
     this.onSave,
     this.onCopyImage,
     this.onShare,
@@ -118,6 +120,7 @@ class DetailTopBar extends StatelessWidget {
                 onShowMetadata: onShowMetadata,
                 onReuseMetadata: onReuseMetadata,
                 onFavoriteToggle: onFavoriteToggle,
+                favoriteBusy: favoriteBusy,
                 onSave: onSave,
                 onCopyImage: onCopyImage,
                 onShare: onShare,
@@ -154,6 +157,7 @@ class _DetailTopBarActions extends ConsumerWidget {
     this.onShowMetadata,
     this.onReuseMetadata,
     this.onFavoriteToggle,
+    this.favoriteBusy = false,
     this.onSave,
     this.onCopyImage,
     this.onShare,
@@ -168,6 +172,7 @@ class _DetailTopBarActions extends ConsumerWidget {
   final VoidCallback? onShowMetadata;
   final VoidCallback? onReuseMetadata;
   final VoidCallback? onFavoriteToggle;
+  final bool favoriteBusy;
   final VoidCallback? onSave;
   final VoidCallback? onCopyImage;
   final VoidCallback? onShare;
@@ -220,7 +225,7 @@ class _DetailTopBarActions extends ConsumerWidget {
         ? l10n.mosaic_actionRegenerate
         : l10n.mosaic_actionCreate;
     final favorite = currentImage.showFavoriteButton && onFavoriteToggle != null
-        ? _buildFavorite(ref)
+        ? _buildFavorite(ref, isBusy: favoriteBusy)
         : null;
     final picManagerConfig = ref.watch(picManagerSettingsProvider).valueOrNull;
     final autoPushOnFavorite = picManagerConfig?.isConfigured == true &&
@@ -279,12 +284,18 @@ class _DetailTopBarActions extends ConsumerWidget {
         if (veryCompact && favorite != null)
           PopupMenuItem(
             value: _DetailOverflowAction.favorite,
+            enabled: !favoriteBusy,
             child: ListTile(
-              leading: Icon(
-                currentImage.isFavorite
-                    ? Icons.favorite
-                    : Icons.favorite_border,
-              ),
+              leading: favoriteBusy
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      currentImage.isFavorite
+                          ? Icons.favorite
+                          : Icons.favorite_border,
+                    ),
               title: Text(
                 currentImage.isFavorite
                     ? l10n.common_unfavorite
@@ -506,7 +517,7 @@ class _DetailTopBarActions extends ConsumerWidget {
     );
   }
 
-  Widget _buildFavorite(WidgetRef ref) {
+  Widget _buildFavorite(WidgetRef ref, {required bool isBusy}) {
     var isFavorite = currentImage.isFavorite;
     if (currentImage.identifier.isNotEmpty &&
         currentImage is LocalImageDetailData) {
@@ -530,6 +541,7 @@ class _DetailTopBarActions extends ConsumerWidget {
           showBackground: true,
           backgroundColor: Colors.black.withValues(alpha: 0.4),
           onToggle: onFavoriteToggle,
+          isBusy: isBusy,
         ),
       ),
     );

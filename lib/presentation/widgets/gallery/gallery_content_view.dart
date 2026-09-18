@@ -609,13 +609,13 @@ class LocalGalleryContentView extends ConsumerWidget {
               ? (data) async =>
                     onReuseMetadata?.call((data as LocalImageDetailData).record)
               : null,
-          onFavoriteToggle: (data) => unawaited(
-            toggleFavoriteAndMaybePush(
+          onFavoriteToggle: (data) async {
+            await toggleFavoriteAndMaybePush(
               (data as LocalImageDetailData).record.copyWith(
                 isFavorite: data.isFavorite,
               ),
-            ),
-          ),
+            );
+          },
           onSendToImg2Img: (data) async {
             try {
               final bytes = await data.getImageBytes();

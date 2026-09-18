@@ -1663,6 +1663,7 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
     final sequence = state.detailSequenceFor(image);
     final initialIndex = sequence.indexWhere((item) => item.id == image.id);
     final detailImages = sequence.map(_createDetailData).toList();
+    final imagesById = {for (final item in sequence) item.id: item};
     if (!context.mounted || detailImages.isEmpty) return;
 
     ImageDetailOpener.showMultipleImmediate(
@@ -1672,6 +1673,12 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
       showMetadataPanel: true,
       showThumbnails: detailImages.length > 1,
       callbacks: ImageDetailCallbacks(
+        onFavoriteToggle: (detail) async {
+          final target = imagesById[detail.identifier];
+          if (target != null) {
+            await _toggleHistoryFavorite(context, target);
+          }
+        },
         onSave: (detail) async {
           if (!detail.showSaveButton) return;
           await GenerationSaveService.saveImageFromDetail(context, ref, detail);
@@ -1681,6 +1688,8 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
   }
 
   ImageDetailData _createDetailData(GeneratedImage image) {
+    _favoriteStateFor(image);
+    bool getFavoriteStatus() => _favoriteStates[image.id] ?? false;
     final filePath = image.filePath;
     if (filePath != null && filePath.isNotEmpty) {
       ImageMetadataService().enqueuePreload(
@@ -1693,6 +1702,7 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
         id: image.id,
         initialMetadata: image.metadata,
         showCopyButton: image.canSave,
+        getFavoriteStatus: getFavoriteStatus,
       );
     }
     return GeneratedImageDetailData(
@@ -1701,6 +1711,8 @@ class _HistoryPanelState extends ConsumerState<HistoryPanel> {
       id: image.id,
       showSaveButton: image.canSave,
       showCopyButton: image.canSave,
+      showFavoriteButton: image.canFavorite,
+      getFavoriteStatus: getFavoriteStatus,
       preserveOriginalBytesOnSave: image.preserveOriginalBytesOnSave,
       fixedTagUsageSnapshot: image.fixedTagUsageSnapshot,
     );

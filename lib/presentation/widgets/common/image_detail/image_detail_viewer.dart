@@ -32,7 +32,7 @@ import 'image_detail_data.dart';
 /// 图像详情查看器回调函数
 class ImageDetailCallbacks {
   /// 收藏切换回调
-  final void Function(ImageDetailData image)? onFavoriteToggle;
+  final Future<void> Function(ImageDetailData image)? onFavoriteToggle;
 
   /// 复用元数据回调
   final Future<void> Function(ImageDetailData image)? onReuseMetadata;
@@ -186,6 +186,7 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
   final bool _showControls = true;
   final _focusNode = FocusNode();
   final Map<String, TransformationController> _transformationControllers = {};
+  final Set<String> _favoriteToggleBusy = {};
   bool _isClosing = false;
   DateTime? _lastCloseRequestedAt;
   late final ResizablePaneController _metadataPanelWidthController;
@@ -404,11 +405,17 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
   }
 
   /// 切换收藏
-  void _toggleFavorite() {
-    if (widget.callbacks?.onFavoriteToggle != null) {
-      widget.callbacks!.onFavoriteToggle!(_currentImage);
-      // 触发重建以更新收藏按钮状态
-      setState(() {});
+  Future<void> _toggleFavorite() async {
+    final callback = widget.callbacks?.onFavoriteToggle;
+    final image = _currentImage;
+    final identifier = image.identifier;
+    if (callback == null || !_favoriteToggleBusy.add(identifier)) return;
+    setState(() {});
+    try {
+      await callback(image);
+    } finally {
+      _favoriteToggleBusy.remove(identifier);
+      if (mounted) setState(() {});
     }
   }
 
@@ -591,8 +598,11 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
                 ? () => _handleReuseMetadata(context)
                 : null,
             onFavoriteToggle: widget.callbacks?.onFavoriteToggle != null
-                ? () => widget.callbacks!.onFavoriteToggle!(_currentImage)
+                ? _toggleFavorite
                 : null,
+            favoriteBusy: _favoriteToggleBusy.contains(
+              _currentImage.identifier,
+            ),
             onSave: widget.callbacks?.onSave != null
                 ? () => widget.callbacks!.onSave!(_currentImage)
                 : null,

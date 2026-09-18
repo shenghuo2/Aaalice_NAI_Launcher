@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/gestures.dart';
@@ -219,6 +220,40 @@ void main() {
     expect(saved, ['two']);
   });
 
+  testWidgets('favorite waits for completion and refreshes its state', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(840, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final image = _TestImageData(
+      'favorite',
+      _validPngBytes,
+      showFavoriteButton: true,
+    );
+    final completion = Completer<void>();
+
+    await _pumpViewer(
+      tester,
+      images: [image],
+      callbacks: ImageDetailCallbacks(
+        onFavoriteToggle: (_) async {
+          await completion.future;
+          image.favorite = true;
+        },
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.favorite_border));
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    completion.complete();
+    await tester.pump();
+    await tester.pump();
+    expect(find.byIcon(Icons.favorite), findsOneWidget);
+  });
+
   testWidgets('close action returns to the previous route', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 700));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -304,9 +339,14 @@ class _FakeShortcutConfigNotifier extends ShortcutConfigNotifier {
 }
 
 class _TestImageData implements ImageDetailData {
-  _TestImageData(this.identifier, this.bytes);
+  _TestImageData(
+    this.identifier,
+    this.bytes, {
+    this.showFavoriteButton = false,
+  });
 
   final Uint8List bytes;
+  bool favorite = false;
 
   @override
   final String identifier;
@@ -321,7 +361,7 @@ class _TestImageData implements ImageDetailData {
   Future<Uint8List> getImageBytes() async => bytes;
 
   @override
-  bool get isFavorite => false;
+  bool get isFavorite => favorite;
 
   @override
   NaiImageMetadata? get metadata => null;
@@ -333,7 +373,7 @@ class _TestImageData implements ImageDetailData {
   bool get showCopyButton => false;
 
   @override
-  bool get showFavoriteButton => false;
+  final bool showFavoriteButton;
 
   @override
   bool get showSaveButton => true;

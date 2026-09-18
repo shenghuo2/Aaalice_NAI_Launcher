@@ -181,6 +181,8 @@ class GeneratedImageDetailData implements ImageDetailData {
   final String _id;
   final bool _showSaveButton;
   final bool _showCopyButton;
+  final bool _showFavoriteButton;
+  final bool Function()? _getFavoriteStatus;
   final FixedTagUsageSnapshot? fixedTagUsageSnapshot;
   @override
   final bool preserveOriginalBytesOnSave;
@@ -191,12 +193,16 @@ class GeneratedImageDetailData implements ImageDetailData {
     String? id,
     bool showSaveButton = true,
     bool showCopyButton = true,
+    bool showFavoriteButton = false,
+    bool Function()? getFavoriteStatus,
     this.preserveOriginalBytesOnSave = false,
     this.fixedTagUsageSnapshot,
   }) : _metadata = metadata,
        _id = id ?? imageBytes.hashCode.toString(),
        _showSaveButton = showSaveButton,
-       _showCopyButton = showCopyButton;
+       _showCopyButton = showCopyButton,
+       _showFavoriteButton = showFavoriteButton,
+       _getFavoriteStatus = getFavoriteStatus;
 
   @override
   ImageProvider getImageProvider() {
@@ -225,7 +231,7 @@ class GeneratedImageDetailData implements ImageDetailData {
   }
 
   @override
-  bool get isFavorite => false;
+  bool get isFavorite => _getFavoriteStatus?.call() ?? false;
 
   @override
   String get identifier => _id;
@@ -240,5 +246,5 @@ class GeneratedImageDetailData implements ImageDetailData {
   bool get showCopyButton => _showCopyButton;
 
   @override
-  bool get showFavoriteButton => false;
+  bool get showFavoriteButton => _showFavoriteButton;
 }

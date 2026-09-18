@@ -79,6 +79,9 @@ void main() {
     expect(viewer.images, hasLength(1));
     expect(viewer.initialIndex, 0);
     expect(viewer.showThumbnails, isFalse);
+    expect(viewer.callbacks?.onFavoriteToggle, isNotNull);
+    expect(viewer.images.single.showFavoriteButton, isTrue);
+    expect(find.byIcon(Icons.favorite_border), findsOneWidget);
   });
 
   testWidgets('classic detail browses history with left and right arrows', (
