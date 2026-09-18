@@ -158,7 +158,7 @@ handle_error() {
     write_log 'Previous application version restored.'
   fi
   if [[ -d "$TargetApp" ]]; then
-    /usr/bin/open -n "$TargetApp" >> "$LogPath" 2>&1 || true
+    /usr/bin/open "$TargetApp" >> "$LogPath" 2>&1 || true
   fi
   exit "$status"
 }
