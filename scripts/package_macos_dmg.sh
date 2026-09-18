@@ -128,6 +128,11 @@ if ((macho_count == 0)); then
   exit 1
 fi
 
+"$(dirname "$0")/test_macos_app_startup.sh" \
+  "$architecture" \
+  "$packaged_app" \
+  "packaged macOS $architecture application"
+
 hdiutil detach "$mount_dir" >/dev/null
 mounted=0
 echo "Created and verified $architecture DMG: $output_path ($macho_count Mach-O files)"

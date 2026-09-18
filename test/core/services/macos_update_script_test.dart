@@ -32,7 +32,8 @@ void main() {
       expect(script, contains('codesign --verify --deep --strict'));
       expect(script, contains(r'mv -- "$TargetApp" "$BackupApp"'));
       expect(script, contains(r'/usr/bin/ditto "$CandidateApp" "$TargetApp"'));
-      expect(script, contains(r'/usr/bin/open -n -W "$TargetApp"'));
+      expect(script, contains(r'/usr/bin/open -W "$TargetApp"'));
+      expect(script, isNot(contains('/usr/bin/open -n')));
       expect(script, contains(r'UpdatedLauncherPid=$!'));
       expect(
         script,

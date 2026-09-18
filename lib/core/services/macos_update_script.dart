@@ -122,14 +122,13 @@ launch_app() {
     return 1
   fi
 
-  # LaunchServices avoids carrying updater process state into the replacement
-  # app. `-W` keeps the helper alive while the app is running, so it also gives
-  # us a stable process to observe without guessing the launched app's PID.
-  /usr/bin/open -n -W "$TargetApp" >> "$LogPath" 2>&1 &
+  # LaunchServices owns single-instance activation. `-W` keeps the helper alive
+  # while the app is running, so it also gives us a stable process to observe
+  # without guessing the launched app's PID.
+  /usr/bin/open -W "$TargetApp" >> "$LogPath" 2>&1 &
   UpdatedLauncherPid=$!
   local iteration
-  # The app can wait up to 12 seconds for the previous instance lock. Observe
-  # longer than that window before accepting the restart as healthy.
+  # A successful launch must remain alive long enough to finish Flutter startup.
   for iteration in {1..60}; do
     sleep 0.25
     if ! kill -0 "$UpdatedLauncherPid" >/dev/null 2>&1; then

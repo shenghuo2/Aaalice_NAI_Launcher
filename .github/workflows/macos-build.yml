@@ -9,6 +9,7 @@ on:
       - ".github/workflows/release.yml"
       - "scripts/build_macos_arch.sh"
       - "scripts/package_macos_dmg.sh"
+      - "scripts/test_macos_app_startup.sh"
       - "scripts/test_macos_upgrade_compatibility.sh"
       - "scripts/generate_release_metadata.ps1"
       - "lib/core/constants/app_build_version.dart"
@@ -19,8 +20,12 @@ on:
       - "lib/core/services/update_installer_service.dart"
       - "lib/data/datasources/remote/github_api_service.dart"
       - "lib/data/models/version/release_asset_info.dart"
+      - "macos/Runner/AppDelegate.swift"
+      - "macos/Runner/Info.plist"
+      - "macos/Runner/MainFlutterWindow.swift"
       - "test/core/constants/app_build_version_test.dart"
       - "test/core/services/update_check_service_test.dart"
+      - "test/macos_runner_single_instance_test.dart"
 
 permissions:
   contents: read
@@ -88,7 +93,8 @@ jobs:
             test/core/services/update_check_service_test.dart \
             test/core/services/update_installer_service_test.dart \
             test/data/models/version/release_asset_info_test.dart \
-            test/data/datasources/remote/github_api_service_test.dart
+            test/data/datasources/remote/github_api_service_test.dart \
+            test/macos_runner_single_instance_test.dart
 
       - name: Build and verify macOS ${{ matrix.display_name }} release
         run: ./scripts/build_macos_arch.sh "${{ matrix.architecture }}"

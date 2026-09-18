@@ -3,17 +3,22 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('macOS runner tolerates an inherited updater lock', () {
-    final source = File('macos/Runner/AppDelegate.swift').readAsStringSync();
+  test('macOS runner delegates single-instance enforcement to LaunchServices', () {
+    final appDelegate = File(
+      'macos/Runner/AppDelegate.swift',
+    ).readAsStringSync();
+    final mainWindow = File(
+      'macos/Runner/MainFlutterWindow.swift',
+    ).readAsStringSync();
+    final infoPlist = File('macos/Runner/Info.plist').readAsStringSync();
 
-    expect(source, contains('NAI_LAUNCHER_UPDATE_RESTART'));
-    expect(source, contains('pending_update.json'));
-    expect(source, contains('updateLockWaitSeconds'));
-    expect(source, contains('usleep(250_000)'));
-    expect(source, contains('FD_CLOEXEC'));
-    expect(
-      source,
-      isNot(contains('super.applicationWillTerminate(notification)')),
-    );
+    expect(infoPlist, contains('<key>LSMultipleInstancesProhibited</key>'));
+    expect(infoPlist, contains('<true/>'));
+    expect(appDelegate, contains('applicationShouldHandleReopen'));
+    expect(appDelegate, isNot(contains('flock(')));
+    expect(appDelegate, isNot(contains('primaryInstanceLock')));
+    expect(appDelegate, isNot(contains('NSApp.terminate')));
+    expect(mainWindow, isNot(contains('acquirePrimaryInstanceLock')));
+    expect(mainWindow, isNot(contains('NSApp.terminate')));
   });
 }
