@@ -375,11 +375,22 @@ jobs:
           - architecture: arm64
             display_name: Apple Silicon
             runner: macos-latest
+            runner_arch: arm64
           - architecture: x64
             display_name: Intel
             runner: macos-15-intel
+            runner_arch: x86_64
 
     steps:
+      - name: Verify macOS runner architecture
+        run: |
+          actual="$(uname -m)"
+          expected="${{ matrix.runner_arch }}"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Expected $expected macOS runner, found $actual" >&2
+            exit 1
+          fi
+
       - name: Checkout immutable release commit without LFS payloads
         uses: actions/checkout@v6
         with:
