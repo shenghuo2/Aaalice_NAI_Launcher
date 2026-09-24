@@ -27,7 +27,10 @@ import 'package:nai_launcher/presentation/providers/notification_settings_provid
 import 'package:nai_launcher/presentation/providers/subscription_provider.dart';
 
 class MockNAIImageGenerationApiService extends Mock
-    implements NAIImageGenerationApiService {}
+    implements NAIImageGenerationApiService {
+  @override
+  bool get isImageProxy => false;
+}
 
 class _AuthenticatedAuthNotifier extends AuthNotifier {
   @override

@@ -17,7 +17,10 @@ import 'package:nai_launcher/presentation/providers/image_generation_provider.da
 import 'package:nai_launcher/presentation/providers/image_save_settings_provider.dart';
 import 'package:nai_launcher/presentation/providers/notification_settings_provider.dart';
 
-class _MockApiService extends Mock implements NAIImageGenerationApiService {}
+class _MockApiService extends Mock implements NAIImageGenerationApiService {
+  @override
+  bool get isImageProxy => false;
+}
 
 class _AuthenticatedAuthNotifier extends AuthNotifier {
   @override

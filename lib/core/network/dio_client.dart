@@ -1,5 +1,4 @@
 import 'package:dio/dio.dart';
-import 'package:dio_http2_adapter/dio_http2_adapter.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
@@ -17,6 +16,7 @@ import 'browser_identity/browser_headers_interceptor.dart';
 import 'browser_identity/chrome_identity.dart';
 import 'dio_error_response_parser.dart';
 import 'js_compatible_json.dart';
+import 'scheme_aware_http_client_adapter.dart';
 
 part 'dio_client.g.dart';
 
@@ -35,7 +35,7 @@ BrowserHeadersInterceptor _browserHeadersInterceptor(Ref ref) {
 ///
 /// 根据代理设置动态选择 HTTP 适配器：
 /// - 有代理时：使用默认 HTTP/1.1 适配器（配合 HttpOverrides.global 使用代理）
-/// - 无代理时：使用 HTTP/2 适配器（提升并发性能）
+/// - 无代理时：HTTPS 使用 HTTP/2，HTTP 使用 HTTP/1.1
 @Riverpod(keepAlive: true)
 Dio dioClient(Ref ref) {
   // 监听代理设置变化，当代理设置改变时会触发 Dio 重建
@@ -66,11 +66,9 @@ Dio dioClient(Ref ref) {
     AppLogger.i('Dio using proxy: $proxyAddress (HTTP/1.1 adapter)', 'NETWORK');
     // 不设置 httpClientAdapter，使用默认值
   } else {
-    // 无代理时：使用 HTTP/2 适配器以提升并发性能
-    AppLogger.d('Dio using HTTP/2 adapter (no proxy)', 'NETWORK');
-    dio.httpClientAdapter = Http2Adapter(
-      ConnectionManager(idleTimeout: const Duration(seconds: 15)),
-    );
+    // 本地或显式 HTTP 来源通常不支持明文 HTTP/2。
+    AppLogger.d('Dio using scheme-aware adapter (no proxy)', 'NETWORK');
+    dio.httpClientAdapter = SchemeAwareHttpClientAdapter();
   }
 
   // 注意：不要在 dispose 时关闭 Dio，因为 Provider 可能会被重建
