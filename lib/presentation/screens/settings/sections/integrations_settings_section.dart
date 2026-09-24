@@ -6,6 +6,7 @@ import '../../../../core/utils/localization_extension.dart';
 import 'comfyui_settings_section.dart';
 import '../../dlss/dlss_settings_section.dart';
 import 'krita_bridge_settings_section.dart';
+import 'mcp_server_settings_section.dart';
 import 'pic_manager_settings_section.dart';
 import 'prompt_assistant_settings_section.dart';
 import '../widgets/settings_page_layout.dart';
@@ -15,7 +16,7 @@ import '../widgets/settings_page_layout.dart';
 /// 汇总平台支持的外部工具与本地增强集成。
 /// 顶部子导航切换，一次只渲染一个面板，避免长滚动页。
 class IntegrationsSettingsSection extends StatefulWidget {
-  /// 测试注入用面板构造器；非 null 时必须恰好包含四个构造器。
+  /// 测试注入用面板构造器；非 null 时必须恰好包含五个构造器。
   ///
   /// 生产环境保持 null，按平台能力提供面板。
   @visibleForTesting
@@ -28,8 +29,8 @@ class IntegrationsSettingsSection extends StatefulWidget {
     this.panelBuilders,
     this.initiallyShowDlss = false,
   }) : assert(
-         panelBuilders == null || panelBuilders.length == 4,
-         'panelBuilders must contain exactly four builders.',
+         panelBuilders == null || panelBuilders.length == 5,
+         'panelBuilders must contain exactly five builders.',
        );
 
   @override
@@ -40,44 +41,53 @@ class IntegrationsSettingsSection extends StatefulWidget {
 class _IntegrationsSettingsSectionState
     extends State<IntegrationsSettingsSection> {
   late final PlatformCapabilities _capabilities = PlatformCapabilities.current;
-  late int _selectedIndex = widget.initiallyShowDlss &&
-          _capabilities.supportsDlssEnhancement
+  late int _selectedIndex = widget.initiallyShowDlss && _showDlss
       ? _dlssIndex
       : 0;
-
-  int get _dlssIndex {
-    final showKrita =
-        widget.panelBuilders != null || _capabilities.supportsKritaBridge;
-    return showKrita ? 4 : 3;
-  }
 
   @override
   void didUpdateWidget(covariant IntegrationsSettingsSection oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.initiallyShowDlss &&
-        !oldWidget.initiallyShowDlss &&
-        _capabilities.supportsDlssEnhancement) {
+    if (widget.initiallyShowDlss && !oldWidget.initiallyShowDlss && _showDlss) {
       _selectedIndex = _dlssIndex;
     }
   }
 
+  bool get _showKrita =>
+      widget.panelBuilders != null || _capabilities.supportsKritaBridge;
+
+  bool get _showMcp =>
+      widget.panelBuilders != null || _capabilities.supportsMcpServer;
+
+  bool get _showDlss =>
+      widget.panelBuilders == null && _capabilities.supportsDlssEnhancement;
+
+  // DLSS 面板固定排在末位，索引随平台可见面板数量浮动。
+  int get _dlssIndex =>
+      2 + (_showKrita ? 1 : 0) + (_showMcp ? 1 : 0) + (_showDlss ? 1 : 0);
+
+  List<WidgetBuilder> get _builders =>
+      widget.panelBuilders ??
+      [
+        (_) => const PromptAssistantSettingsSection(),
+        (_) => const ComfyUISettingsSection(),
+        (_) => const KritaBridgeSettingsSection(),
+        (_) => const PicManagerSettingsSection(),
+        (_) => const McpServerSettingsSection(),
+      ];
+
   @override
   Widget build(BuildContext context) {
     final supportsComfyUi = _capabilities.supportsComfyUiIntegration;
-    final showKrita =
-        widget.panelBuilders != null || _capabilities.supportsKritaBridge;
-    final showDlss =
-        widget.panelBuilders == null && _capabilities.supportsDlssEnhancement;
-    final baseBuilders =
-        widget.panelBuilders ??
-        <WidgetBuilder>[
-          (_) => const PromptAssistantSettingsSection(),
-          (_) => const ComfyUISettingsSection(),
-          if (showKrita) (_) => const KritaBridgeSettingsSection(),
-          (_) => const PicManagerSettingsSection(),
-        ];
-    final builders = <WidgetBuilder>[
-      ...baseBuilders,
+    final showKrita = _showKrita;
+    final showMcp = _showMcp;
+    final showDlss = _showDlss;
+    final panels = _builders;
+    final builders = [
+      ...panels.take(2),
+      if (showKrita) panels[2],
+      panels[3],
+      if (showMcp) panels[4],
       if (showDlss) (_) => const DlssSettingsSection(),
     ];
     final labels = [
@@ -85,6 +95,7 @@ class _IntegrationsSettingsSectionState
       'ComfyUI',
       if (showKrita) 'Krita',
       'Pic Manager',
+      if (showMcp) 'MCP',
       if (showDlss) 'DLSSNR',
     ];
     final selectedIndex = _selectedIndex.clamp(0, builders.length - 1);

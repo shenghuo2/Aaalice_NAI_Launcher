@@ -8,11 +8,13 @@ const _promptAssistantPanelKey = ValueKey<String>('panel-prompt-assistant');
 const _comfyUiPanelKey = ValueKey<String>('panel-comfyui');
 const _kritaPanelKey = ValueKey<String>('panel-krita');
 const _picManagerPanelKey = ValueKey<String>('panel-pic-manager');
+const _mcpPanelKey = ValueKey<String>('panel-mcp');
 const _panelKeys = [
   _promptAssistantPanelKey,
   _comfyUiPanelKey,
   _kritaPanelKey,
   _picManagerPanelKey,
+  _mcpPanelKey,
 ];
 
 class _PanelProbe extends StatefulWidget {
@@ -90,6 +92,11 @@ void main() {
                     label: 'panel-pic-manager',
                     onDispose: () => disposedPanels.add('pic-manager'),
                   ),
+                  (_) => _PanelProbe(
+                    key: _mcpPanelKey,
+                    label: 'panel-mcp',
+                    onDispose: () => disposedPanels.add('mcp'),
+                  ),
                 ],
               ),
             ),
@@ -111,10 +118,10 @@ void main() {
     }
   }
 
-  test('测试注入面板数量必须恰好为四项', () {
+  test('测试注入面板数量必须恰好为五项', () {
     Widget buildPanel(BuildContext _) => const SizedBox.shrink();
 
-    for (final invalidLength in [0, 1, 2, 3, 5]) {
+    for (final invalidLength in [0, 1, 2, 3, 4, 6]) {
       expect(
         () => IntegrationsSettingsSection(
           panelBuilders: List<WidgetBuilder>.filled(invalidLength, buildPanel),
@@ -126,22 +133,23 @@ void main() {
 
     expect(
       () => IntegrationsSettingsSection(
-        panelBuilders: List<WidgetBuilder>.filled(4, buildPanel),
+        panelBuilders: List<WidgetBuilder>.filled(5, buildPanel),
       ),
       returnsNormally,
     );
     expect(() => const IntegrationsSettingsSection(), returnsNormally);
   });
 
-  testWidgets('默认显示第一个面板且四段可切换', (tester) async {
+  testWidgets('默认显示第一个面板且五段可切换', (tester) async {
     final disposedPanels = <String>[];
     await pumpSection(tester, disposedPanels);
 
-    // 三段子导航
+    // 五段子导航
     expect(find.text('提示词助手'), findsOneWidget);
     expect(find.text('ComfyUI'), findsOneWidget);
     expect(find.text('Krita'), findsOneWidget);
     expect(find.text('Pic Manager'), findsOneWidget);
+    expect(find.text('MCP'), findsOneWidget);
 
     // 从完整元素树确认默认只挂载第一个面板。
     expectOnlyPanel(_promptAssistantPanelKey);
@@ -161,6 +169,16 @@ void main() {
     await tester.pumpAndSettle();
     expectOnlyPanel(_picManagerPanelKey);
     expect(disposedPanels, ['prompt-assistant', 'comfyui', 'krita']);
+
+    await tester.tap(find.text('MCP'));
+    await tester.pumpAndSettle();
+    expectOnlyPanel(_mcpPanelKey);
+    expect(disposedPanels, [
+      'prompt-assistant',
+      'comfyui',
+      'krita',
+      'pic-manager',
+    ]);
   });
 
   testWidgets('英文环境切换集成面板时分段导航总宽度保持不变', (tester) async {
@@ -182,13 +200,23 @@ void main() {
     await tester.pumpAndSettle();
     final picManagerWidth = tester.getSize(segmentedButton).width;
 
+    await tester.tap(find.text('MCP'));
+    await tester.pumpAndSettle();
+    final mcpWidth = tester.getSize(segmentedButton).width;
+
     expect(
-      [promptAssistantWidth, comfyUiWidth, kritaWidth, picManagerWidth],
+      [
+        promptAssistantWidth,
+        comfyUiWidth,
+        kritaWidth,
+        picManagerWidth,
+        mcpWidth,
+      ],
       everyElement(promptAssistantWidth),
       reason:
           'Prompt Assistant=$promptAssistantWidth, '
           'ComfyUI=$comfyUiWidth, Krita=$kritaWidth, '
-          'Pic Manager=$picManagerWidth',
+          'Pic Manager=$picManagerWidth, MCP=$mcpWidth',
     );
   });
 
@@ -228,9 +256,9 @@ void main() {
   }
 
   const expectedLabels = <String, List<String>>{
-    'en': ['Prompt Assistant', 'ComfyUI', 'Krita', 'Pic Manager'],
-    'zh': ['提示词助手', 'ComfyUI', 'Krita', 'Pic Manager'],
-    'ja': ['プロンプトアシスタント', 'ComfyUI', 'Krita', 'Pic Manager'],
+    'en': ['Prompt Assistant', 'ComfyUI', 'Krita', 'Pic Manager', 'MCP'],
+    'zh': ['提示词助手', 'ComfyUI', 'Krita', 'Pic Manager', 'MCP'],
+    'ja': ['プロンプトアシスタント', 'ComfyUI', 'Krita', 'Pic Manager', 'MCP'],
   };
 
   for (final entry in expectedLabels.entries) {

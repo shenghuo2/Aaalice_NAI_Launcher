@@ -44,6 +44,7 @@ function Assert-WindowsFlutterRuntime {
 
   foreach ($required in @(
       'nai_launcher.exe',
+      'nai_launcher_mcp.exe',
       'flutter_windows.dll',
       'data/icudtl.dat'
     )) {
@@ -89,6 +90,8 @@ if (-not $SkipFlutterBuild) {
   dart run build_runner build --delete-conflicting-outputs
   $flutterBuildMode = $BuildMode.ToLowerInvariant()
   flutter build windows --$flutterBuildMode
+  & (Join-Path $PSScriptRoot "build_mcp_cli.ps1") `
+    -OutputPath (Join-Path $buildPath "nai_launcher_mcp.exe")
 }
 
 Assert-WindowsFlutterRuntime -BundlePath $buildPath
