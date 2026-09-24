@@ -392,7 +392,8 @@ class ImageGenerationCoordinator {
           if (_aborted(handle) || _skipCurrentRequest) return;
           if (chunk.hasError) {
             final error = chunk.error ?? 'Unknown stream error';
-            if (isStreamingGenerationUnsupportedError(error)) {
+            if (!_apiService.isImageProxy &&
+                isStreamingGenerationUnsupportedError(error)) {
               mode = _RequestMode.fallback;
               persistFallbackMode = true;
               break;
@@ -429,6 +430,9 @@ class ImageGenerationCoordinator {
         }
         if (mode == _RequestMode.fallback || images.isEmpty) {
           if (_aborted(handle) || _skipCurrentRequest) return;
+          if (_apiService.isImageProxy) {
+            throw const _GenerationRemoteException('流式生成未返回成品图');
+          }
           mode = _RequestMode.fallback;
           continue;
         }
@@ -440,6 +444,7 @@ class ImageGenerationCoordinator {
         return;
       } catch (error) {
         if (_aborted(handle) || _skipCurrentRequest) return;
+        if (_apiService.isImageProxy) rethrow;
         // A server-side "Cancelled" result is a generation error. Only the
         // local run token maps cancellation to GenerationCancelled.
         if (_isRemoteCancelled(error) || mode == _RequestMode.fallback) {
@@ -494,6 +499,7 @@ class ImageGenerationCoordinator {
         if (_aborted(handle) || _skipCurrentRequest) {
           return const _RequestResult();
         }
+        if (_apiService.isImageProxy) rethrow;
         if (_isRemoteCancelled(error) || attempt >= _retryDelays.length) {
           rethrow;
         }

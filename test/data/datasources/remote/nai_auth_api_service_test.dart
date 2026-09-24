@@ -268,6 +268,62 @@ void main() {
       );
       expect(adapter.requests, hasLength(1));
     });
+
+    test('image proxy 404 fails without a generation probe', () async {
+      final adapter = _ScriptedDioAdapter(
+        (_) => _jsonResponse({'detail': 'Not Found'}, 404),
+      );
+      final service = serviceWith(adapter);
+      final proxy = NaiApiEndpointConfig.imageProxy('https://proxy.example');
+
+      await expectLater(
+        service.validateToken(
+          'client-key',
+          endpoint: proxy,
+          allowAnyTokenFormat: true,
+        ),
+        throwsA(isA<NaiEndpointIncompatibleException>()),
+      );
+      expect(adapter.requests, hasLength(1));
+      expect(
+        adapter.requests.single.uri.toString(),
+        'https://proxy.example/user/subscription',
+      );
+    });
+
+    test(
+      'image proxy subscription response provides quota information',
+      () async {
+        final adapter = _ScriptedDioAdapter(
+          (_) => _jsonResponse({
+            'tier': 3,
+            'trainingStepsLeft': {
+              'fixedTrainingStepsLeft': 120,
+              'purchasedTrainingSteps': 30,
+            },
+            'usage': null,
+          }, 200),
+        );
+        final service = serviceWith(adapter);
+
+        final result = await service.validateToken(
+          'client-key',
+          endpoint: NaiApiEndpointConfig.imageProxy('https://proxy.example'),
+          allowAnyTokenFormat: true,
+        );
+
+        expect(result.subscriptionUnsupported, isFalse);
+        expect(result.subscriptionInfo?['trainingStepsLeft'], {
+          'fixedTrainingStepsLeft': 120,
+          'purchasedTrainingSteps': 30,
+        });
+        expect(adapter.requests, hasLength(1));
+        expect(
+          adapter.requests.single.headers['Authorization'],
+          'Bearer client-key',
+        );
+      },
+    );
   });
 }
 

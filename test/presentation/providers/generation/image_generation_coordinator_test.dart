@@ -11,7 +11,12 @@ import 'package:nai_launcher/presentation/providers/generation/generation_comman
 import 'package:nai_launcher/presentation/providers/generation/image_generation_coordinator.dart';
 
 class _MockNAIImageGenerationApiService extends Mock
-    implements NAIImageGenerationApiService {}
+    implements NAIImageGenerationApiService {
+  bool imageProxy = false;
+
+  @override
+  bool get isImageProxy => imageProxy;
+}
 
 void main() {
   setUpAll(() {
@@ -48,6 +53,138 @@ void main() {
         focusedSelectionRect: any(named: 'focusedSelectionRect'),
       ),
     );
+  });
+
+  for (final streamError in ['API_ERROR_502', 'Streaming is not allowed']) {
+    test('image proxy does not retry stream error $streamError', () async {
+      final apiService = _MockNAIImageGenerationApiService()..imageProxy = true;
+      when(
+        () => apiService.generateImageStream(
+          any(),
+          focusedInpaintEnabled: any(named: 'focusedInpaintEnabled'),
+          minimumContextMegaPixels: any(named: 'minimumContextMegaPixels'),
+          focusedSelectionRect: any(named: 'focusedSelectionRect'),
+        ),
+      ).thenAnswer((_) => Stream.value(ImageStreamChunk.error(streamError)));
+
+      final coordinator = ImageGenerationCoordinator(
+        apiService: apiService,
+        retryDelays: const [Duration.zero],
+      );
+      final command = GenerationCommand(
+        runId: 1,
+        params: const ImageParams(prompt: 'test'),
+        batchCount: 1,
+        batchSize: 2,
+        prepareBatch: (_, params) async => params,
+      );
+      final handle = coordinator.start(command);
+
+      final events = await coordinator.execute(command, handle).toList();
+
+      expect(events.last, isA<GenerationFailed>());
+      verify(
+        () => apiService.generateImageStream(
+          any(),
+          focusedInpaintEnabled: any(named: 'focusedInpaintEnabled'),
+          minimumContextMegaPixels: any(named: 'minimumContextMegaPixels'),
+          focusedSelectionRect: any(named: 'focusedSelectionRect'),
+        ),
+      ).called(1);
+      verifyNever(
+        () => apiService.generateImageWithEncodingsCancellable(
+          any(),
+          onProgress: any(named: 'onProgress'),
+          focusedInpaintEnabled: any(named: 'focusedInpaintEnabled'),
+          minimumContextMegaPixels: any(named: 'minimumContextMegaPixels'),
+          focusedSelectionRect: any(named: 'focusedSelectionRect'),
+        ),
+      );
+    });
+  }
+
+  test('image proxy does not replay an empty successful stream', () async {
+    final apiService = _MockNAIImageGenerationApiService()..imageProxy = true;
+    when(
+      () => apiService.generateImageStream(
+        any(),
+        focusedInpaintEnabled: any(named: 'focusedInpaintEnabled'),
+        minimumContextMegaPixels: any(named: 'minimumContextMegaPixels'),
+        focusedSelectionRect: any(named: 'focusedSelectionRect'),
+      ),
+    ).thenAnswer((_) => const Stream<ImageStreamChunk>.empty());
+
+    final coordinator = ImageGenerationCoordinator(apiService: apiService);
+    final command = GenerationCommand(
+      runId: 1,
+      params: const ImageParams(prompt: 'test'),
+      batchCount: 1,
+      batchSize: 1,
+      prepareBatch: (_, params) async => params,
+    );
+    final handle = coordinator.start(command);
+
+    final events = await coordinator.execute(command, handle).toList();
+
+    expect(events.last, isA<GenerationFailed>());
+    verify(
+      () => apiService.generateImageStream(
+        any(),
+        focusedInpaintEnabled: any(named: 'focusedInpaintEnabled'),
+        minimumContextMegaPixels: any(named: 'minimumContextMegaPixels'),
+        focusedSelectionRect: any(named: 'focusedSelectionRect'),
+      ),
+    ).called(1);
+    verifyNever(
+      () => apiService.generateImage(
+        any(),
+        onProgress: any(named: 'onProgress'),
+        focusedInpaintEnabled: any(named: 'focusedInpaintEnabled'),
+        minimumContextMegaPixels: any(named: 'minimumContextMegaPixels'),
+        focusedSelectionRect: any(named: 'focusedSelectionRect'),
+      ),
+    );
+  });
+
+  test('image proxy does not retry a non-stream server error', () async {
+    final apiService = _MockNAIImageGenerationApiService()..imageProxy = true;
+    when(
+      () => apiService.generateImage(
+        any(),
+        onProgress: any(named: 'onProgress'),
+        focusedInpaintEnabled: any(named: 'focusedInpaintEnabled'),
+        minimumContextMegaPixels: any(named: 'minimumContextMegaPixels'),
+        focusedSelectionRect: any(named: 'focusedSelectionRect'),
+      ),
+    ).thenThrow(StateError('server error 502'));
+
+    final coordinator = ImageGenerationCoordinator(
+      apiService: apiService,
+      retryDelays: const [Duration.zero],
+    );
+    final command = GenerationCommand(
+      runId: 1,
+      params: const ImageParams(prompt: 'test'),
+      batchCount: 1,
+      batchSize: 1,
+      prepareBatch: (_, params) async => params,
+      streamPreviewEnabled: false,
+      cancellableFallback: false,
+    );
+    final handle = coordinator.start(command);
+
+    final events = await coordinator.execute(command, handle).toList();
+
+    expect(events.last, isA<GenerationFailed>());
+    verify(
+      () => apiService.generateImage(
+        any(),
+        onProgress: any(named: 'onProgress'),
+        focusedInpaintEnabled: any(named: 'focusedInpaintEnabled'),
+        minimumContextMegaPixels: any(named: 'minimumContextMegaPixels'),
+        focusedSelectionRect: any(named: 'focusedSelectionRect'),
+      ),
+    ).called(1);
   });
 
   test(

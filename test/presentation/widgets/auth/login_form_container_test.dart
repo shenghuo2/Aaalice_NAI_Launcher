@@ -98,6 +98,31 @@ void main() {
     );
   }
 
+  testWidgets(
+    'proxy selection shows one endpoint field and keeps token input',
+    (tester) async {
+      await _pumpThirdPartyCard(tester, const Locale('zh'));
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(ThirdPartyApiLoginCard)),
+      )!;
+
+      expect(find.text(l10n.auth_imageApiSiteOptional), findsOneWidget);
+      await tester.ensureVisible(find.text('NovelAI API Proxy'));
+      await tester.tap(find.text('NovelAI API Proxy'));
+      await tester.pumpAndSettle();
+
+      expect(find.text(l10n.auth_imageApiSiteOptional), findsNothing);
+      expect(
+        tester
+            .widgetList<FloatingLabelInput>(find.byType(FloatingLabelInput))
+            .map((input) => input.label),
+        contains('API Token'),
+      );
+      expect(find.byKey(const Key('third_party_streaming_hint')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('wide auth modes retain the recommended token label', (
     tester,
   ) async {

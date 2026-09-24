@@ -76,19 +76,14 @@ class NAIAuthApiService {
     // 所有 token 都使用 Bearer 前缀（与 NAI-Generator-Flutter 保持一致）
     final authHeader = 'Bearer $normalizedToken';
 
-    // 详细的日志记录用于诊断登录问题
-    final tokenFormat = normalizedToken.startsWith('pst-') ? 'pst' : 'jwt';
-    final prefix = normalizedToken.startsWith('pst-')
-        ? normalizedToken.substring(
-            0,
-            normalizedToken.length > 10 ? 10 : normalizedToken.length,
-          )
-        : normalizedToken.substring(
-            0,
-            normalizedToken.length > 20 ? 20 : normalizedToken.length,
-          );
+    // 只记录类型和长度，避免把短客户端 key 完整写入日志。
+    final tokenFormat = endpoint.isImageProxy
+        ? 'client-key'
+        : normalizedToken.startsWith('pst-')
+        ? 'pst'
+        : 'jwt';
     AppLogger.i(
-      'Validating token: format=$tokenFormat, length=${normalizedToken.length}, prefix=$prefix...',
+      'Validating token: format=$tokenFormat, length=${normalizedToken.length}',
       'NAIAuth',
     );
     AppLogger.d(
@@ -108,11 +103,17 @@ class NAIAuthApiService {
 
       final data = response.data;
       if (data is! Map<String, dynamic>) {
+        if (endpoint.isImageProxy) {
+          throw NaiEndpointIncompatibleException(
+            probedUrl: endpoint.userUrl(ApiConstants.userSubscriptionEndpoint),
+            statusCode: response.statusCode,
+          );
+        }
         // 站点把未知路径兜底成网页时会 200 返回 HTML，视同缺失订阅端点。
         if (endpoint.isThirdParty) {
           AppLogger.w(
             'Third-party /user/subscription returned non-JSON body, '
-            'falling back to image endpoint probe',
+                'falling back to image endpoint probe',
             'NAIAuth',
           );
           return _probeThirdPartyImageAuth(endpoint, authHeader);
@@ -125,10 +126,16 @@ class NAIAuthApiService {
       AppLogger.i('Token validation successful', 'NAIAuth');
       return TokenValidationResult.subscribed(data);
     } on DioException catch (e) {
+      if (endpoint.isImageProxy && e.response?.statusCode == 404) {
+        throw NaiEndpointIncompatibleException(
+          probedUrl: endpoint.userUrl(ApiConstants.userSubscriptionEndpoint),
+          statusCode: e.response?.statusCode,
+        );
+      }
       if (endpoint.isThirdParty && e.response?.statusCode == 404) {
         AppLogger.w(
           'Third-party site has no /user/subscription, '
-          'falling back to image endpoint probe',
+              'falling back to image endpoint probe',
           'NAIAuth',
         );
         return _probeThirdPartyImageAuth(endpoint, authHeader);
@@ -216,7 +223,7 @@ class NAIAuthApiService {
 
     AppLogger.i(
       'Third-party auth probe passed (status=$status), '
-      'logging in without subscription info',
+          'logging in without subscription info',
       'NAIAuth',
     );
     return const TokenValidationResult.withoutSubscription();

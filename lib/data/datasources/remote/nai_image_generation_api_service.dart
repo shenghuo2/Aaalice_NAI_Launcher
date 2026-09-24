@@ -34,6 +34,7 @@ class NAIImageGenerationApiService {
     NaiApiEndpointService endpointService, [
     CriticalNetworkActivityCoordinator? networkActivity,
   ]) : _transport = NaiGenerationTransport(dio, endpointService),
+       _endpointService = endpointService,
        _responseProcessor = NaiGenerationResponseProcessor(),
        _networkActivity =
            networkActivity ?? CriticalNetworkActivityCoordinator.instance;
@@ -41,10 +42,13 @@ class NAIImageGenerationApiService {
   static final Object _cancellationLeaseZoneKey = Object();
 
   final NAIImageEnhancementApiService _enhancementService;
+  final NaiApiEndpointService _endpointService;
   final NaiGenerationTransport _transport;
   final NaiGenerationResponseProcessor _responseProcessor;
   final CriticalNetworkActivityCoordinator _networkActivity;
   var _legacyCancellationEpoch = 0;
+
+  bool get isImageProxy => _endpointService.current.isImageProxy;
 
   static T withCancellationLease<T>(
     NaiGenerationCancellationLease lease,

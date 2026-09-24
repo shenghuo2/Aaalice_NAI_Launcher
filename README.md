@@ -9,6 +9,7 @@
 本 Fork 基于 [Aaalice233/Aaalice_NAI_Launcher](https://github.com/Aaalice233/Aaalice_NAI_Launcher) 的正式版本继续开发，主要差异如下：
 
 - **Pic Manager 图片推送**：在“设置 → 集成”中配置服务地址与 Token；生成历史、本地图库和在线画廊的卡片与详情页均在收藏按钮旁提供推送按钮，也可启用“收藏时自动推送”。原图来源固定记录为 `aaalice Nai Launcher`。
+- **NovelAI API Proxy 来源**：可在第三方 API 登录中选择该来源，填写代理地址和客户端 key；图片生成、编辑及订阅额度通过代理，标签建议仍使用 NovelAI 的公开接口且不发送客户端 key。
 - **应用内自动更新**：使用本 Fork 的更新通道；macOS 支持下载 DMG 后校验、替换、重启，并在新版本启动失败时回滚。
 - **按架构拆分发行包**：Windows 提供 x64 安装版和便携版，macOS 提供 Apple Silicon 与 Intel DMG，Android 提供三个单 ABI APK 和通用兼容 APK；更新器会选择当前平台和架构对应的文件。
 - **Fork 修复**：离开生成页时清理画布与遮罩状态，避免打开设置页时停留或弹回画布。
@@ -197,6 +198,8 @@ NAI Launcher 面向经常使用 NovelAI 的图像创作者。生成、改图、P
 
 可以使用 NovelAI 账号密码或 **Persistent API Token** 登录。如果网页安全验证导致密码登录失败，建议改用 Persistent API Token。Token 只保存在当前设备的安全存储中。
 
+使用自建的 NovelAI API Proxy 时，在第三方 API 登录中选择 **NovelAI API Proxy**，填写代理根地址、客户端 key 和昵称。客户端 key 只保存在当前设备的安全存储中。
+
 ### 3. 设置常用资源
 
 - 在“设置”中选择本地作品目录，进入本地图库后开始扫描。
@@ -211,12 +214,13 @@ NAI Launcher 不在项目自有服务器上托管你的账号或作品。只有�
 
 | 使用的功能 | 数据会发送到哪里 |
 | --- | --- |
-| 生成、图生图、重绘、Vibe 编码 | NovelAI；包括本次请求所需的 Prompt、参数和源图或参考图。 |
+| 生成、图生图、重绘、Vibe 编码 | NovelAI 或你配置的 NovelAI API Proxy；包括本次请求所需的 Prompt、参数和源图或参考图。 |
+| 标签建议 | NovelAI 的公开图片接口；使用代理来源时不发送代理客户端 key。 |
 | 在线画廊搜索与下载 | 你选择的第三方图库；可用性、限流和内容规则由各站点决定。 |
 | AI 翻译或智能代理 | 你配置的模型服务；对话、附加图片和完成任务所需的工具结果可能产生服务费用。 |
 | 同步与备份 | 你选择的 Google Drive、OneDrive、GitHub 或 WebDAV；只上传明确勾选的内容。 |
 
-- NovelAI Token、OAuth access/refresh token、WebDAV 密码和 GitHub Token 使用设备安全存储，不会写入备份。
+- NovelAI Token、代理客户端 key、OAuth access/refresh token、WebDAV 密码和 GitHub Token 使用设备安全存储，不会写入备份。
 - 本地 Prompt、图库索引、标签、资源库和代理会话默认保存在本机。
 - 云备份以明文保存所选数据；本地图库的图像本体不上传，相簿、分类、成员引用和固定词使用记录可作为轻量数据同步。
 - 在线画廊可能包含第三方内容；分级筛选不能替代用户判断。

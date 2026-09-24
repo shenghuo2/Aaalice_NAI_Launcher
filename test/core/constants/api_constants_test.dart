@@ -120,6 +120,44 @@ void main() {
       );
     });
 
+    test('image proxy routes supported image and subscription requests', () {
+      final endpoint = NaiApiEndpointConfig.imageProxy(
+        'http://127.0.0.1:8787/',
+      );
+
+      expect(endpoint.isImageProxy, isTrue);
+      expect(endpoint.isOfficial, isFalse);
+      expect(
+        endpoint.imageUrl(ApiConstants.generateImageStreamEndpoint),
+        'http://127.0.0.1:8787/ai/generate-image-stream',
+      );
+      expect(
+        endpoint.userUrl(ApiConstants.userSubscriptionEndpoint),
+        'http://127.0.0.1:8787/user/subscription',
+      );
+      expect(
+        () => endpoint.mainUrl(ApiConstants.loginEndpoint),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => endpoint.userUrl(ApiConstants.userDataEndpoint),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => endpoint.imageUrl(ApiConstants.suggestTagsEndpoint),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => endpoint.imageUrl(ApiConstants.annotateImageEndpoint),
+        throwsUnsupportedError,
+      );
+      expect(
+        () => endpoint.imageUrl('/ai/unsupported'),
+        throwsUnsupportedError,
+      );
+      expect(NaiApiEndpointConfig.fromJson(endpoint.toJson()), endpoint);
+    });
+
     test('rejects unsupported URL schemes', () {
       expect(
         () => NaiApiEndpointConfig.fromInput(mainBaseUrl: 'ftp://example.com'),

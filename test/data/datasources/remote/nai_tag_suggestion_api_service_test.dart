@@ -1,10 +1,13 @@
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nai_launcher/core/constants/api_constants.dart';
 import 'package:nai_launcher/core/network/browser_identity/browser_headers_interceptor.dart';
 import 'package:nai_launcher/core/network/browser_identity/chrome_identity.dart';
+import 'package:nai_launcher/core/network/dio_client.dart';
+import 'package:nai_launcher/core/network/nai_api_endpoint.dart';
 import 'package:nai_launcher/core/network/nai_api_endpoint_service.dart';
 import 'package:nai_launcher/data/datasources/remote/nai_tag_suggestion_api_service.dart';
 
@@ -85,4 +88,40 @@ void main() {
     expect(headers['content-type'], 'application/json');
     expect(headers['user-agent'], isNotNull);
   });
+
+  test(
+    'image proxy uses the public official endpoint without its key',
+    () async {
+      final adapter = _RecordingAdapter();
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final interceptorProvider = Provider<AuthInterceptor>(
+        AuthInterceptor.new,
+      );
+      final dio = Dio(
+        BaseOptions(headers: {'Authorization': 'Bearer proxy-client-key'}),
+      )..httpClientAdapter = adapter;
+      dio.interceptors.add(container.read(interceptorProvider));
+      final endpointService = NaiApiEndpointService()
+        ..setCurrent(NaiApiEndpointConfig.imageProxy('https://proxy.example'));
+
+      final suggestions = await NAITagSuggestionApiService(
+        dio,
+        endpointService,
+      ).suggestTags('sunset', model: ImageModels.animeDiffusionV5Full);
+
+      expect(suggestions.single.tag, '1girl');
+      final request = adapter.requests.single;
+      expect(
+        request.uri.toString(),
+        'https://image.novelai.net/ai/generate-image/suggest-tags'
+        '?model=nai-diffusion-5-full&prompt=sunset&type=animev5',
+      );
+      expect(
+        request.headers.keys.any((key) => key.toLowerCase() == 'authorization'),
+        isFalse,
+      );
+      expect(request.extra[kOmitAuthorizationExtra], isTrue);
+    },
+  );
 }

@@ -5,6 +5,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/network/browser_identity/browser_headers_interceptor.dart';
 import '../../../core/network/dio_client.dart';
+import '../../../core/network/nai_api_endpoint.dart';
 import '../../../core/network/nai_api_endpoint_service.dart';
 import '../../../core/utils/app_logger.dart';
 import '../../models/tag/tag_suggestion.dart';
@@ -22,13 +23,11 @@ class NAITagSuggestionApiService {
   NAITagSuggestionApiService(this._dio, this._endpointService);
 
   /// 获取标签建议
-  Future<List<TagSuggestion>> suggestTags(
-    String input, {
-    String? model,
-  }) async {
+  Future<List<TagSuggestion>> suggestTags(String input, {String? model}) async {
     if (input.trim().length < 2) return [];
 
     try {
+      final usePublicEndpoint = _endpointService.current.isImageProxy;
       final queryParams = <String, dynamic>{
         if (model != null) 'model': model,
         'prompt': input.trim(),
@@ -37,12 +36,19 @@ class NAITagSuggestionApiService {
       };
 
       final response = await _dio.get(
-        _endpointService.imageUrl(ApiConstants.suggestTagsEndpoint),
+        usePublicEndpoint
+            ? NaiApiEndpointConfig.official.imageUrl(
+                ApiConstants.suggestTagsEndpoint,
+              )
+            : _endpointService.imageUrl(ApiConstants.suggestTagsEndpoint),
         queryParameters: queryParams,
         options: Options(
           receiveTimeout: _timeout,
           sendTimeout: _timeout,
-          extra: omitTrackingHeadersExtra(),
+          extra: {
+            ...omitTrackingHeadersExtra(),
+            if (usePublicEndpoint) kOmitAuthorizationExtra: true,
+          },
         ),
       );
 

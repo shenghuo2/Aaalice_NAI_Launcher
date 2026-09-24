@@ -20,6 +20,8 @@ import 'js_compatible_json.dart';
 
 part 'dio_client.g.dart';
 
+const String kOmitAuthorizationExtra = 'naiOmitAuthorization';
+
 /// 让请求形态对齐 Chrome 上的官网前端。
 BrowserHeadersInterceptor _browserHeadersInterceptor(Ref ref) {
   return BrowserHeadersInterceptor(
@@ -135,6 +137,14 @@ class AuthInterceptor extends Interceptor {
   ) async {
     AppLogger.d('Request to: ${options.path}', 'DIO');
 
+    if (options.extra[kOmitAuthorizationExtra] == true) {
+      options.headers.removeWhere(
+        (name, _) => name.toLowerCase() == 'authorization',
+      );
+      handler.next(options);
+      return;
+    }
+
     // 登录接口不需要 Token
     if (options.path.contains('/user/login')) {
       AppLogger.d('Skipping auth for login endpoint', 'DIO');
@@ -189,6 +199,10 @@ class AuthInterceptor extends Interceptor {
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) async {
+    if (err.requestOptions.extra[kOmitAuthorizationExtra] == true) {
+      handler.next(err);
+      return;
+    }
     // Token 过期处理
     if (err.response?.statusCode == 401) {
       // 如果是登录请求失败，不要尝试刷新 token 或登出

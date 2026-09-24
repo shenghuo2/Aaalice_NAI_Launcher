@@ -123,6 +123,7 @@ class NaiGenerationTransport {
     void Function(int, int)? onProgress,
   }) {
     final body = buildGenerationMultipart(requestData);
+    final useProxy = _endpointService.current.isImageProxy;
     return _dio.post<Uint8List>(
       _endpointService.imageUrl(ApiConstants.generateImageEndpoint),
       data: body.bytes,
@@ -131,6 +132,8 @@ class NaiGenerationTransport {
       options: Options(
         responseType: ResponseType.bytes,
         contentType: body.contentType,
+        receiveTimeout: useProxy ? const Duration(minutes: 30) : null,
+        sendTimeout: useProxy ? const Duration(minutes: 5) : null,
       ),
     );
   }
@@ -140,6 +143,7 @@ class NaiGenerationTransport {
     NaiGenerationRequest request,
   ) {
     final body = buildGenerationMultipart(requestData);
+    final useProxy = _endpointService.current.isImageProxy;
     return _dio.post<ResponseBody>(
       _endpointService.imageUrl(ApiConstants.generateImageStreamEndpoint),
       data: body.bytes,
@@ -147,6 +151,8 @@ class NaiGenerationTransport {
       options: Options(
         responseType: ResponseType.stream,
         contentType: body.contentType,
+        receiveTimeout: useProxy ? const Duration(minutes: 30) : null,
+        sendTimeout: useProxy ? const Duration(minutes: 5) : null,
       ),
     );
   }

@@ -9,6 +9,7 @@ import 'package:image/image.dart' as img;
 import 'package:mocktail/mocktail.dart';
 import 'package:nai_launcher/data/datasources/remote/nai_image_enhancement_api_service.dart';
 import 'package:nai_launcher/core/network/critical_network_activity.dart';
+import 'package:nai_launcher/core/network/nai_api_endpoint.dart';
 import 'package:nai_launcher/core/network/nai_api_endpoint_service.dart';
 
 import '../../../helpers/browser_multipart_reader.dart';
@@ -52,7 +53,10 @@ void main() {
 
       expect(result, isNotEmpty);
       expect(capturedUrl, contains('image.novelai.net'));
-      expect(parts.map((part) => part.name), orderedEquals(['image', 'request']));
+      expect(
+        parts.map((part) => part.name),
+        orderedEquals(['image', 'request']),
+      );
       expect(parts.first.filename, 'blob');
       expect(parts.first.contentType, 'image/png');
       expect(parts.first.bytes, sourceImage);
@@ -152,6 +156,58 @@ void main() {
       // 计费类错误直接抛出，绝不能换格式重试造成二次扣费。
       expect(callCount, 1);
     });
+
+    test(
+      'proxy upscale preserves multipart and never uses legacy fallback',
+      () async {
+        final dio = _MockDio();
+        final sourceImage = _buildPng(width: 48, height: 32);
+        final endpointService = NaiApiEndpointService()
+          ..setCurrent(
+            NaiApiEndpointConfig.imageProxy('https://proxy.example'),
+          );
+        final capture = _RequestCapture();
+        var callCount = 0;
+
+        when(
+          () => dio.post<dynamic>(
+            any(),
+            data: any(named: 'data'),
+            options: any(named: 'options'),
+            onReceiveProgress: any(named: 'onReceiveProgress'),
+          ),
+        ).thenAnswer((invocation) async {
+          callCount++;
+          capture.record(invocation);
+          expect(
+            invocation.positionalArguments.first,
+            'https://proxy.example/ai/upscale',
+          );
+          throw DioException(
+            requestOptions: RequestOptions(path: '/ai/upscale'),
+            response: Response<dynamic>(
+              statusCode: 422,
+              requestOptions: RequestOptions(path: '/ai/upscale'),
+            ),
+            type: DioExceptionType.badResponse,
+          );
+        });
+
+        await expectLater(
+          NAIImageEnhancementApiService(
+            dio,
+            endpointService,
+          ).upscaleImage(sourceImage),
+          throwsA(isA<Exception>()),
+        );
+
+        expect(callCount, 1);
+        expect(capture.parts.map((part) => part.name), ['image', 'request']);
+        expect(capture.parts.first.bytes, sourceImage);
+        expect(capture.requestJson['image'], 'image');
+        expect(capture.options.contentType, startsWith('multipart/form-data;'));
+      },
+    );
 
     test(
       'should send director tool parameters in the official order',

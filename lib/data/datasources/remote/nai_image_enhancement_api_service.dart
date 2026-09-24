@@ -64,6 +64,7 @@ class NAIImageEnhancementApiService {
     final activity = _networkActivity.acquire(
       CriticalNetworkActivityType.cloudUpscale,
     );
+    final useProxy = _endpointService.current.isImageProxy;
     try {
       final body = _buildImageToolMultipart(image, <String, dynamic>{
         'image': 'image',
@@ -77,6 +78,7 @@ class NAIImageEnhancementApiService {
         options: Options(
           responseType: ResponseType.bytes,
           contentType: body.contentType,
+          receiveTimeout: useProxy ? const Duration(minutes: 30) : null,
         ),
         onReceiveProgress: onProgress,
       );
@@ -85,7 +87,9 @@ class NAIImageEnhancementApiService {
     } on DioException catch (e) {
       final status = e.response?.statusCode;
       const legacyFallbackStatuses = {400, 404, 405, 422};
-      if (status == null || !legacyFallbackStatuses.contains(status)) {
+      if (useProxy ||
+          status == null ||
+          !legacyFallbackStatuses.contains(status)) {
         AppLogger.w('Upscale image failed: ${e.message}', 'NAIEnhancement');
         throw Exception('图像放大失败: ${_mapDioError(e)}');
       }
@@ -176,6 +180,7 @@ class NAIImageEnhancementApiService {
         'information_extracted': informationExtracted,
         'model': model,
       });
+      final useProxy = _endpointService.current.isImageProxy;
 
       final response = await _dio.post(
         _endpointService.imageUrl(ApiConstants.encodeVibeEndpoint),
@@ -183,6 +188,7 @@ class NAIImageEnhancementApiService {
         options: Options(
           responseType: ResponseType.bytes,
           contentType: body.contentType,
+          receiveTimeout: useProxy ? const Duration(minutes: 30) : null,
         ),
       );
 
@@ -230,6 +236,9 @@ class NAIImageEnhancementApiService {
         options: Options(
           responseType: ResponseType.bytes,
           contentType: body.contentType,
+          receiveTimeout: _endpointService.current.isImageProxy
+              ? const Duration(minutes: 30)
+              : null,
         ),
       );
 

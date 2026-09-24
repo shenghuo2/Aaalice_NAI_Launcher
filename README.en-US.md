@@ -9,6 +9,7 @@
 This Fork continues from stable releases of [Aaalice233/Aaalice_NAI_Launcher](https://github.com/Aaalice233/Aaalice_NAI_Launcher) with these main differences:
 
 - **Pic Manager image push**: configure the service URL and Token under Settings > Integrations. Push buttons sit beside favorites in generation history and local/online galleries, while an optional setting pushes automatically when favoriting. Original images identify their source as `aaalice Nai Launcher`.
+- **NovelAI API Proxy source**: select this source in third-party API sign-in and enter the proxy URL and client key. Image generation, editing, and subscription quota use the proxy; tag suggestions still use NovelAI's public endpoint without sending the client key.
 - **In-app automatic updates**: uses this Fork's update channel. On macOS, the updater downloads and verifies the DMG, replaces the app, restarts it, and rolls back when the new version cannot start.
 - **Architecture-specific packages**: Windows x64 Setup/Portable, Apple Silicon and Intel DMGs, plus three single-ABI Android APKs and a universal compatibility APK. The updater selects the matching platform and architecture.
 - **Fork fixes**: leaving generation clears the canvas and mask state so opening Settings does not remain on or return to the canvas.
@@ -197,6 +198,8 @@ Every release includes `checksums.txt`. If an archive cannot be extracted or ins
 
 Sign in with NovelAI credentials or a **Persistent API Token**. If web security verification prevents password login, a Persistent API Token is usually more reliable. The token is stored only in the current device's secure storage.
 
+To use a self-hosted NovelAI API Proxy, select **NovelAI API Proxy** in third-party API sign-in and enter its root URL, client key, and a nickname. The client key is stored only in this device's secure storage.
+
 ### 3. Set up the resources you use
 
 - Select your artwork folders in Settings, then open the local gallery to start scanning.
@@ -211,12 +214,13 @@ NAI Launcher does not host your account or artwork on a project-operated server.
 
 | Feature in use | Where the data goes |
 | --- | --- |
-| Generation, image-to-image, inpainting, Vibe encoding | NovelAI, including the Prompt, parameters, and source or reference images required for that request. |
+| Generation, image-to-image, inpainting, Vibe encoding | NovelAI or your configured NovelAI API Proxy, including the Prompt, parameters, and source or reference images required for that request. |
+| Tag suggestions | NovelAI's public image endpoint; the proxy client key is not sent when using the proxy source. |
 | Online gallery search and downloads | The third-party gallery you selected. Availability, rate limits, and content rules belong to each site. |
 | AI translation or Agent Chat | The model service you configured. Conversations, attached images, and tool results required by the task may incur provider fees. |
 | Sync and backup | Your selected Google Drive, OneDrive, GitHub, or WebDAV destination. Only explicitly selected content is uploaded. |
 
-- NovelAI Tokens, OAuth access/refresh tokens, WebDAV passwords, and GitHub Tokens use device secure storage and are never written into backups.
+- NovelAI Tokens, proxy client keys, OAuth access/refresh tokens, WebDAV passwords, and GitHub Tokens use device secure storage and are never written into backups.
 - Local Prompts, gallery indexes, tags, resource libraries, and Agent sessions stay on the device by default.
 - Cloud backups store selected data in plaintext. Local gallery image files are not uploaded; albums, categories, membership references, and fixed-tag usage records can sync as lightweight data.
 - Online galleries can contain third-party content. Rating filters do not replace user judgment.

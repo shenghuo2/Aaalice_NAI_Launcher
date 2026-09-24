@@ -8,6 +8,7 @@ import '../../../data/services/account_manager_provider.dart';
 import '../../../data/services/auth_provider.dart';
 import '../../../core/services/auth_error_service.dart';
 import '../common/floating_label_input.dart';
+import '../common/horizontal_action_strip.dart';
 
 /// 第三方 NAI-compatible API 登录卡片。
 class ThirdPartyApiLoginCard extends ConsumerStatefulWidget {
@@ -28,6 +29,7 @@ class _ThirdPartyApiLoginCardState
   final _tokenController = TextEditingController();
   final _nicknameController = TextEditingController();
   bool _obscureToken = true;
+  bool _useImageProxy = false;
 
   @override
   void dispose() {
@@ -49,26 +51,51 @@ class _ThirdPartyApiLoginCardState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          HorizontalActionStrip(
+            child: SegmentedButton<bool>(
+              key: const Key('third_party_source_selector'),
+              segments: [
+                ButtonSegment(
+                  value: false,
+                  label: Text(l10n.auth_thirdPartyLogin),
+                ),
+                const ButtonSegment(
+                  value: true,
+                  label: Text('NovelAI API Proxy'),
+                ),
+              ],
+              selected: {_useImageProxy},
+              showSelectedIcon: false,
+              onSelectionChanged: (selection) {
+                setState(() => _useImageProxy = selection.first);
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
           FloatingLabelInput(
             label: l10n.auth_thirdPartyApiSite,
             controller: _mainApiController,
-            hintText: 'https://example.com/api',
+            hintText: _useImageProxy
+                ? 'https://nai.example.com'
+                : 'https://example.com/api',
             prefixIcon: Icons.public_outlined,
             keyboardType: TextInputType.url,
             textInputAction: TextInputAction.next,
             required: true,
             validator: (value) => _validateMainApiUrl(value),
           ),
-          const SizedBox(height: 16),
-          FloatingLabelInput(
-            label: l10n.auth_imageApiSiteOptional,
-            controller: _imageApiController,
-            hintText: l10n.auth_imageApiSiteHint,
-            prefixIcon: Icons.image_outlined,
-            keyboardType: TextInputType.url,
-            textInputAction: TextInputAction.next,
-            validator: (value) => _validateImageApiUrl(value),
-          ),
+          if (!_useImageProxy) ...[
+            const SizedBox(height: 16),
+            FloatingLabelInput(
+              label: l10n.auth_imageApiSiteOptional,
+              controller: _imageApiController,
+              hintText: l10n.auth_imageApiSiteHint,
+              prefixIcon: Icons.image_outlined,
+              keyboardType: TextInputType.url,
+              textInputAction: TextInputAction.next,
+              validator: (value) => _validateImageApiUrl(value),
+            ),
+          ],
           const SizedBox(height: 16),
           FloatingLabelInput(
             label: l10n.settings_nickname,
@@ -124,34 +151,36 @@ class _ThirdPartyApiLoginCardState
               return null;
             },
           ),
-          const SizedBox(height: 12),
-          Text(
-            l10n.auth_thirdPartyCompatibilityHint,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            key: const Key('third_party_streaming_hint'),
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.info_outline,
-                size: 16,
+          if (!_useImageProxy) ...[
+            const SizedBox(height: 12),
+            Text(
+              l10n.auth_thirdPartyCompatibilityHint,
+              style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  l10n.auth_thirdPartyStreamingHint,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              key: const Key('third_party_streaming_hint'),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: 16,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    l10n.auth_thirdPartyStreamingHint,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
           const SizedBox(height: 16),
           FilledButton.icon(
             onPressed: authState.isLoading ? null : _handleLogin,
@@ -209,10 +238,7 @@ class _ThirdPartyApiLoginCardState
     }
 
     try {
-      NaiApiEndpointConfig.fromInput(
-        mainBaseUrl: value,
-        imageBaseUrl: _imageApiController.text,
-      );
+      _endpointFromInput();
       return null;
     } on ArgumentError catch (e) {
       return e.message.toString();
@@ -245,10 +271,7 @@ class _ThirdPartyApiLoginCardState
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
-    final endpoint = NaiApiEndpointConfig.fromInput(
-      mainBaseUrl: _mainApiController.text,
-      imageBaseUrl: _imageApiController.text,
-    );
+    final endpoint = _endpointFromInput();
     final token = _tokenController.text.trim();
     final nickname = _nicknameController.text.trim();
 
@@ -282,6 +305,13 @@ class _ThirdPartyApiLoginCardState
       widget.onLoginSuccess?.call();
     }
   }
+
+  NaiApiEndpointConfig _endpointFromInput() => _useImageProxy
+      ? NaiApiEndpointConfig.imageProxy(_mainApiController.text)
+      : NaiApiEndpointConfig.fromInput(
+          mainBaseUrl: _mainApiController.text,
+          imageBaseUrl: _imageApiController.text,
+        );
 
   String _getErrorMessage(AuthErrorCode? errorCode) {
     return switch (errorCode) {

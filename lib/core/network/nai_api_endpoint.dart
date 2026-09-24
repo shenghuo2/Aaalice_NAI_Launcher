@@ -1,5 +1,7 @@
 import '../constants/api_constants.dart';
 
+enum NaiApiEndpointKind { compatible, imageProxy }
+
 /// NAI-compatible API endpoint configuration.
 ///
 /// Official NovelAI uses separate main and image API hosts. Third-party
@@ -8,10 +10,12 @@ import '../constants/api_constants.dart';
 class NaiApiEndpointConfig {
   final String mainBaseUrl;
   final String imageBaseUrl;
+  final NaiApiEndpointKind kind;
 
   const NaiApiEndpointConfig({
     required this.mainBaseUrl,
     required this.imageBaseUrl,
+    this.kind = NaiApiEndpointKind.compatible,
   });
 
   static const official = NaiApiEndpointConfig(
@@ -34,7 +38,21 @@ class NaiApiEndpointConfig {
     );
   }
 
+  factory NaiApiEndpointConfig.imageProxy(String baseUrl) {
+    final normalized = _normalizeBaseUrl(baseUrl);
+    return NaiApiEndpointConfig(
+      mainBaseUrl: normalized,
+      imageBaseUrl: normalized,
+      kind: NaiApiEndpointKind.imageProxy,
+    );
+  }
+
   factory NaiApiEndpointConfig.fromJson(Map<String, dynamic> json) {
+    if (json['kind'] == NaiApiEndpointKind.imageProxy.name) {
+      return NaiApiEndpointConfig.imageProxy(
+        json['imageBaseUrl'] as String? ?? json['mainBaseUrl'] as String? ?? '',
+      );
+    }
     return NaiApiEndpointConfig.fromInput(
       mainBaseUrl: json['mainBaseUrl'] as String? ?? ApiConstants.baseUrl,
       imageBaseUrl:
@@ -45,17 +63,40 @@ class NaiApiEndpointConfig {
   Map<String, dynamic> toJson() => {
     'mainBaseUrl': mainBaseUrl,
     'imageBaseUrl': imageBaseUrl,
+    if (isImageProxy) 'kind': kind.name,
   };
 
   bool get isOfficial =>
+      kind == NaiApiEndpointKind.compatible &&
       mainBaseUrl == ApiConstants.baseUrl &&
       imageBaseUrl == ApiConstants.imageBaseUrl;
 
   bool get isThirdParty => !isOfficial;
 
-  String mainUrl(String endpoint) => _appendEndpoint(mainBaseUrl, endpoint);
+  bool get isImageProxy => kind == NaiApiEndpointKind.imageProxy;
 
-  String imageUrl(String endpoint) => _appendEndpoint(imageBaseUrl, endpoint);
+  String mainUrl(String endpoint) {
+    if (isImageProxy) {
+      throw UnsupportedError(
+        'NovelAI API Proxy does not expose main API routes',
+      );
+    }
+    return _appendEndpoint(mainBaseUrl, endpoint);
+  }
+
+  String imageUrl(String endpoint) {
+    if (isImageProxy &&
+        !const {
+          ApiConstants.generateImageEndpoint,
+          ApiConstants.generateImageStreamEndpoint,
+          ApiConstants.upscaleEndpoint,
+          ApiConstants.encodeVibeEndpoint,
+          ApiConstants.augmentImageEndpoint,
+        }.contains(endpoint)) {
+      throw UnsupportedError('NovelAI API Proxy does not expose $endpoint');
+    }
+    return _appendEndpoint(imageBaseUrl, endpoint);
+  }
 
   /// Official user endpoints are served by the image API host.
   ///
@@ -63,6 +104,12 @@ class NaiApiEndpointConfig {
   /// `/user/subscription`. NAI-compatible third-party sites keep using
   /// [mainBaseUrl] because their endpoint layout is provider-specific.
   String userUrl(String endpoint) {
+    if (isImageProxy) {
+      if (endpoint != ApiConstants.userSubscriptionEndpoint) {
+        throw UnsupportedError('NovelAI API Proxy does not expose $endpoint');
+      }
+      return _appendEndpoint(mainBaseUrl, endpoint);
+    }
     return isOfficial ? imageUrl(endpoint) : mainUrl(endpoint);
   }
 
@@ -120,13 +167,14 @@ class NaiApiEndpointConfig {
       other is NaiApiEndpointConfig &&
           runtimeType == other.runtimeType &&
           mainBaseUrl == other.mainBaseUrl &&
-          imageBaseUrl == other.imageBaseUrl;
+          imageBaseUrl == other.imageBaseUrl &&
+          kind == other.kind;
 
   @override
-  int get hashCode => Object.hash(mainBaseUrl, imageBaseUrl);
+  int get hashCode => Object.hash(mainBaseUrl, imageBaseUrl, kind);
 
   @override
   String toString() {
-    return 'NaiApiEndpointConfig(mainBaseUrl: $mainBaseUrl, imageBaseUrl: $imageBaseUrl)';
+    return 'NaiApiEndpointConfig(mainBaseUrl: $mainBaseUrl, imageBaseUrl: $imageBaseUrl, kind: $kind)';
   }
 }
