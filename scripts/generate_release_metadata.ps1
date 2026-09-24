@@ -11,7 +11,10 @@ param(
   [string]$Tag,
 
   [Parameter(Mandatory = $true)]
-  [string]$Repository
+  [string]$Repository,
+
+  [ValidateSet('all', 'macos')]
+  [string]$ReleaseMode = 'all'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -195,6 +198,14 @@ foreach ($file in $releaseFiles) {
   }
 }
 
+if ($ReleaseMode -eq 'macos') {
+  $actualTypes = @($assets | ForEach-Object { $_['type'] } | Sort-Object)
+  $expectedTypes = @('macos-arm64-dmg', 'macos-x64-dmg') | Sort-Object
+  if (($actualTypes -join ',') -ne ($expectedTypes -join ',')) {
+    throw "macOS release requires exactly one DMG per architecture; found: $($actualTypes -join ', ')"
+  }
+}
+
 $changelogSection = Get-ChangelogSection -Version ($Version -replace '\+.*$', '')
 $manifest = [ordered]@{
   version = $Version
@@ -299,11 +310,25 @@ $releaseLines = @(
   "| --- | --- |"
 )
 $releaseLines += $downloadRows
+$updatePlatforms = @()
+$installHints = @()
+if ($windowsBadges.Count -gt 0) {
+  $updatePlatforms += 'Windows 自动选择 x64 Setup/Portable 并替换、重启'
+  $installHints += 'Windows 当前只提供 x64'
+}
+if ($macosBadges.Count -gt 0) {
+  $updatePlatforms += 'macOS 选择匹配芯片的 DMG 并替换、重启'
+  $installHints += 'macOS 首次安装请按芯片选择 Apple Silicon 或 Intel DMG，并将应用放到「应用程序」或其他可写目录'
+}
+if ($androidBadges.Count -gt 0) {
+  $updatePlatforms += 'Android 选择设备 ABI 并交给系统确认安装'
+  $installHints += 'Android 通常选择 ARM64，旧 32 位 ARM 设备使用 ARMv7，模拟器可能使用 x86_64；Universal 用于旧版客户端兼容升级'
+}
 $releaseLines += @(
   "",
-  "> **应用内更新：** Windows 会自动选择 x64 Setup/Portable，macOS 会选择匹配芯片的 DMG，Android 会选择设备 ABI；下载完成后均校验文件大小与 SHA256。Windows 与 macOS 随后自动替换并重启，Android 交给系统确认安装。",
+  "> **应用内更新：** $($updatePlatforms -join '；')；下载完成后均校验文件大小与 SHA256。",
   "",
-  "> **安装提示：** Android 通常选择 ARM64，只有旧 32 位 ARM 设备使用 ARMv7，模拟器可能使用 x86_64；Universal 用于旧版客户端兼容升级。macOS 首次安装请按芯片选择 Apple Silicon 或 Intel DMG，并将应用放到「应用程序」或其他可写目录。Windows 当前只提供 x64。",
+  "> **安装提示：** $($installHints -join '。')。",
   "",
   "## 📝 更新内容",
   "",
