@@ -1505,7 +1505,7 @@ void main() {
     final tool = GenerationToolbox(
       _makeRef(container),
     ).tools().firstWhere((t) => t.name == 'interrogate_image');
-    final result = await tool.execute('t4', {'path': 'Z:/no_such.png'});
+    final result = await tool.execute('t4', {'path': '../no_such.png'});
     final text = result.content
         .whereType<ToolResultTextContent>()
         .map((c) => c.text)

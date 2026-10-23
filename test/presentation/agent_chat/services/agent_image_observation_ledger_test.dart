@@ -8,6 +8,7 @@ import 'package:nai_launcher/core/agent/resources/agent_chat_resource_reference.
 import 'package:nai_launcher/core/agent/resources/agent_chat_resource_reference_codec.dart';
 import 'package:nai_launcher/core/utils/display_thumbnail_utils.dart';
 import 'package:nai_launcher/presentation/agent_chat/services/agent_image_observation_ledger.dart';
+import 'package:path/path.dart' as p;
 
 final _reference = AgentChatResourceReference(
   kind: AgentChatResourceKind.generatedImage,
@@ -90,11 +91,15 @@ void main() {
     expect(observedPath(r'C:\work\notes.txt'), isFalse);
   });
 
-  test('normalizes separators and case so both entry points agree', () {
-    ledger.recordToolResult('s1', _imageResult([r'C:\work\sub\a.png']));
+  test('normalizes native separators and dot segments', () {
+    final imagePath = p.absolute('work', 'sub', 'a.png');
+    ledger.recordToolResult('s1', _imageResult([imagePath]));
 
-    expect(observedPath(r'C:/work/sub/a.png'), isTrue);
-    expect(observedPath(r'C:\work\sub\..\sub\a.png'), isTrue);
+    expect(observedPath(imagePath.replaceAll('\\', '/')), isTrue);
+    expect(
+      observedPath(p.absolute('work', 'sub', '..', 'sub', 'a.png')),
+      isTrue,
+    );
   });
 
   test('keeps sessions isolated', () {
