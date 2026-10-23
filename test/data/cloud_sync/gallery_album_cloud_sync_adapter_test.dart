@@ -1,6 +1,8 @@
-import 'package:crypto/crypto.dart' as crypto;
 import 'dart:convert';
+
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:nai_launcher/core/database/datasources/gallery_data_source.dart';
 import 'package:nai_launcher/core/utils/app_logger.dart';
@@ -100,17 +102,18 @@ void main() {
   );
 
   test('export includes pending paths and relativizes cover', () async {
+    final galleryRoot = p.absolute('gallery');
     final adapter = build(
       albums: [
         _album(
-          coverPath: r'D:\gallery\covers\c.png',
+          coverPath: p.join(galleryRoot, 'covers', 'c.png'),
           pendingPaths: const ['gallery/waiting.png'],
         ),
       ],
-      memberPaths: const {
-        'a1': [r'D:\gallery\2025\a.png'],
+      memberPaths: {
+        'a1': [p.join(galleryRoot, '2025', 'a.png')],
       },
-      rootPath: r'D:\gallery',
+      rootPath: galleryRoot,
     );
 
     final records = await adapter.exportRecords().toList();
