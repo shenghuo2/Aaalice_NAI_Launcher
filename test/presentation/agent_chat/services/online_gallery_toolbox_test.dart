@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -164,6 +165,69 @@ void main() {
       expect(danbooru.requests, isEmpty);
     },
   );
+
+  test('placeholder covers expose no media id in browse results', () async {
+    final cases = {
+      GallerySourceId.aiTag: (_pendingAiTagItem(101), 'ibuki', '_pending'),
+      GallerySourceId.quickTagCloud: (
+        _textOnlyQuickTagCloudItem(7),
+        'concept',
+        'no-image',
+      ),
+    };
+
+    for (final MapEntry(key: source, value: (listed, query, placeholder))
+        in cases.entries) {
+      final harness = _createHarness({
+        source: _ScriptedGalleryAdapter(
+          source,
+          (request, _) async => _page(request, [listed]),
+        ),
+      });
+      addTearDown(harness.container.dispose);
+
+      final result = await harness.browse.execute('placeholder-$source', {
+        'source': source.key,
+        'mode': 'search',
+        'query': query,
+      });
+
+      expect(result.isError, isFalse, reason: '$source');
+      final item = (result.details['items'] as List).single as Map;
+      expect(item['work_id'], listed.sourceWorkId, reason: '$source');
+      expect(item['media_id'], isNull, reason: '$source');
+      final reference = item['resource_ref'] as Map;
+      expect(reference['resourceId'], listed.sourceWorkId, reason: '$source');
+      expect(reference.containsKey('mediaId'), isFalse, reason: '$source');
+      expect(
+        jsonEncode(result.details),
+        isNot(contains(placeholder)),
+        reason: '$source',
+      );
+    }
+  });
+
+  test('resolved covers keep their media id in browse results', () async {
+    final harness = _createHarness({
+      GallerySourceId.gelbooru: _ScriptedGalleryAdapter(
+        GallerySourceId.gelbooru,
+        (request, _) async => _page(request, [
+          _item(GallerySourceId.gelbooru, 404, const ['ibuki']),
+        ]),
+      ),
+    });
+    addTearDown(harness.container.dispose);
+
+    final result = await harness.browse.execute('resolved-cover', {
+      'source': 'gelbooru',
+      'mode': 'search',
+      'query': 'ibuki',
+    });
+
+    final item = (result.details['items'] as List).single as Map;
+    expect(item['media_id'], '404');
+    expect((item['resource_ref'] as Map)['mediaId'], '404');
+  });
 
   test('omitted source uses danbooru adapter', () async {
     final danbooru = _ScriptedGalleryAdapter(
@@ -374,6 +438,27 @@ GalleryItem _item(GallerySourceId source, int id, List<String> tags) =>
         extension: 'webp',
       ),
     );
+
+GalleryItem _pendingAiTagItem(int id) => GalleryItem(
+  id: id,
+  sourceId: GallerySourceId.aiTag,
+  createdAt: '2026-08-30',
+  uploaderId: 1,
+  tags: const ['ibuki'],
+  tagsComplete: true,
+  cover: GalleryMedia(id: '${id}_pending', mediaType: 'image'),
+);
+
+GalleryItem _textOnlyQuickTagCloudItem(int id) => GalleryItem(
+  id: id,
+  workId: 'codex-$id',
+  sourceId: GallerySourceId.quickTagCloud,
+  createdAt: 'v1',
+  uploaderId: 0,
+  tags: const ['abstract concept'],
+  tagsComplete: true,
+  cover: GalleryMedia.noImage,
+);
 
 class _MemoryStorage extends LocalStorageService {
   final Map<String, Object?> _values = {};

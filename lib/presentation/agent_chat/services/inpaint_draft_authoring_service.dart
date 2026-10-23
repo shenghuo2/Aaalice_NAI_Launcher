@@ -7,11 +7,11 @@ import '../../../core/agent/harness/tools/image.dart';
 import '../../../core/agent/resources/agent_chat_resource_reference.dart';
 import '../../../core/agent/resources/agent_chat_resource_reference_codec.dart';
 import '../../../core/utils/app_logger.dart';
+import '../../../core/utils/decoded_image_size.dart';
 import '../../../core/utils/inpaint_mask/inpaint_mask_geometry.dart';
 import '../../../core/utils/inpaint_mask/inpaint_mask_operations.dart';
 import '../../../core/utils/inpaint_mask/inpaint_mask_preview.dart';
 import '../../../core/utils/inpaint_outpaint_utils.dart';
-import '../../../core/utils/nai_resolution_adapter.dart';
 import '../../../data/models/image/image_params.dart';
 import '../../../data/models/inpaint/inpaint_draft.dart';
 import '../../../data/models/inpaint/inpaint_draft_status.dart';
@@ -48,7 +48,7 @@ abstract interface class InpaintDraftAuthoringHost {
     Map<String, dynamic> args,
   );
 
-  int estimateInfillAnlas(
+  Future<int> estimateInfillAnlas(
     ImageParams params, {
     required int batchSize,
     required Uint8List? maskImage,
@@ -99,7 +99,8 @@ class InpaintDraftAuthoringService {
     if (resolutionError != null) return resolutionError;
     final resource = resolution.resource!;
 
-    final size = NaiResolutionAdapter.readImageSize(resource.bytes);
+    // 草稿仓库按解码后的像素校验蒙版与源图尺寸一致
+    final size = await DecodedImageSize.tryRead(resource.bytes);
     if (size == null) {
       return agentToolError(
         'invalid_source',
@@ -115,9 +116,9 @@ class InpaintDraftAuthoringService {
     );
     if (notObserved != null) return notObserved;
 
-    final Uint8List maskBinary;
+    final ({Uint8List mask, int maskedPixels}) rasterized;
     try {
-      maskBinary = InpaintMaskGeometry.rasterizeBinary(
+      rasterized = await InpaintMaskGeometry.rasterizeBinaryAsync(
         regions: request.regions,
         width: width,
         height: height,
@@ -127,7 +128,7 @@ class InpaintDraftAuthoringService {
       return agentToolError('invalid_regions', error.message);
     }
 
-    final maskedPixels = maskBinary.fold<int>(0, (total, v) => total + v);
+    final maskedPixels = rasterized.maskedPixels;
     if (maskedPixels == 0) {
       return agentToolError(
         'empty_mask',
@@ -143,7 +144,8 @@ class InpaintDraftAuthoringService {
 
     return _commit(
       source: resource.bytes,
-      maskBinary: maskBinary,
+      maskBinary: rasterized.mask,
+      maskedPixels: maskedPixels,
       width: width,
       height: height,
       prompt: prompt,
@@ -214,7 +216,10 @@ class InpaintDraftAuthoringService {
       return agentToolError('expand_failed', '$error');
     }
 
-    final decodedMask = InpaintMaskUtils.decodeBinaryMask(expanded.maskImage);
+    final decodedMask =
+        await InpaintMaskUtils.decodeBinaryMaskWithCoverageAsync(
+          expanded.maskImage,
+        );
     if (decodedMask == null) {
       return agentToolError(
         'expand_failed',
@@ -225,6 +230,7 @@ class InpaintDraftAuthoringService {
     return _commit(
       source: expanded.sourceImage,
       maskBinary: decodedMask.mask,
+      maskedPixels: decodedMask.maskedPixels,
       width: decodedMask.width,
       height: decodedMask.height,
       prompt: prompt,
@@ -250,6 +256,7 @@ class InpaintDraftAuthoringService {
   Future<AgentToolResult> _commit({
     required Uint8List source,
     required Uint8List maskBinary,
+    required int maskedPixels,
     required int width,
     required int height,
     required String prompt,
@@ -266,7 +273,7 @@ class InpaintDraftAuthoringService {
     bool isCurrentSession() => _host.currentSessionId == sessionId;
     String? createdDraftId;
     try {
-      final maskPng = InpaintMaskUtils.encodeBinaryMask(
+      final maskPng = await InpaintMaskUtils.encodeBinaryMaskAsync(
         maskBinary,
         width,
         height,
@@ -292,7 +299,7 @@ class InpaintDraftAuthoringService {
       snapshot['_agentSourceIsOutpaint'] = sourceIsOutpaint;
       final batchSize = _host.requestBatchSize;
       snapshot['_agentBatchSize'] = batchSize;
-      final estimatedAnlas = _host.estimateInfillAnlas(
+      final estimatedAnlas = await _host.estimateInfillAnlas(
         ImageParams.fromJson(snapshot),
         batchSize: batchSize,
         maskImage: maskPng,
@@ -326,8 +333,7 @@ class InpaintDraftAuthoringService {
         'ok': true,
         'draft': manualInpaintDraftJson(ready),
         'maskCoverage': double.parse(
-          (maskBinary.fold<int>(0, (total, v) => total + v) / (width * height))
-              .toStringAsFixed(4),
+          (maskedPixels / (width * height)).toStringAsFixed(4),
         ),
         'focusedInpaint': focusedEnabled,
         ...extraDetails,

@@ -9,6 +9,7 @@ enum ImageCardActionGroup { view, use, manage, danger }
 enum ImageCardActionId {
   viewDetail,
   save,
+  saveAs,
   copy,
   copyPrompt,
   copyPath,
@@ -109,6 +110,7 @@ class ImageCardAction {
         ImageCardActionId.openFolder ||
         ImageCardActionId.select => ImageCardActionGroup.view,
         ImageCardActionId.save ||
+        ImageCardActionId.saveAs ||
         ImageCardActionId.saveToLibrary ||
         ImageCardActionId.saveToPreciseRefLibrary ||
         ImageCardActionId.pushToPicManager ||

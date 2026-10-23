@@ -54,13 +54,11 @@ class GenerationToolbox {
     );
     final execution = GenerationExecutionService(
       ref,
-      pathResolver: pathResolver,
       imageReadContract: imageReadContract,
       exporter: GenerationSavePathExporter(
         writer: exportWriter,
         prepareExport: prepareImageExport,
       ),
-      maxGenerateCount: maxGenerateCount,
     );
     final queue = GenerationQueueTaskService(
       ref,

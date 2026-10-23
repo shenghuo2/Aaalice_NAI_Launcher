@@ -4,17 +4,21 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/platform/platform_capabilities.dart';
 import '../../../core/utils/localization_extension.dart';
+import '../../../data/models/image/image_params.dart';
 import '../../../data/services/auth_provider.dart';
 import '../../providers/character_prompt_provider.dart';
 import '../../providers/fixed_tags_provider.dart';
+import '../../providers/generation/image_card_selection_provider.dart';
 import '../../providers/generation/image_generation_selectors.dart';
 import '../../providers/generation/image_workflow_controller.dart';
+import '../../providers/generation/workflow_panel_reveal_provider.dart';
 import '../../providers/image_generation_provider.dart';
 import '../../providers/krita/krita_bridge_notifier.dart';
 import '../../providers/prompt_maximize_provider.dart';
 import '../../providers/quality_preset_provider.dart';
 import '../../providers/uc_preset_provider.dart';
 import '../../widgets/common/owned_scroll_controller.dart';
+import '../../widgets/prompt/uc_preset_type_label.dart';
 import 'mobile_generation_controller.dart';
 import 'mobile_generation_shell.dart';
 import 'mobile_generation_view_data.dart';
@@ -28,11 +32,13 @@ class MobileGenerationLayout extends ConsumerStatefulWidget {
     this.historyViewport,
     this.promptInputController,
     this.promptInputKey,
+    this.fixedTagsOverlayVisible = false,
   });
 
   final OwnedViewportOffset? historyViewport;
   final PromptInputController? promptInputController;
   final GlobalKey? promptInputKey;
+  final bool fixedTagsOverlayVisible;
 
   @override
   ConsumerState<MobileGenerationLayout> createState() =>
@@ -46,11 +52,19 @@ class _MobileGenerationLayoutState
   late final PromptInputController _promptInputController;
   late final GlobalKey _promptInputKey;
   late final bool _ownsPromptInputController;
+  late final ProviderSubscription<int> _workflowRevealSubscription;
 
   @override
   void initState() {
     super.initState();
     _controller = MobileGenerationController(ref);
+    // 参数面板在抽屉里：放大 / 增强只展开面板时，顺带把抽屉打开
+    _workflowRevealSubscription = ref.listenManual<int>(
+      workflowPanelRevealProvider,
+      (previous, next) {
+        if (next != previous) _controller.openParameterDrawer();
+      },
+    );
     _historyViewport = widget.historyViewport ?? OwnedViewportOffset();
     _ownsPromptInputController = widget.promptInputController == null;
     _promptInputKey =
@@ -67,6 +81,7 @@ class _MobileGenerationLayoutState
 
   @override
   void dispose() {
+    _workflowRevealSubscription.close();
     _controller.dispose();
     if (_ownsPromptInputController) _promptInputController.dispose();
     super.dispose();
@@ -86,6 +101,9 @@ class _MobileGenerationLayoutState
         ? ref.watch(kritaBridgeNotifierProvider).isBridgeGenerating
         : false;
     final isPromptMaximized = ref.watch(promptMaximizeNotifierProvider);
+    final isSelectionMode = ref.watch(
+      generationImageCardSelectionProvider.select((state) => state.isActive),
+    );
     final showRandomTools = ref.watch(randomPromptToolsVisibilityProvider);
     final isUpscaleMode = ref.watch(
       imageWorkflowControllerProvider.select((workflow) => workflow.isUpscale),
@@ -104,6 +122,11 @@ class _MobileGenerationLayoutState
       qualityPresetNotifierProvider.select((state) => state.isEnabled),
     );
     final ucPresetState = ref.watch(ucPresetNotifierProvider);
+    final fixedUcPreset = ref.watch(
+      generationParamsNotifierProvider.select(
+        (params) => params.capabilities.fixedSettings?.ucPreset,
+      ),
+    );
     final fixedTagCount = ref.watch(
       fixedTagsNotifierProvider.select(
         (state) => state.enabledCount + state.negativeEnabledCount,
@@ -121,19 +144,21 @@ class _MobileGenerationLayoutState
         _controller.updateKeyboardVisibility(keyboardVisible);
         final isLauncherGenerating = batchStatus.isGenerating;
         final isGenerating = isLauncherGenerating || isKritaGenerating;
-        final negativePresetLabel = ucPresetState.isCustom
+        final negativePresetType = fixedUcPreset == null
+            ? ucPresetState.presetType
+            : UcPresets.getPresetTypeFromInt(fixedUcPreset);
+        final negativePresetLabel =
+            ucPresetState.isCustom && fixedUcPreset == null
             ? context.l10n.ucPreset_label
-            : switch (ucPresetState.presetType) {
-                UcPresetType.heavy => context.l10n.ucPreset_heavy,
-                UcPresetType.light => context.l10n.ucPreset_light,
-                UcPresetType.furryFocus => context.l10n.ucPreset_furryFocus,
-                UcPresetType.humanFocus => context.l10n.ucPreset_humanFocus,
-                UcPresetType.none => null,
-              };
+            : negativePresetType == UcPresetType.none
+            ? null
+            : negativePresetType.label(context.l10n);
         final data = MobileGenerationViewData(
           batchStatus: batchStatus,
           cooldownRemainingSeconds: cooldownState.remainingSeconds,
           isPromptMaximized: isPromptMaximized,
+          isSelectionMode: isSelectionMode,
+          isFixedTagsOverlayVisible: widget.fixedTagsOverlayVisible,
           keyboardVisible: keyboardVisible,
           isGenerating: isGenerating,
           isLauncherGenerating: isLauncherGenerating,

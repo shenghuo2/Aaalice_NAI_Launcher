@@ -1,9 +1,7 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path/path.dart' as p;
 
+import '../../core/services/file_export_service.dart';
 import '../providers/cost_estimate_provider.dart';
 import '../providers/share_image_settings_provider.dart';
 import '../widgets/common/themed_confirm_dialog.dart';
@@ -73,25 +71,31 @@ class AssetProtectionGuard {
     required BuildContext context,
     required WidgetRef ref,
     int? cost,
-  }) {
-    final settings = ref.read(shareImageSettingsProvider);
-    if (!settings.effectiveWarnHighAnlasCost) {
-      return Future.value(true);
+  }) async {
+    final threshold = ref
+        .read(shareImageSettingsProvider)
+        .effectiveHighAnlasCostThreshold;
+    if (threshold == null) {
+      return true;
     }
 
-    final estimatedCost = cost ?? ref.read(estimatedCostProvider) ?? 0;
-    if (estimatedCost < settings.highAnlasCostThreshold) {
-      return Future.value(true);
+    final estimatedCost =
+        cost ??
+        await readSettledEstimatedCost(
+          ProviderScope.containerOf(context, listen: false),
+        );
+    if (estimatedCost < threshold) {
+      return true;
+    }
+    if (!context.mounted) {
+      return false;
     }
 
     final l10n = context.l10n;
     return ThemedConfirmDialog.show(
       context: context,
       title: l10n.settings_highAnlasCostTitle,
-      content: l10n.settings_highAnlasCostContent(
-        estimatedCost,
-        settings.highAnlasCostThreshold,
-      ),
+      content: l10n.settings_highAnlasCostContent(estimatedCost, threshold),
       confirmText: l10n.settings_continueGeneration,
       cancelText: l10n.common_cancel,
       type: ThemedConfirmDialogType.warning,
@@ -99,23 +103,6 @@ class AssetProtectionGuard {
     );
   }
 
-  static Future<String> resolveNonOverwritingPath(String requestedPath) async {
-    final file = File(requestedPath);
-    if (!await file.exists()) {
-      return requestedPath;
-    }
-
-    final directory = p.dirname(requestedPath);
-    final extension = p.extension(requestedPath);
-    final baseName = p.basenameWithoutExtension(requestedPath);
-
-    var index = 1;
-    while (true) {
-      final candidate = p.join(directory, '$baseName ($index)$extension');
-      if (!await File(candidate).exists()) {
-        return candidate;
-      }
-      index += 1;
-    }
-  }
+  static Future<String> resolveNonOverwritingPath(String requestedPath) =>
+      FileExportService.resolveNonOverwritingPath(requestedPath);
 }

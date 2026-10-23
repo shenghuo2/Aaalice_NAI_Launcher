@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -5,14 +6,21 @@ import 'dart:ui' as ui;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:image/image.dart' as img;
+import 'package:nai_launcher/core/derivatives/derivative_render.dart';
 import 'package:nai_launcher/core/mosaic/mosaic_render_service.dart';
 import 'package:nai_launcher/data/models/fixed_tag/fixed_tag_entry.dart';
 import 'package:nai_launcher/data/models/fixed_tag/fixed_tag_prompt_type.dart';
 import 'package:nai_launcher/data/models/fixed_tag/fixed_tag_usage_snapshot.dart';
 import 'package:nai_launcher/data/models/mosaic/mosaic_settings.dart';
 import 'package:nai_launcher/data/services/fixed_tag/fixed_tag_usage_record_store.dart';
-import 'package:nai_launcher/data/services/metadata/hash_calculator.dart';
 import 'package:nai_launcher/data/services/metadata/unified_metadata_parser.dart';
+
+import '../../helpers/content_hash.dart';
+import '../../helpers/exif_orientation_fixture.dart';
+import '../../helpers/novelai_exif_fixture.dart';
+import '../../helpers/novelai_jpeg_layout_fixture.dart';
+import '../../helpers/novelai_webp_layout_fixture.dart';
+import '../../helpers/stealth_png_fixture.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -167,6 +175,85 @@ void main() {
     }
   });
 
+  test('stealth-only metadata is preserved as text on request', () async {
+    final result = await MosaicRenderService.render(
+      MosaicRenderRequest(
+        sourceBytes: await stealthOnlyNovelAiPng('stealth prompt'),
+        settings: solid,
+        regions: const [full],
+        preserveMetadata: true,
+      ),
+    );
+
+    final metadata = UnifiedMetadataParser.extractPngTextData(result.bytes);
+    expect(metadata['Comment'], contains('stealth prompt'));
+    expect(result.metadataPreserved, isTrue);
+  });
+
+  test('envelope sources keep the generation JSON as the Comment', () async {
+    final sources = {
+      'jpeg exif': (
+        bytes: novelAiLayoutJpeg(
+          exifTiffs: [
+            novelAiExif(
+              userComment: asciiUserComment(
+                novelAiEnvelopeJson(prompt: 'envelope prompt', seed: 21),
+              ),
+            ),
+          ],
+        ),
+        prompt: 'envelope prompt',
+      ),
+      'webp stealth': (
+        bytes: novelAiLayoutWebp(),
+        prompt: novelAiStealthPrompt,
+      ),
+    };
+
+    for (final MapEntry(key: name, value: source) in sources.entries) {
+      final result = await MosaicRenderService.render(
+        MosaicRenderRequest(
+          sourceBytes: source.bytes,
+          settings: solid,
+          regions: const [full],
+          preserveMetadata: true,
+        ),
+      );
+
+      final text = UnifiedMetadataParser.extractPngTextData(result.bytes);
+      final comment = jsonDecode(text['Comment']!) as Map<String, dynamic>;
+      expect(comment['prompt'], source.prompt, reason: name);
+      expect(comment, isNot(contains('Comment')), reason: name);
+      expect(text['Source'], novelAiV45FullSource, reason: name);
+    }
+  });
+
+  test('a damaged source comment still fails the export', () async {
+    final source = UnifiedMetadataParser.embedTextChunkOnly(
+      _source(),
+      'Comment',
+      '{"prompt":',
+    );
+
+    await expectLater(
+      MosaicRenderService.render(
+        MosaicRenderRequest(
+          sourceBytes: source,
+          settings: solid,
+          regions: const [full],
+          preserveMetadata: true,
+        ),
+      ),
+      throwsA(
+        isA<MosaicRenderException>().having(
+          (error) => error.message,
+          'message',
+          startsWith('The source metadata is damaged or cannot be parsed: '),
+        ),
+      ),
+    );
+  });
+
   test(
     'disabled masks and cancellation cannot export a successful copy',
     () async {
@@ -189,9 +276,9 @@ void main() {
             regions: const [full],
             preserveMetadata: false,
           ),
-          cancellationToken: MosaicCancellationToken()..cancel(),
+          cancellationToken: DerivativeRenderCancellationToken()..cancel(),
         ),
-        throwsA(isA<MosaicCancelledException>()),
+        throwsA(isA<DerivativeRenderCancelledException>()),
       );
     },
   );
@@ -209,9 +296,8 @@ void main() {
     await store.initialize();
 
     final source = _source();
-    final hashes = FileHashCalculator();
     await store.record(
-      contentHash: hashes.calculateFromBytes(source),
+      contentHash: contentHashOf(source),
       snapshot: const FixedTagUsageSnapshot(
         entries: [
           FixedTagUsageEntry(
@@ -241,8 +327,8 @@ void main() {
       outputBytes: result.bytes,
     );
 
-    final outputHash = hashes.calculateFromBytes(result.bytes);
-    expect(outputHash, isNot(hashes.calculateFromBytes(source)));
+    final outputHash = contentHashOf(result.bytes);
+    expect(outputHash, isNot(contentHashOf(source)));
     expect(store.lookup(outputHash)?.entries.single.fixedTagId, 'fixed-a');
 
     final unrecorded = Uint8List.fromList(
@@ -254,12 +340,31 @@ void main() {
     );
     expect(
       store.lookup(
-        hashes.calculateFromBytes(
+        contentHashOf(
           result.bytes.sublist(0, result.bytes.length - 1),
         ),
       ),
       isNull,
     );
+  });
+
+  test('copied camera exif matches the upright redacted pixels', () async {
+    final source = orientedCameraJpeg(width: 60, height: 40, orientation: 6);
+
+    final result = await MosaicRenderService.render(
+      MosaicRenderRequest(
+        sourceBytes: source,
+        settings: solid,
+        regions: const [full],
+        preserveMetadata: true,
+      ),
+    );
+
+    final output = img.decodePng(result.bytes)!;
+    expect((output.width, output.height), (40, 60));
+    final ifd = readImageIfd(pngExifPayload(result.bytes)!);
+    expect(ifd.orientation, 1);
+    expect(ifd.make, 'Aaalice Camera');
   });
 }
 

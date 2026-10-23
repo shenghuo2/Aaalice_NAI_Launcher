@@ -13,6 +13,7 @@ import '../utils/app_logger.dart';
 import '../utils/fatal_diagnostics.dart';
 import 'diagnostic_agent_audit.dart';
 import 'file_export_service.dart';
+import 'update_installer_service.dart';
 
 final diagnosticLogExportServiceProvider = Provider<DiagnosticLogExportService>(
   (ref) => DiagnosticLogExportService(),
@@ -38,6 +39,7 @@ class DiagnosticLogExportService {
   DiagnosticLogExportService({
     Future<List<File>> Function()? loadLogFiles,
     Future<List<File>> Function()? loadCrashFiles,
+    Future<List<File>> Function()? loadUpdaterFiles,
     Future<File?> Function()? loadAgentAuditFile,
     Future<File?> Function()? loadMcpAuditFile,
     Future<void> Function()? flushLogs,
@@ -50,6 +52,7 @@ class DiagnosticLogExportService {
        assert(maxTotalSourceBytes > 0),
        _loadLogFiles = loadLogFiles ?? AppLogger.getLogFiles,
        _loadCrashFiles = loadCrashFiles ?? _defaultCrashFiles,
+       _loadUpdaterFiles = loadUpdaterFiles ?? _defaultUpdaterFiles,
        _loadAgentAuditFile = loadAgentAuditFile ?? _defaultAgentAuditFile,
        _loadMcpAuditFile = loadMcpAuditFile ?? _defaultMcpAuditFile,
        _flushLogs = flushLogs ?? AppLogger.flush,
@@ -66,6 +69,7 @@ class DiagnosticLogExportService {
 
   final Future<List<File>> Function() _loadLogFiles;
   final Future<List<File>> Function() _loadCrashFiles;
+  final Future<List<File>> Function() _loadUpdaterFiles;
   final Future<File?> Function() _loadAgentAuditFile;
   final Future<File?> Function() _loadMcpAuditFile;
   final Future<void> Function() _flushLogs;
@@ -74,31 +78,6 @@ class DiagnosticLogExportService {
   final String Function() _diagnosticsMetadata;
   final int _maxPerFileBytes;
   final int _maxTotalSourceBytes;
-
-  static Future<void> cleanupStaleTemporaryFiles({
-    Duration minimumAge = Duration.zero,
-    DateTime? now,
-  }) async {
-    final temporaryDirectory = await getTemporaryDirectory();
-    final exportDirectory = Directory(
-      p.join(temporaryDirectory.path, 'exports'),
-    );
-    if (!await exportDirectory.exists()) return;
-
-    final cutoff = (now ?? DateTime.now()).subtract(minimumAge);
-    await for (final entity in exportDirectory.list(followLinks: false)) {
-      final name = p.basename(entity.path);
-      final isDiagnosticExport = name.contains('_nai-launcher-diagnostics-');
-      if (!isDiagnosticExport) continue;
-      try {
-        final modified = await entity.stat().then((stat) => stat.modified);
-        if (modified.isAfter(cutoff)) continue;
-        await entity.delete(recursive: entity is Directory);
-      } on FileSystemException {
-        // A locked export is either still in use or will be retried next launch.
-      }
-    }
-  }
 
   Future<DiagnosticLogExportResult> export({
     required String dialogTitle,
@@ -141,7 +120,7 @@ class DiagnosticLogExportService {
               maxTotalSourceBytes: _maxTotalSourceBytes,
             ),
           );
-          return _exportArchive(archivePath, fileName, dialogTitle);
+          return await _exportArchive(archivePath, fileName, dialogTitle);
         } finally {
           if (await stagingDirectory.exists()) {
             await stagingDirectory.delete(recursive: true);
@@ -161,6 +140,7 @@ class DiagnosticLogExportService {
     final candidates = <File>[
       ...await _loadLogFiles(),
       ...await _loadCrashFiles(),
+      ...await _loadUpdaterFiles(),
     ];
     final files = <File>[];
     final seenPaths = <String>{};
@@ -435,6 +415,29 @@ class DiagnosticLogExportService {
       final rightTime = right.lastModifiedSync();
       return rightTime.compareTo(leftTime);
     });
+    return files.take(10).toList(growable: false);
+  }
+
+  /// 更新脚本在应用进程之外运行，安装失败的唯一线索就在这批文件里。
+  static Future<List<File>> _defaultUpdaterFiles() async {
+    final directory = await UpdateInstallerService.resolveUpdateDirectory();
+    if (!await directory.exists()) return const [];
+
+    // 同目录还放着几百 MB 的更新包与 .part 续传文件，只收文本证据。
+    const diagnosticExtensions = {'.log', '.json'};
+    final files = await directory
+        .list(followLinks: false)
+        .where(
+          (entry) =>
+              entry is File &&
+              diagnosticExtensions.contains(p.extension(entry.path)),
+        )
+        .cast<File>()
+        .toList();
+    files.sort(
+      (left, right) =>
+          right.lastModifiedSync().compareTo(left.lastModifiedSync()),
+    );
     return files.take(10).toList(growable: false);
   }
 

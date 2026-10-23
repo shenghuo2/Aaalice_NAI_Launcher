@@ -5,7 +5,7 @@ version: 4.2.1-picmanager.7+51
 
 environment:
   sdk: ">=3.10.7 <4.0.0"
-  flutter: ">=3.35.0"
+  flutter: ">=3.47.0"
 
 dependencies:
   flutter:
@@ -22,7 +22,6 @@ dependencies:
 
   # 网络请求
   dio: ^5.4.0
-  dio_http2_adapter: ^2.3.0
   http: ^1.2.2
   html: ^0.15.6
   xml: ^6.6.1
@@ -164,6 +163,11 @@ dev_dependencies:
   path_provider_platform_interface: any
   plugin_platform_interface: any
   sqlite3: ^2.9.4
+dependency_overrides:
+  # 上游 Windows 原生插件注册时就订阅定位，应用一启动即占用定位；
+  # Baseflow/flutter-permission-handler#1394 修复后移除
+  permission_handler_windows:
+    path: packages/permission_handler_windows
 flutter:
   uses-material-design: true
   generate: true

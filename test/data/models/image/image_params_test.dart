@@ -15,6 +15,40 @@ void main() {
     expect(params.sampler, Samplers.kEulerAncestral);
   });
 
+  test('effectiveSampler reports the sampler the request sends', () {
+    const cases = {
+      'V4.5 drops DDIM': (
+        ImageParams(
+          model: ImageModels.animeDiffusionV45Full,
+          sampler: Samplers.ddim,
+        ),
+        Samplers.kEulerAncestral,
+      ),
+      'V3 sends ddim_v3': (
+        ImageParams(
+          model: ImageModels.animeDiffusionV3,
+          sampler: Samplers.ddim,
+        ),
+        Samplers.ddimV3,
+      ),
+      'fixed sampler wins': (
+        ImageParams(
+          model: ImageModels.animeDiffusionV5FullMedium,
+          sampler: Samplers.kDpmpp2m,
+        ),
+        Samplers.kEulerAncestral,
+      ),
+      'other samplers pass through': (
+        ImageParams(sampler: Samplers.kDpmpp2m),
+        Samplers.kDpmpp2m,
+      ),
+    };
+
+    for (final MapEntry(key: name, value: (params, sampler)) in cases.entries) {
+      expect(params.effectiveSampler, sampler, reason: name);
+    }
+  });
+
   group('ImageParams preciseReference getters', () {
     test('preciseReferenceCount should return 0 when no references', () {
       const params = ImageParams();
@@ -214,6 +248,44 @@ void main() {
       final updated = params.copyWith(inpaintStrength: 0.35);
 
       expect(updated.inpaintStrength, equals(0.35));
+    });
+  });
+
+  group('ImageParams advanced sampling options', () {
+    test('V3 shows SMEA except under DDIM', () {
+      const params = ImageParams(model: ImageModels.animeDiffusionV3);
+
+      expect(params.showsSmeaOptions, isTrue);
+      expect(params.hasAdvancedSamplingOptions, isTrue);
+      for (final sampler in const [Samplers.ddim, Samplers.ddimV3]) {
+        final ddim = params.copyWith(sampler: sampler);
+        expect(ddim.showsSmeaOptions, isFalse, reason: sampler);
+        expect(ddim.hasAdvancedSamplingOptions, isFalse, reason: sampler);
+      }
+    });
+
+    test('V4 and later always show the CFG Rescale row', () {
+      for (final model in const [
+        ImageModels.animeDiffusionV4Full,
+        ImageModels.animeDiffusionV45Full,
+        ImageModels.animeDiffusionV5Curated,
+        ImageModels.animeDiffusionV5FullMedium,
+      ]) {
+        final params = ImageParams(model: model);
+        expect(params.showsCfgRescaleOption, isTrue, reason: model);
+        expect(params.hasAdvancedSamplingOptions, isTrue, reason: model);
+      }
+    });
+
+    test('pre-V3 models have nothing to show', () {
+      for (final model in const [
+        ImageModels.furryDiffusion,
+        ImageModels.animeV2,
+        ImageModels.animeFull,
+      ]) {
+        final params = ImageParams(model: model);
+        expect(params.hasAdvancedSamplingOptions, isFalse, reason: model);
+      }
     });
   });
 }

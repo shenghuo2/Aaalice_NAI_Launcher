@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import '../../../widgets/common/provider_icon.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/extensions/list_sort_extensions.dart';
 import '../../../../data/models/agent/agent_settings.dart';
 import '../../../../core/utils/localization_extension.dart';
 import '../../../prompt_assistant/models/assistant_model_capability.dart';
 import '../../../agent_settings/providers/agent_settings_provider.dart';
+import '../../../agent_settings/widgets/agent_permission_mode_confirmation.dart';
 import '../../../../data/models/prompt_assistant/prompt_assistant_models.dart';
 import '../../../prompt_assistant/providers/prompt_assistant_config_provider.dart';
 import '../../../widgets/common/app_toast.dart';
@@ -14,6 +16,7 @@ import '../../../widgets/common/searchable_model_picker.dart';
 import '../widgets/settings_card.dart';
 import '../widgets/settings_page_layout.dart';
 import 'web_access_settings.dart';
+import 'agent/agent_chat_placement_card.dart';
 import 'agent/agent_profile_actions.dart';
 import 'agent/context_window_field.dart';
 import 'agent/skill_management_panel.dart';
@@ -108,6 +111,7 @@ class _AgentSettingsSectionState extends ConsumerState<AgentSettingsSection> {
           onOpenIntegrations: widget.onOpenIntegrations,
         ),
         _ReadingPreferencesCard(settings: state.settings),
+        const AgentChatPlacementCard(),
         _PermissionCard(settings: state.settings),
         _WebAccessCard(settings: state.settings),
         if (_selectedPanel == 0)
@@ -137,6 +141,12 @@ class _ModelCard extends ConsumerWidget {
     for (final provider in promptConfig.providers.where(
       (item) => item.enabled,
     )) {
+      final group = ModelPickerGroup(
+        id: provider.id,
+        label: provider.name,
+        leading: ProviderIcon(provider: provider, size: 14),
+      );
+      final providerOptions = <ModelPickerOption<AgentModelReference>>[];
       for (final model in promptConfig.models.where(
         (item) =>
             item.providerId == provider.id &&
@@ -148,23 +158,24 @@ class _ModelCard extends ConsumerWidget {
           model: model.name,
         );
         available.add(reference);
-        final displayName = model.displayName.trim().isEmpty
-            ? model.name
-            : model.displayName.trim();
-        pickerOptions.add(
+        providerOptions.add(
           ModelPickerOption(
             id: _modelPickerId(reference),
             value: reference,
-            title: displayName,
+            title: AssistantModelCatalog.displayLabel(
+              provider: provider,
+              model: model,
+            ),
             modelId: model.name,
-            subtitleLeading: ProviderIcon(provider: provider, size: 14),
-            subtitle: displayName == model.name
-                ? provider.name
-                : '${provider.name} · ${model.name}',
-            searchTerms: [provider.id],
+            tooltip: model.name,
+            group: group,
+            searchTerms: [provider.id, model.name],
           ),
         );
       }
+      pickerOptions.addAll(
+        providerOptions..sortByKey((option) => option.title.toLowerCase()),
+      );
     }
     final selected = settings.chat.modelReference;
     final isPending = selected.isConfigured && !available.contains(selected);
@@ -366,6 +377,9 @@ class _PermissionCard extends ConsumerWidget {
 
   final AgentSettings settings;
 
+  static const double _singleColumnBelow = 680;
+  static const double _twoColumnsBelow = 1080;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return SettingsCard(
@@ -377,7 +391,7 @@ class _PermissionCard extends ConsumerWidget {
           if (value != null) {
             _reportAgentSettingFailure(
               context,
-              ref.read(agentSettingsProvider.notifier).setPermissionMode(value),
+              _selectPermissionMode(context, ref, value),
             );
           }
         },
@@ -399,25 +413,54 @@ class _PermissionCard extends ConsumerWidget {
                 context.l10n.agentSettings_permissionFull,
                 context.l10n.agentSettings_permissionFullDescription,
               ),
+              (
+                AgentPermissionMode.autopilot,
+                context.l10n.agentSettings_permissionAutopilot,
+                context.l10n.agentSettings_permissionAutopilotDescription,
+              ),
             ];
-            if (constraints.maxWidth < 680) {
-              return Column(
-                children: [for (final card in cards) _permissionTile(card)],
-              );
-            }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            final columns = constraints.maxWidth < _singleColumnBelow
+                ? 1
+                : constraints.maxWidth < _twoColumnsBelow
+                ? 2
+                : cards.length;
+            return Column(
               children: [
-                for (var index = 0; index < cards.length; index++) ...[
-                  if (index > 0) const SizedBox(width: 8),
-                  Expanded(child: _permissionTile(cards[index])),
-                ],
+                for (var start = 0; start < cards.length; start += columns)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (
+                        var index = start;
+                        index < start + columns && index < cards.length;
+                        index++
+                      ) ...[
+                        if (index > start) const SizedBox(width: 8),
+                        Expanded(child: _permissionTile(cards[index])),
+                      ],
+                    ],
+                  ),
               ],
             );
           },
         ),
       ),
     );
+  }
+
+  Future<void> _selectPermissionMode(
+    BuildContext context,
+    WidgetRef ref,
+    AgentPermissionMode mode,
+  ) async {
+    final confirmed = await confirmAgentPermissionModeChange(
+      context: context,
+      ref: ref,
+      from: settings.chat.permissionMode,
+      to: mode,
+    );
+    if (!confirmed || !context.mounted) return;
+    await ref.read(agentSettingsProvider.notifier).setPermissionMode(mode);
   }
 
   Widget _permissionTile((AgentPermissionMode, String, String) card) =>

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:nai_launcher/presentation/widgets/common/horizontal_action_strip.dart';
 import 'package:flutter/material.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
@@ -11,6 +13,9 @@ import '../../providers/character_position_canvas_provider.dart';
 import '../../providers/character_prompt_provider.dart';
 import '../../providers/image_generation_provider.dart';
 import '../../providers/tag_library_page_provider.dart';
+import '../common/app_toast.dart';
+import '../common/ink_host.dart';
+import '../common/menu_action_label.dart';
 import '../tag_library/tag_library_picker_dialog.dart';
 import 'add_to_library_dialog.dart';
 import 'character_position_canvas.dart';
@@ -464,30 +469,35 @@ class _RowEditorPanelState extends ConsumerState<_RowEditorPanel> {
                 ? null
                 : Border.all(color: colorScheme.primary, width: 1.5),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (largeText) ...[
-                buildIdentity(),
-                const SizedBox(height: 4),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Row(mainAxisSize: MainAxisSize.min, children: actions),
+          child: InkHost(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (largeText) ...[
+                  buildIdentity(),
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: actions,
+                    ),
+                  ),
+                ] else
+                  Row(
+                    children: [
+                      Expanded(child: buildIdentity()),
+                      ...actions,
+                    ],
+                  ),
+                const SizedBox(height: 6),
+                CharacterPromptEditor(
+                  character: widget.character,
+                  compact: !widget.borderless,
                 ),
-              ] else
-                Row(
-                  children: [
-                    Expanded(child: buildIdentity()),
-                    ...actions,
-                  ],
-                ),
-              const SizedBox(height: 6),
-              CharacterPromptEditor(
-                character: widget.character,
-                compact: !widget.borderless,
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -526,6 +536,13 @@ class _PanelIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final interactionPolicy = context.interactionPolicy;
+    final baseExtent = comfortable ? 40.0 : 23.0;
+    // 紧凑态的 23pt 远低于 44pt 的触摸下限，而手机参数面板里的角色行走的正是
+    // 紧凑态。观察到触屏时抬到 minimumControlExtent，指针环境保持原有密度。
+    final extent = interactionPolicy.touchAvailable
+        ? math.max(baseExtent, interactionPolicy.minimumControlExtent)
+        : baseExtent;
     return Tooltip(
       message: tooltip,
       waitDuration: const Duration(milliseconds: 500),
@@ -533,7 +550,7 @@ class _PanelIconButton extends StatelessWidget {
         onTap: enabled ? onTap : null,
         borderRadius: BorderRadius.circular(8),
         child: SizedBox.square(
-          dimension: comfortable ? 40 : 23,
+          dimension: extent,
           child: Icon(
             icon,
             size: comfortable ? 20 : 15,
@@ -562,19 +579,27 @@ class _AddCharacterChip extends ConsumerWidget {
       final limit = ref
           .read(characterPromptNotifierProvider.notifier)
           .characterLimit;
+      final message = l10n.character_limitReached(limit.toString());
       return Tooltip(
-        message: l10n.character_limitReached(limit.toString()),
+        message: message,
         child: Opacity(
           opacity: 0.4,
-          child: IgnorePointer(child: _buildChipBody(theme, l10n)),
+          // 禁用原因原本只在 tooltip 里，触屏没有 hover，要长按才看得到，表现
+          // 为点了没反应。仍然不添加角色，但点击时用同一句话给出可见反馈。
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => AppToast.warning(context, message),
+            child: _buildChipSurface(theme, _buildChipBody(theme, l10n)),
+          ),
         ),
       );
     }
 
-    return PopupMenuButton<_CharacterAddAction>(
+    final menu = PopupMenuButton<_CharacterAddAction>(
       key: const Key('character-add-menu'),
       tooltip: l10n.character_addCharacter,
       padding: EdgeInsets.zero,
+      borderRadius: _chipRadius,
       position: PopupMenuPosition.under,
       offset: const Offset(0, 4),
       onSelected: (action) => _handleAdd(context, ref, action),
@@ -615,15 +640,24 @@ class _AddCharacterChip extends ConsumerWidget {
       // 与角色卡同宽的添加卡（宽度由外部网格单元给定）
       child: _buildChipBody(theme, l10n),
     );
+    return _buildChipSurface(theme, menu);
+  }
+
+  static const _chipRadius = BorderRadius.all(Radius.circular(8));
+
+  Widget _buildChipSurface(ThemeData theme, Widget child) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: _chipRadius,
+      ),
+      child: InkHost(child: child),
+    );
   }
 
   Widget _buildChipBody(ThemeData theme, AppLocalizations l10n) {
     return Container(
       constraints: const BoxConstraints(minHeight: 72),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(8),
-      ),
       child: Center(
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -650,12 +684,11 @@ class _AddCharacterChip extends ConsumerWidget {
   }
 
   Widget _menuRow(IconData icon, String label, Color color) {
-    return Row(
-      children: [
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 10),
-        Text(label),
-      ],
+    return MenuActionLabel(
+      leading: Icon(icon),
+      label: label,
+      iconColor: color,
+      gap: 10,
     );
   }
 

@@ -13,7 +13,10 @@ import 'package:nai_launcher/presentation/providers/queue_execution_provider.dar
 import 'package:nai_launcher/presentation/providers/replication_queue_provider.dart';
 import 'package:nai_launcher/presentation/router/app_branch.dart';
 import 'package:nai_launcher/presentation/widgets/navigation/main_nav_rail.dart';
+import 'package:nai_launcher/presentation/widgets/settings/account_profile_sheet.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+
+import '../../helpers/adaptive_panel_expectations.dart';
 
 class _MockNavigationShell extends Mock implements StatefulNavigationShell {
   @override
@@ -43,6 +46,27 @@ class _SavedAccountManagerNotifier extends AccountManagerNotifier {
       SavedAccount.create(email: 'saved@example.com', nickname: 'Saved Alice'),
     ],
   );
+}
+
+final _signedInAccount = SavedAccount(
+  id: 'signed-in',
+  email: 'alice@example.com',
+  nickname: 'Signed Alice',
+  createdAt: DateTime(2026),
+);
+
+class _SignedInAuthNotifier extends AuthNotifier {
+  @override
+  AuthState build() => AuthState(
+    status: AuthStatus.authenticated,
+    accountId: _signedInAccount.id,
+  );
+}
+
+class _SignedInAccountManagerNotifier extends AccountManagerNotifier {
+  @override
+  AccountManagerState build() =>
+      AccountManagerState(accounts: [_signedInAccount]);
 }
 
 class _FakeQueueExecutionNotifier extends QueueExecutionNotifier {
@@ -136,7 +160,7 @@ void main() {
     expect(_labelOpacity(tester, '画布'), 0);
 
     final settingsIcon = find.descendant(
-      of: find.byKey(const ValueKey('main-nav-settings')),
+      of: find.byKey(const Key('nav-branch-8')),
       matching: find.byIcon(Icons.settings),
     );
     await tester.tap(settingsIcon);
@@ -383,13 +407,18 @@ void main() {
     final surface = find.byKey(const ValueKey('adaptive-bottom-sheet'));
     expect(surface, findsOneWidget);
     expect(find.byKey(const Key('main-nav-add-account-form')), findsOneWidget);
+    expectPanelHeaderScrollsWithContent(tester);
     var rect = tester.getRect(surface);
     expect(rect.left, greaterThanOrEqualTo(12));
     expect(rect.top, greaterThanOrEqualTo(24));
     expect(rect.right, lessThanOrEqualTo(308));
     expect(rect.bottom, lessThanOrEqualTo(900));
     expect(
-      tester.widget<ListView>(find.byType(ListView).last).controller,
+      tester
+          .widget<ScrollView>(
+            find.byKey(const Key('main-nav-add-account-form')),
+          )
+          .controller,
       isNotNull,
     );
     expect(tester.takeException(), isNull);
@@ -481,7 +510,149 @@ void main() {
     expect(find.text('Saved Alice'), findsNothing);
     expect(find.text('登录'), findsNWidgets(2));
     expect(find.text('添加账号'), findsNothing);
+    expect(find.text('管理账号'), findsNothing);
   });
+
+  testWidgets('已登录时账号菜单在添加与退出之间提供管理账号，并打开账号资料面板', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1000, 760));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final navigationShell = _MockNavigationShell();
+    final storage = _FakeMainNavStorage()..isExpanded = true;
+    when(() => navigationShell.currentIndex).thenReturn(0);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localStorageServiceProvider.overrideWith((ref) => storage),
+          authNotifierProvider.overrideWith(_SignedInAuthNotifier.new),
+          accountManagerNotifierProvider.overrideWith(
+            _SignedInAccountManagerNotifier.new,
+          ),
+          queueExecutionNotifierProvider.overrideWith(
+            _FakeQueueExecutionNotifier.new,
+          ),
+          replicationQueueNotifierProvider.overrideWith(
+            _FakeReplicationQueueNotifier.new,
+          ),
+        ],
+        child: MaterialApp(
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(body: MainNavRail(navigationShell: navigationShell)),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('main-nav-account-menu-button')));
+    await tester.pumpAndSettle();
+
+    final manage = find.byKey(const Key('main-nav-manage-accounts'));
+    expect(manage, findsOneWidget);
+    expect(
+      tester.getCenter(manage).dy,
+      greaterThan(tester.getCenter(find.text('添加账号')).dy),
+    );
+    expect(
+      tester.getCenter(manage).dy,
+      lessThan(tester.getCenter(find.text('退出登录')).dy),
+    );
+
+    await tester.tap(manage);
+    await tester.pumpAndSettle();
+
+    final sheet = tester.widget<AccountProfileBottomSheet>(
+      find.byType(AccountProfileBottomSheet),
+    );
+    expect(sheet.account.id, _signedInAccount.id);
+    expect(
+      find.byKey(const Key('account-profile-remove-button')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  const menuCases = [
+    (width: 360.0, locale: 'en', scale: 3.0, signedIn: true),
+    (width: 360.0, locale: 'ja', scale: 3.0, signedIn: true),
+    (width: 360.0, locale: 'en', scale: 3.0, signedIn: false),
+    (width: 1000.0, locale: 'en', scale: 1.0, signedIn: true),
+    (width: 1000.0, locale: 'ja', scale: 3.0, signedIn: false),
+  ];
+  for (final c in menuCases) {
+    final state = c.signedIn ? '已登录' : '未登录';
+    testWidgets(
+      '${c.width.toInt()} ${c.locale} ${c.scale}x $state账号菜单不溢出且每项可点',
+      (tester) async {
+        await tester.binding.setSurfaceSize(Size(c.width, 760));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        final navigationShell = _MockNavigationShell();
+        when(() => navigationShell.currentIndex).thenReturn(0);
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              localStorageServiceProvider.overrideWith(
+                (ref) => _FakeMainNavStorage()..isExpanded = true,
+              ),
+              authNotifierProvider.overrideWith(
+                c.signedIn ? _SignedInAuthNotifier.new : _FakeAuthNotifier.new,
+              ),
+              accountManagerNotifierProvider.overrideWith(
+                c.signedIn
+                    ? _SignedInAccountManagerNotifier.new
+                    : _FakeAccountManagerNotifier.new,
+              ),
+              queueExecutionNotifierProvider.overrideWith(
+                _FakeQueueExecutionNotifier.new,
+              ),
+              replicationQueueNotifierProvider.overrideWith(
+                _FakeReplicationQueueNotifier.new,
+              ),
+            ],
+            child: MaterialApp(
+              locale: Locale(c.locale),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(textScaler: TextScaler.linear(c.scale)),
+                child: child!,
+              ),
+              home: Scaffold(
+                body: MainNavRail(navigationShell: navigationShell),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+
+        await tester.tap(find.byKey(const Key('main-nav-account-menu-button')));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+
+        final l10n = lookupAppLocalizations(Locale(c.locale));
+        final labels = c.signedIn
+            ? [l10n.auth_addAccount, l10n.auth_manageAccounts, l10n.auth_logout]
+            : [l10n.auth_login];
+        for (final label in labels) {
+          final item = find.descendant(
+            of: find.byWidgetPredicate((widget) => widget is PopupMenuItem),
+            matching: find.text(label),
+          );
+          expect(item, findsOneWidget, reason: label);
+          await tester.ensureVisible(item);
+          await tester.pumpAndSettle();
+          expect(item.hitTestable(), findsOneWidget, reason: label);
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }
 
 Future<void> _pumpAuthenticatedRail(

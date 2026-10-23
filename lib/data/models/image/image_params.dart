@@ -4,6 +4,7 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 import '../../../core/constants/api_constants.dart';
 import '../../../core/constants/model_capabilities.dart';
+import '../../../core/enums/image_model_mode.dart';
 import '../../../core/enums/precise_ref_type.dart';
 import '../vibe/vibe_reference.dart';
 
@@ -142,6 +143,11 @@ class ImageParams with _$ImageParams {
 
     /// 官方质量词档位 (standard/light，light 仅 V5 提供)
     @Default(QualityTags.standardTier) String qualityTier,
+
+    /// Anime / Furry 模式，仅对 [ModelCapabilities.hasFurryMode] 的模型生效。
+    @Default(ImageModelMode.anime)
+    @JsonKey(unknownEnumValue: ImageModelMode.anime)
+    ImageModelMode modelMode,
 
     /// 自定义质量词没有官网预设 ID，请求中应省略 `tag_hint_qt`。
     @Default(false)
@@ -315,6 +321,53 @@ extension ImageParamsExtension on ImageParams {
       isEnhanceRequest &&
       !effectiveUpscaledEnhance &&
       capabilities.supportsEnhancePromptAdd;
+
+  /// 实际发送的步数。
+  int get effectiveSteps => capabilities.fixedSettings?.steps ?? steps;
+
+  /// 实际发送的采样器：模型固定的采样器优先，DDIM 按模型换算。
+  String get effectiveSampler => Samplers.resolveForModel(
+    capabilities.fixedSettings?.sampler ?? sampler,
+    model,
+  );
+
+  /// 实际发送的噪声调度：模型不开放选择时与网页端一样固定为 karras。
+  String get effectiveNoiseSchedule => capabilities.supportsNoiseSchedule
+      ? NoiseSchedules.resolve(
+          noiseSchedule,
+          allowNative: capabilities.allowsNativeNoiseSchedule,
+        )
+      : NoiseSchedules.karras;
+
+  /// 是否有参数被模型固定，界面据此把对应控件显示为锁定。
+  bool get usesFixedSettings => capabilities.fixedSettings != null;
+
+  /// 套用模型固定参数后的请求参数，只用于构造与记录请求，不回写界面状态。
+  ImageParams resolveFixedSettings() {
+    final fixed = capabilities.fixedSettings;
+    if (fixed == null) return this;
+    return copyWith(
+      steps: fixed.steps,
+      sampler: fixed.sampler,
+      ucPreset: fixed.ucPreset,
+      omitUcPresetTagHint: false,
+      negativePrompt: '',
+      characters: [
+        for (final character in characters)
+          character.copyWith(negativePrompt: ''),
+      ],
+    );
+  }
+
+  /// 高级选项里是否显示 SMEA：只有 V3 系列在非 DDIM 采样器下可用。
+  bool get showsSmeaOptions => isV3Model && !sampler.contains('ddim');
+
+  /// 高级选项里是否显示 CFG Rescale：V4 起的模型都显示，不发送时显示为停用。
+  bool get showsCfgRescaleOption => isV4Model;
+
+  /// 「高级选项」是否有可显示的控件，两种参数面板布局据此决定是否渲染该分组。
+  bool get hasAdvancedSamplingOptions =>
+      showsSmeaOptions || showsCfgRescaleOption;
 
   /// 开启端到端放大后服务端实际输出的尺寸。
   (int, int) get outputSize => effectiveE2eUpscale

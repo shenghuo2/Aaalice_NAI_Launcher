@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:nai_launcher/core/database/datasources/gallery_data_source.dart';
 import 'package:nai_launcher/core/utils/app_logger.dart';
@@ -11,25 +10,29 @@ import 'package:nai_launcher/data/models/gallery/nai_image_metadata.dart';
 import 'package:nai_launcher/data/services/fixed_tag/fixed_tag_usage_record_store.dart';
 import 'package:nai_launcher/data/services/gallery/local_gallery_repository.dart';
 import 'package:nai_launcher/data/services/image_metadata_service.dart';
-import 'package:nai_launcher/data/services/metadata/hash_calculator.dart';
+import 'package:nai_launcher/data/services/metadata/cache_manager.dart';
+import 'package:nai_launcher/data/services/metadata/metadata_cache_entry_codec.dart';
 import 'package:nai_launcher/data/services/metadata/unified_metadata_parser.dart';
 
+import '../../../helpers/content_hash.dart';
 import '../../../helpers/fixed_tag_usage_fixture.dart';
+import '../../../helpers/image_metadata_service_sandbox.dart';
 
 class _MockGalleryDataSource extends Mock implements GalleryDataSource {}
 
 const _imageId = 11;
 
-Map<String, dynamic>? _cachedMetadataJson(String hash) {
-  final raw = ImageMetadataService().persistentBox?.get(hash);
-  if (raw == null) return null;
-  return jsonDecode(raw) as Map<String, dynamic>;
+Future<Map<String, dynamic>?> _cachedMetadataJson(String hash) async {
+  final raw = await MetadataCacheManager().box?.get(hash);
+  final json = raw == null ? null : MetadataCacheEntryCodec.metadataJsonOf(raw);
+  if (json == null) return null;
+  return jsonDecode(json) as Map<String, dynamic>;
 }
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late Directory directory;
+  final directory = useImageMetadataServiceSandbox();
   late _MockGalleryDataSource dataSource;
   late LocalGalleryRepository repository;
 
@@ -43,10 +46,6 @@ void main() {
   });
 
   setUp(() async {
-    directory = await Directory.systemTemp.createTemp('gallery-add-image-');
-    Hive.init(directory.path);
-    await ImageMetadataService().initialize();
-
     dataSource = _MockGalleryDataSource();
     when(
       () => dataSource.upsertImage(
@@ -69,17 +68,11 @@ void main() {
     repository = LocalGalleryRepository(dataSource: dataSource);
   });
 
-  tearDown(() async {
-    await ImageMetadataService().clearCache();
-    await Hive.close();
-    await directory.delete(recursive: true);
-  });
-
   Future<(File, String)> writeGalleryImage(String name, String prompt) async {
     final bytes = await novelAiPngBytes(prompt);
-    final file = File('${directory.path}/$name');
+    final file = File('${directory().path}/$name');
     await file.writeAsBytes(bytes);
-    return (file, FileHashCalculator().calculateFromBytes(bytes));
+    return (file, contentHashOf(bytes));
   }
 
   test('addImage keeps the recorded snapshot out of the cache', () async {
@@ -95,7 +88,7 @@ void main() {
     await repository.addImage(file);
     await pumpEventQueue();
 
-    final cached = _cachedMetadataJson(hash);
+    final cached = await _cachedMetadataJson(hash);
     expect(cached, isNotNull);
     expect(cached!['fixedTagUsageData'], isNull);
     expect(cached['fixedPrefixTags'], isEmpty);
@@ -149,9 +142,9 @@ void main() {
       await novelAiPngBytes('from-png, gallery intake'),
       fixedTagUsageSnapshotOf('from-png'),
     );
-    final file = File('${directory.path}/embedded.png');
+    final file = File('${directory().path}/embedded.png');
     await file.writeAsBytes(bytes);
-    final hash = FileHashCalculator().calculateFromBytes(bytes);
+    final hash = contentHashOf(bytes);
     await FixedTagUsageRecordStore().record(
       contentHash: hash,
       snapshot: fixedTagUsageSnapshotOf('from-store'),
@@ -159,7 +152,7 @@ void main() {
 
     await repository.addImage(file);
 
-    final cached = _cachedMetadataJson(hash);
+    final cached = await _cachedMetadataJson(hash);
     expect(
       NaiImageMetadata.fromJson(
         cached!,
@@ -178,9 +171,9 @@ void main() {
 
   test('caller supplied metadata never reaches the cache', () async {
     final bytes = await novelAiPngBytes('from-store, gallery intake');
-    final file = File('${directory.path}/supplied.png');
+    final file = File('${directory().path}/supplied.png');
     await file.writeAsBytes(bytes);
-    final hash = FileHashCalculator().calculateFromBytes(bytes);
+    final hash = contentHashOf(bytes);
     await FixedTagUsageRecordStore().record(
       contentHash: hash,
       snapshot: fixedTagUsageSnapshotOf('from-store'),
@@ -193,7 +186,7 @@ void main() {
 
     await repository.addImage(file, metadata: supplied);
 
-    expect(_cachedMetadataJson(hash), isNull);
+    expect(await _cachedMetadataJson(hash), isNull);
     expect(
       (await ImageMetadataService().getMetadataImmediate(file.path))
           ?.fixedTagUsageSnapshot

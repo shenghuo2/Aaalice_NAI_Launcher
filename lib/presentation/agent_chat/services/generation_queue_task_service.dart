@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/agent/agent_types.dart';
 import '../../../data/models/queue/replication_task.dart';
@@ -37,22 +36,6 @@ class GenerationQueueTaskService {
         'Parameter "count" must be between 1 and $kMaxQueueCapacity.',
       );
     }
-    final remaining = _ref
-        .read(replicationQueueNotifierProvider)
-        .remainingCapacity;
-    if (remaining <= 0) {
-      return agentToolError(
-        'queue_full',
-        'Queue is full (capacity $kMaxQueueCapacity). Clear or complete tasks first.',
-      );
-    }
-    if (remaining < requestedCount) {
-      return agentToolError(
-        'queue_capacity_insufficient',
-        'Queue has room for $remaining task(s), but this confirmed preparation '
-            'requires $requestedCount. Prepare again for the current capacity.',
-      );
-    }
     final count = requestedCount;
     final autoStart = prepared.autoStart;
     final negativePrompt = base.negativePrompt;
@@ -71,20 +54,45 @@ class GenerationQueueTaskService {
       negativePrompt: negativePrompt,
       nSamples: 1,
     );
-    final generationSnapshot = ReplicationTaskGenerationSnapshot.encode(
+    // Agent 提交方必须显式给出聚焦状态，否则执行时会继承生成页残留的聚焦选区
+    final generationSnapshot = await ReplicationTaskGenerationSnapshot.encode(
       queuedParams,
       batchSize: prepared.batchSize,
+      focused: const QueuedFocusedInpaint.disabled(),
     );
-    final snapshotBytes = utf8.encode(jsonEncode(generationSnapshot)).length;
-    final existingSnapshotBytes = _ref
+    final existingSnapshots = _ref
         .read(replicationQueueNotifierProvider)
         .tasks
         .map((task) => task.generationSnapshot)
-        .whereType<Map<String, dynamic>>()
-        .fold<int>(
-          0,
-          (total, snapshot) => total + utf8.encode(jsonEncode(snapshot)).length,
-        );
+        .whereType<Map<String, dynamic>>();
+    final [
+      snapshotBytes,
+      ...existingSizes,
+    ] = await ReplicationTaskGenerationSnapshot.measurePersistedBytes([
+      generationSnapshot,
+      ...existingSnapshots,
+    ]);
+    final existingSnapshotBytes = existingSizes.fold<int>(
+      0,
+      (total, size) => total + size,
+    );
+    // 编码与计量期间队列可能被其他入口填充；此处到 addAll 不能再有 await，否则会部分入队
+    final remaining = _ref
+        .read(replicationQueueNotifierProvider)
+        .remainingCapacity;
+    if (remaining <= 0) {
+      return agentToolError(
+        'queue_full',
+        'Queue is full (capacity $kMaxQueueCapacity). Clear or complete tasks first.',
+      );
+    }
+    if (remaining < requestedCount) {
+      return agentToolError(
+        'queue_capacity_insufficient',
+        'Queue has room for $remaining task(s), but this confirmed preparation '
+            'requires $requestedCount. Prepare again for the current capacity.',
+      );
+    }
     if (snapshotBytes > _maxQueueSnapshotBytes ||
         existingSnapshotBytes + snapshotBytes * count >
             _maxPersistedQueueSnapshotBytes) {

@@ -10,6 +10,7 @@ import '../../../core/constants/model_capabilities.dart';
 import '../../../core/enums/precise_ref_type.dart';
 import '../../../core/storage/local_storage_service.dart';
 import '../../../core/utils/app_logger.dart';
+import '../../../core/utils/byte_content.dart';
 import '../../../core/utils/nai_api_utils.dart';
 import '../../../core/utils/vibe_performance_diagnostics.dart';
 import '../../../data/models/image/image_params.dart';
@@ -65,6 +66,7 @@ final class GenerationParamsPersistenceService {
       transparentBackground: _localStorage.getLastTransparentBackground(),
       qualityTier: _localStorage.getQualityPresetNaiTier(),
       e2eUpscale: _localStorage.getLastE2eUpscale(),
+      modelMode: _localStorage.getImageModelMode(),
       seed:
           _localStorage.getSeedLocked() &&
               _localStorage.getLockedSeedValue() != null
@@ -137,17 +139,17 @@ final class GenerationParamsPersistenceService {
         'preciseRefs': snapshot.preciseReferences.length,
       },
     );
-    var jsonChars = 0;
+    var jsonBytes = 0;
     try {
       final input = snapshot.toIsolateInput();
       final stateJson = await Isolate.run(() => _encodeStateJson(input));
-      jsonChars = stateJson.length;
-      await _referenceStorage.saveGenerationStateJson(stateJson);
+      jsonBytes = stateJson.length;
+      await _referenceStorage.saveGenerationStateUtf8Json(stateJson);
       AppLogger.d('Generation state saved', 'GenerationParams');
     } catch (error, stackTrace) {
       AppLogger.e('Failed to save generation state', error, stackTrace);
     } finally {
-      span.finish(details: {'jsonChars': jsonChars});
+      span.finish(details: {'jsonBytes': jsonBytes});
     }
   }
 
@@ -362,7 +364,7 @@ final class GenerationStateRestoreResult {
   final bool isTerminal;
 }
 
-String _encodeStateJson(Map<String, Object?> input) {
+Uint8List _encodeStateJson(Map<String, Object?> input) {
   final vibes = (input['vibeReferences'] as List? ?? const [])
       .whereType<Map>()
       .map((raw) {
@@ -380,7 +382,7 @@ String _encodeStateJson(Map<String, Object?> input) {
           'bundleSource': raw['bundleSource'],
           'thumbnailBase64':
               preview != null &&
-                  (rawImage == null || !_bytesEqual(preview, rawImage))
+                  (rawImage == null || !ByteContent.equals(preview, rawImage))
               ? base64Encode(preview)
               : null,
           'rawImageDataBase64': rawImage == null
@@ -403,13 +405,15 @@ String _encodeStateJson(Map<String, Object?> input) {
         };
       })
       .toList(growable: false);
-  return jsonEncode({
+  // Straight to UTF-8: base64 images never build an equally large String.
+  final encoded = JsonUtf8Encoder().convert({
     'schemaVersion': input['schemaVersion'],
     'vibeReferences': vibes,
     'preciseReferences': precise,
     'normalizeVibeStrength': input['normalizeVibeStrength'] as bool? ?? true,
     'savedAt': input['savedAt'],
   });
+  return encoded is Uint8List ? encoded : Uint8List.fromList(encoded);
 }
 
 Map<String, Object?> _decodeStateJson(String source) {
@@ -481,13 +485,4 @@ Uint8List? _decodeBase64(String? value) {
   } catch (_) {
     return null;
   }
-}
-
-bool _bytesEqual(Uint8List left, Uint8List right) {
-  if (identical(left, right)) return true;
-  if (left.length != right.length) return false;
-  for (var index = 0; index < left.length; index++) {
-    if (left[index] != right[index]) return false;
-  }
-  return true;
 }

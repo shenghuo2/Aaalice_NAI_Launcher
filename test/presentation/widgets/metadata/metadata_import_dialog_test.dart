@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nai_launcher/core/constants/api_constants.dart';
 import 'package:nai_launcher/data/models/gallery/nai_image_metadata.dart';
 import 'package:nai_launcher/data/models/metadata/metadata_import_options.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:nai_launcher/presentation/utils/fixed_tag_import_resolution.dart';
+import 'package:nai_launcher/presentation/widgets/common/translated_tag_text.dart';
 import 'package:nai_launcher/presentation/widgets/metadata/metadata_import_dialog.dart';
 
 void main() {
@@ -228,5 +230,156 @@ void main() {
     expect(find.text('Source: not recorded; cannot be determined'), findsOne);
     expect(find.text('Disable current fixed tags (recommended)'), findsOne);
     expect(find.text('Keep and stack with the image prompt'), findsOne);
+  });
+
+  testWidgets('negative preview matches what the import writes', (
+    tester,
+  ) async {
+    const model = ImageModels.animeDiffusionV45Full;
+    final heavy = UcPresets.getPresetContent(model, UcPresetType.heavy);
+    final metadata = NaiImageMetadata(
+      prompt: '1girl',
+      negativePrompt: '$heavy, bad hands, watermark',
+      model: model,
+      ucPreset: UcPresets.heavyApiValue,
+      fixedNegativePrefixTags: const ['bad hands'],
+    );
+    Iterable<String> previews() => tester
+        .widgetList<TranslatedPromptText>(find.byType(TranslatedPromptText))
+        .map((widget) => widget.prompt);
+
+    await pumpAndOpenDialog(
+      tester,
+      size: const Size(900, 1000),
+      metadata: metadata,
+    );
+
+    expect(previews(), contains('watermark'));
+    expect(previews(), isNot(contains(metadata.negativePrompt)));
+
+    await tester.tap(
+      find.widgetWithText(FilterChip, 'Undesired Content Preset'),
+    );
+    await tester.pump();
+
+    expect(previews(), contains('$heavy, watermark'));
+  });
+
+  group('initial options', () {
+    Future<MetadataImportOptions?> confirmFrom(
+      WidgetTester tester, {
+      required NaiImageMetadata metadata,
+      required MetadataImportOptions initialOptions,
+      Future<void> Function()? adjust,
+    }) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(900, 1000);
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      MetadataImportOptions? result;
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () async {
+                  result = await MetadataImportDialog.show(
+                    context,
+                    metadata: metadata,
+                    initialOptions: initialOptions,
+                  );
+                },
+                child: const Text('Open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await adjust?.call();
+      await tester.tap(find.text('Confirm'));
+      await tester.pumpAndSettle();
+      return result;
+    }
+
+    bool chipSelected(WidgetTester tester, String label) =>
+        tester.widget<FilterChip>(find.widgetWithText(FilterChip, label)).selected;
+
+    testWidgets('remembered categories preselect while image items stay all', (
+      tester,
+    ) async {
+      final result = await confirmFrom(
+        tester,
+        metadata: const NaiImageMetadata(
+          prompt: 'main prompt',
+          seed: 42,
+          steps: 28,
+          characterInfos: [
+            CharacterPromptInfo(prompt: 'girl a'),
+            CharacterPromptInfo(prompt: 'girl b'),
+          ],
+        ),
+        initialOptions: MetadataImportOptions.all().copyWith(importSeed: false),
+        adjust: () async {
+          expect(chipSelected(tester, 'Seed'), isFalse);
+          expect(chipSelected(tester, 'Steps'), isTrue);
+        },
+      );
+
+      expect(result!.importSeed, isFalse);
+      expect(result.importSteps, isTrue);
+      expect(result.importCharacterPrompts, isTrue);
+      expect(result.selectedCharacterIndices, [0, 1]);
+    });
+
+    testWidgets('categories the image lacks keep their remembered value', (
+      tester,
+    ) async {
+      final result = await confirmFrom(
+        tester,
+        metadata: const NaiImageMetadata(prompt: 'main prompt', steps: 28),
+        initialOptions: MetadataImportOptions.all().copyWith(
+          importSeed: false,
+          importSampler: false,
+        ),
+        adjust: () async {
+          expect(find.widgetWithText(FilterChip, 'Seed'), findsNothing);
+        },
+      );
+
+      expect(result!.importSeed, isFalse);
+      expect(result.importSampler, isFalse);
+      expect(result.importModel, isTrue);
+    });
+
+    testWidgets('select all restores defaults over remembered categories', (
+      tester,
+    ) async {
+      final result = await confirmFrom(
+        tester,
+        metadata: const NaiImageMetadata(
+          prompt: 'main prompt',
+          seed: 42,
+          steps: 28,
+        ),
+        initialOptions: MetadataImportOptions.none().copyWith(
+          importPrompt: true,
+        ),
+        adjust: () async {
+          await tester.tap(find.text('Select All'));
+          await tester.pump();
+        },
+      );
+
+      expect(result!.importSeed, isTrue);
+      expect(result.importSteps, isTrue);
+      expect(result.importNegativePrompt, isTrue);
+    });
   });
 }

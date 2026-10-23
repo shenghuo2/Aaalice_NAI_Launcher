@@ -29,43 +29,38 @@ class UnifiedMetadataParser {
     String filePath, {
     int? maxBytes,
     bool useGradualRead = true,
-    bool useCache = true,
   }) => _service.parseFromFile(
     filePath,
     maxBytes: maxBytes,
     useGradualRead: useGradualRead,
-    useCache: useCache,
   );
 
   static MetadataParseResult parseFromImage(
     Uint8List bytes, {
     String? filePathForLog,
-    bool useCache = false,
-  }) => _service.parseFromImage(
-    bytes,
-    filePathForLog: filePathForLog,
-    useCache: useCache,
-  );
+  }) => _service.parseFromImage(bytes, filePathForLog: filePathForLog);
 
   static MetadataParseResult parseFromPng(
     Uint8List bytes, {
     String? filePathForLog,
-    bool useCache = false,
-  }) => _service.parseFromPng(
-    bytes,
-    filePathForLog: filePathForLog,
-    useCache: useCache,
-  );
+  }) => _service.parseFromPng(bytes, filePathForLog: filePathForLog);
+
+  /// Null means the answer needs the stealth pixel decode; run [parseFromImage]
+  /// off the UI isolate in that case.
+  static MetadataParseResult? parseFromImageWithoutPixelDecode(
+    Uint8List bytes,
+  ) => _service.parseFromImageWithoutPixelDecode(bytes);
+
+  static MetadataParseResult? parseFromPngWithoutPixelDecode(Uint8List bytes) =>
+      _service.parseFromPngWithoutPixelDecode(bytes);
+
+  static bool readsStealthPayload(Uint8List bytes) =>
+      ImageMetadataParserService.readsStealthPayload(bytes);
 
   static MetadataParseResult parseFromWebp(
     Uint8List bytes, {
     String? filePathForLog,
-    bool useCache = false,
-  }) => _service.parseFromWebp(
-    bytes,
-    filePathForLog: filePathForLog,
-    useCache: useCache,
-  );
+  }) => _service.parseFromWebp(bytes, filePathForLog: filePathForLog);
 
   static MetadataParseResult parseFromTextData(Map<String, String> textData) =>
       _service.parseFromTextData(textData);
@@ -95,7 +90,7 @@ class UnifiedMetadataParser {
 
   static Uint8List embedTextChunks(
     Uint8List originalPng,
-    Map<String, String> replacements,
+    Map<String, String?> replacements,
   ) => ImageMetadataContainerCodec.embedTextChunks(originalPng, replacements);
 
   static Uint8List copySupportedMetadata({
@@ -109,6 +104,4 @@ class UnifiedMetadataParser {
   static ParseStatistics get statistics => _service.statistics;
 
   static void resetStatistics() => _service.resetStatistics();
-
-  static void clearCache() => _service.clearCache();
 }

@@ -130,7 +130,7 @@ class AiTagGallerySourceAdapter implements GallerySourceAdapter {
       queryParameters: {
         'page': page,
         'page_size': config.pageSize,
-        'q': _toAiTagWeightedQuery(request.query),
+        'q': request.query,
         'prompt': request.prompt,
         'sort': 'new',
         'time_range': request.timeRange,
@@ -154,7 +154,7 @@ class AiTagGallerySourceAdapter implements GallerySourceAdapter {
     final queryParameters = <String, dynamic>{
       'page': page,
       'page_size': config.pageSize,
-      'q': _toAiTagWeightedQuery(request.query),
+      'q': request.query,
       'prompt': request.prompt,
     };
     if (period == 'current') {
@@ -267,6 +267,8 @@ class AiTagGallerySourceAdapter implements GallerySourceAdapter {
           source: GallerySourceId.aiTag,
         );
       }
+      final emptyPage = _emptyListPageForNotFound(error.response, cursor);
+      if (emptyPage != null) return emptyPage;
       throw mapGalleryDioException(error, sourceId);
     } catch (error) {
       throw GallerySourceException(
@@ -275,6 +277,28 @@ class AiTagGallerySourceAdapter implements GallerySourceAdapter {
         cause: error,
       );
     }
+  }
+
+  // 列表接口无结果或页码越界时返回 404，body 为空 items 或 no_content。
+  static GalleryPage? _emptyListPageForNotFound(
+    Response<dynamic>? response,
+    String cursor,
+  ) {
+    if (response?.statusCode != 404) return null;
+    final data = response!.data;
+    if (data is! Map) return null;
+    final items = data['items'];
+    final isEmptyList = items is List && items.isEmpty;
+    final isNoContent = data['error'] == 'no_content';
+    if (!isEmptyList && !isNoContent) return null;
+    return GalleryPage(
+      items: const [],
+      cursor: cursor,
+      nextCursor: null,
+      total: _asInt(data['total']),
+      hasMore: false,
+      rawPageIdentity: '',
+    );
   }
 
   @override
@@ -438,16 +462,9 @@ class AiTagGallerySourceAdapter implements GallerySourceAdapter {
       rank: rank,
       tags: List<String>.unmodifiable(searchableTags),
       searchTerms: List<String>.unmodifiable(searchTerms),
-      // The list payload omits per-media prompts searched by the upstream q
-      // endpoint. Detail loading must aggregate every media prompt first.
+      // The list payload omits per-media prompts the blacklist must inspect.
       tagsComplete: false,
-      cover: GalleryMedia(
-        id: '${id}_pending',
-        previewUrl: '',
-        displayUrl: '',
-        downloadUrl: '',
-        mediaType: 'image',
-      ),
+      cover: GalleryMedia.pending('$id'),
     );
   }
 
@@ -552,15 +569,6 @@ class AiTagGallerySourceAdapter implements GallerySourceAdapter {
   static int _mediaPageIndex(String value) {
     final match = RegExp(r'_p(\d+)(?:\D|$)').firstMatch(value);
     return int.tryParse(match?.group(1) ?? '') ?? 0;
-  }
-
-  String _toAiTagWeightedQuery(String query) {
-    return query
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((term) => term.isNotEmpty)
-        .map((term) => '$term::1')
-        .join(' ');
   }
 
   static int? _asInt(Object? value) {

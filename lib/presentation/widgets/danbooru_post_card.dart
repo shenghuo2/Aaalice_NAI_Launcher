@@ -21,7 +21,6 @@ import '../../data/models/online_gallery/danbooru_post.dart';
 import '../../data/models/queue/replication_task.dart';
 import '../../core/autocomplete/tag_translation_lookup.dart';
 import '../adaptive/interaction_policy.dart';
-import '../providers/character_prompt_provider.dart';
 import '../providers/pic_manager_push_provider.dart';
 import '../providers/replication_queue_provider.dart';
 import '../providers/reverse_prompt_provider.dart';
@@ -236,24 +235,23 @@ class _DanbooruPostCardState extends ConsumerState<DanbooruPostCard> {
       if (selectedSettings == null || !mounted) return;
     }
 
-    ref.read(characterPromptNotifierProvider.notifier).replaceAll([
-      for (var index = 0; index < widget.characterPrompts.length; index++)
-        CharacterPrompt(
-          id: 'gallery-${widget.post.stableKey}-$index',
-          name: widget.characterPrompts[index].label,
-          prompt: widget.characterPrompts[index].prompt,
-          negativePrompt: widget.characterPrompts[index].negativePrompt,
-          positionMode: CharacterPositionMode.aiChoice,
-        ),
-    ]);
-    ref
-        .read(generationPromptTransferServiceProvider)
-        .replaceMainPrompt(
-          prompt: prompt,
-          negativePrompt: widget.negativePromptOverride,
-          configuration: transferOptions?.configuration,
-          configurationSettings: selectedSettings,
-        );
+    ref.read(generationPromptTransferServiceProvider)
+      ..replaceCharacterPrompts([
+        for (var index = 0; index < widget.characterPrompts.length; index++)
+          CharacterPrompt(
+            id: 'gallery-${widget.post.stableKey}-$index',
+            name: widget.characterPrompts[index].label,
+            prompt: widget.characterPrompts[index].prompt,
+            negativePrompt: widget.characterPrompts[index].negativePrompt,
+            positionMode: CharacterPositionMode.aiChoice,
+          ),
+      ])
+      ..replaceMainPrompt(
+        prompt: prompt,
+        negativePrompt: widget.negativePromptOverride,
+        configuration: transferOptions?.configuration,
+        configurationSettings: selectedSettings,
+      );
     if (!mounted) return;
     context.go('/');
     AppToast.info(context, context.l10n.onlineGallery_sentToTextToImage);
@@ -387,11 +385,16 @@ class _DanbooruPostCardState extends ConsumerState<DanbooruPostCard> {
     final onAddToAgent = ImageCardActionScope.maybeOf(context)?.onAddToAgent;
     final picManagerConfig = ref.watch(picManagerSettingsProvider).valueOrNull;
     final picManagerRequest = onlineGalleryPicManagerRequest(widget.post);
-    final isPushingToPicManager = picManagerRequest != null &&
-        ref.watch(picManagerUploadsProvider).contains(picManagerRequest.uploadKey);
-    final autoPushOnFavorite = picManagerConfig?.isConfigured == true &&
+    final isPushingToPicManager =
+        picManagerRequest != null &&
+        ref
+            .watch(picManagerUploadsProvider)
+            .contains(picManagerRequest.uploadKey);
+    final autoPushOnFavorite =
+        picManagerConfig?.isConfigured == true &&
         picManagerConfig!.autoPushOnFavorite;
-    final canManageFavorite = widget.showFavoriteAction &&
+    final canManageFavorite =
+        widget.showFavoriteAction &&
         !widget.favoriteReadOnly &&
         widget.onFavoriteToggle != null;
     return [
@@ -445,7 +448,8 @@ class _DanbooruPostCardState extends ConsumerState<DanbooruPostCard> {
               widget.secondaryFavoriteTooltip!,
           ].join(' · '),
           iconColor: widget.isFavorited ? Colors.red : Colors.white,
-          isLoading: widget.isFavoriteLoading ||
+          isLoading:
+              widget.isFavoriteLoading ||
               (autoPushOnFavorite && isPushingToPicManager),
           invoke: widget.onFavoriteToggle!,
         ),

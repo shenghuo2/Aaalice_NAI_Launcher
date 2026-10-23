@@ -23,8 +23,10 @@ import '../../router/app_routes.dart';
 import '../../themes/theme_extension.dart';
 import '../auth/account_avatar.dart';
 import '../auth/login_form_container.dart';
+import '../settings/account_profile_sheet.dart';
 
 import '../common/app_toast.dart';
+import '../common/menu_action_label.dart';
 
 Duration _boundedMotionDuration(
   BuildContext context,
@@ -1288,6 +1290,19 @@ class _AccountAvatarButtonState extends State<_AccountAvatarButton> {
         ? currentAccount
         : null;
 
+    Widget accountAction(
+      IconData icon,
+      String label, {
+      bool destructive = false,
+    }) => MenuActionLabel(
+      leading: Icon(icon),
+      label: label,
+      destructive: destructive,
+      iconColor: theme.colorScheme.onSurface,
+      iconSize: 20,
+      gap: 12,
+    );
+
     // 获取按钮的位置用于定位菜单
     final RenderBox button = context.findRenderObject() as RenderBox;
     final Offset offset = button.localToGlobal(Offset.zero);
@@ -1312,13 +1327,7 @@ class _AccountAvatarButtonState extends State<_AccountAvatarButton> {
         if (!authState.isAuthenticated)
           PopupMenuItem<String>(
             value: 'login',
-            child: Row(
-              children: [
-                Icon(Icons.login, color: theme.colorScheme.onSurface, size: 20),
-                const SizedBox(width: 12),
-                Text(context.l10n.auth_login),
-              ],
-            ),
+            child: accountAction(Icons.login, context.l10n.auth_login),
           ),
 
         // 当前账号标题
@@ -1365,12 +1374,16 @@ class _AccountAvatarButtonState extends State<_AccountAvatarButton> {
         if (authState.isAuthenticated)
           PopupMenuItem<String>(
             value: 'add',
-            child: Row(
-              children: [
-                Icon(Icons.add, color: theme.colorScheme.onSurface, size: 20),
-                const SizedBox(width: 12),
-                Text(context.l10n.auth_addAccount),
-              ],
+            child: accountAction(Icons.add, context.l10n.auth_addAccount),
+          ),
+
+        if (menuCurrentAccount != null)
+          PopupMenuItem<String>(
+            key: const Key('main-nav-manage-accounts'),
+            value: 'manage',
+            child: accountAction(
+              Icons.manage_accounts_outlined,
+              context.l10n.auth_manageAccounts,
             ),
           ),
 
@@ -1378,15 +1391,10 @@ class _AccountAvatarButtonState extends State<_AccountAvatarButton> {
         if (authState.isAuthenticated)
           PopupMenuItem<String>(
             value: 'logout',
-            child: Row(
-              children: [
-                Icon(Icons.logout, color: theme.colorScheme.error, size: 20),
-                const SizedBox(width: 12),
-                Text(
-                  context.l10n.auth_logout,
-                  style: TextStyle(color: theme.colorScheme.error),
-                ),
-              ],
+            child: accountAction(
+              Icons.logout,
+              context.l10n.auth_logout,
+              destructive: true,
             ),
           ),
       ],
@@ -1402,6 +1410,13 @@ class _AccountAvatarButtonState extends State<_AccountAvatarButton> {
         // ignore: use_build_context_synchronously
         _showAddAccountDialog(context);
       }
+    } else if (value == 'manage' &&
+        menuCurrentAccount != null &&
+        context.mounted) {
+      AccountProfileBottomSheet.show(
+        context: context,
+        account: menuCurrentAccount,
+      );
     } else if (value == 'logout') {
       // Use SchedulerBinding.endOfFrame to ensure logout happens AFTER the menu is fully disposed
       // This prevents the "ref.listen can only be used within build method" error that occurs when
@@ -1497,6 +1512,7 @@ class _AccountAvatarButtonState extends State<_AccountAvatarButton> {
       context: context,
       title: context.l10n.auth_addAccount,
       dialogWidth: 450,
+      headerScrollsWithContent: true,
       builder: (panelContext, scrollController) => ContentSizedAdaptiveForm(
         scrollViewKey: const Key('main-nav-add-account-form'),
         scrollController: scrollController,

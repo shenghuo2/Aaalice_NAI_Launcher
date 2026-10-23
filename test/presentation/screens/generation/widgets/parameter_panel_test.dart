@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -28,6 +29,8 @@ import 'package:nai_launcher/presentation/widgets/character/inline_character_sec
 import 'package:nai_launcher/presentation/widgets/common/editable_double_field.dart';
 import 'package:nai_launcher/presentation/widgets/common/themed_slider.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart';
+
+import '../../../../helpers/fake_save_file_picker.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -122,6 +125,9 @@ void main() {
     testWidgets('parameter sliders keep their discrete behavior', (
       tester,
     ) async {
+      // 默认 800×600 窗口会把面板压到 600px，CFG 区落在惰性列表构建范围外
+      await tester.binding.setSurfaceSize(const Size(960, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -169,6 +175,46 @@ void main() {
       expect(cfgSliders.single.divisions, equals(190));
       expect(stepsSliders, hasLength(1));
       expect(stepsSliders.single.divisions, equals(49));
+    });
+
+    testWidgets('步数与 CFG 滑块以不含数值的名称朗读，读数与标题一致', (tester) async {
+      // 默认 800×600 窗口会把面板压到 600px，CFG 区落在惰性列表构建范围外
+      await tester.binding.setSurfaceSize(const Size(960, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localStorageServiceProvider.overrideWith(
+              (ref) => _TestLocalStorageService(),
+            ),
+            vibeLibraryStorageServiceProvider.overrideWithValue(
+              _TestVibeLibraryStorageService(),
+            ),
+            kritaBridgeNotifierProvider.overrideWith(
+              (ref) => _TestKritaBridgeNotifier(),
+            ),
+          ],
+          child: const MaterialApp(
+            locale: Locale('zh'),
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            home: Scaffold(
+              body: SizedBox(width: 960, height: 1200, child: ParameterPanel()),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+
+      final steps = _sliderNode('步数');
+      expect(steps.value, matches(RegExp(r'^\d+$')));
+      expect(find.text('步数: ${steps.value}'), findsOneWidget);
+
+      final cfg = _sliderNode('CFG 强度');
+      expect(cfg.value, matches(RegExp(r'^\d+\.\d$')));
+      expect(find.text('CFG 强度：${cfg.value}'), findsOneWidget);
     });
 
     testWidgets('高级选项在侧栏色面内使用独立 Material', (tester) async {
@@ -226,6 +272,80 @@ void main() {
       await tester.tap(advancedOptions);
       await tester.pumpAndSettle();
 
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('高级选项只在当前模型有可显示的控件时出现', (tester) async {
+      // 足够高的画布让惰性列表一次建出全部分节，「不存在」的断言才有意义
+      await tester.binding.setSurfaceSize(const Size(960, 6000));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localStorageServiceProvider.overrideWith(
+              (ref) => _TestLocalStorageService(),
+            ),
+            vibeLibraryStorageServiceProvider.overrideWithValue(
+              _TestVibeLibraryStorageService(),
+            ),
+            kritaBridgeNotifierProvider.overrideWith(
+              (ref) => _TestKritaBridgeNotifier(),
+            ),
+          ],
+          child: const MaterialApp(
+            locale: Locale('zh'),
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            home: Scaffold(
+              body: SizedBox(width: 960, height: 6000, child: ParameterPanel()),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ParameterPanel)),
+      );
+      final notifier = container.read(generationParamsNotifierProvider.notifier);
+      final advancedOptions = find.byWidgetPredicate(
+        (widget) =>
+            widget is ExpansionTile &&
+            widget.title is Text &&
+            (widget.title as Text).data == '高级选项',
+      );
+
+      Future<void> expectAdvancedOptions({
+        required String model,
+        String sampler = 'k_euler_ancestral',
+        required bool visible,
+      }) async {
+        notifier
+          ..updateModel(model)
+          ..updateSampler(sampler);
+        await tester.pumpAndSettle();
+        expect(
+          advancedOptions,
+          visible ? findsOneWidget : findsNothing,
+          reason: '$model $sampler',
+        );
+      }
+
+      await expectAdvancedOptions(
+        model: 'nai-diffusion-4-5-full',
+        visible: true,
+      );
+      await expectAdvancedOptions(model: 'nai-diffusion-furry', visible: false);
+      await expectAdvancedOptions(model: 'nai-diffusion-3', visible: true);
+      await expectAdvancedOptions(
+        model: 'nai-diffusion-3',
+        sampler: 'ddim',
+        visible: false,
+      );
+      await expectAdvancedOptions(
+        model: 'nai-diffusion-5-full-medium',
+        visible: true,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -429,13 +549,6 @@ void main() {
     testWidgets('imports every image selected for precise reference', (
       tester,
     ) async {
-      FilePicker? originalFilePicker;
-      try {
-        originalFilePicker = FilePicker.platform;
-      } catch (_) {
-        originalFilePicker = null;
-      }
-
       final filePicker = _FakeFilePicker(
         FilePickerResult([
           PlatformFile(
@@ -450,12 +563,7 @@ void main() {
           ),
         ]),
       );
-      FilePicker.platform = filePicker;
-      addTearDown(() {
-        if (originalFilePicker != null) {
-          FilePicker.platform = originalFilePicker;
-        }
-      });
+      useFakeFilePicker(filePicker);
 
       await tester.pumpWidget(
         ProviderScope(
@@ -606,7 +714,7 @@ class _TestVibeLibraryStorageService extends VibeLibraryStorageService {
   }
 
   @override
-  Future<void> saveGenerationStateJson(String stateJson) async {}
+  Future<void> saveGenerationStateUtf8Json(Uint8List stateJson) async {}
 }
 
 class _FakeEnhancementApiService extends NAIImageEnhancementApiService {
@@ -619,4 +727,12 @@ class _TestKritaBridgeNotifier extends KritaBridgeNotifier {
 
   @override
   Future<void> close() async {}
+}
+
+SemanticsNode _sliderNode(String label) {
+  final slider = find.semantics.byPredicate(
+    (node) => node.flagsCollection.isSlider && node.label == label,
+  );
+  expect(slider, findsOne, reason: label);
+  return slider.evaluate().single;
 }

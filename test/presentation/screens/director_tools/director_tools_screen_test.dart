@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:nai_launcher/core/cache/box_fit_resize_image.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:nai_launcher/presentation/providers/subscription_provider.dart';
 import 'package:nai_launcher/presentation/screens/director_tools/director_tools_screen.dart';
+import 'package:nai_launcher/presentation/widgets/common/decoded_memory_image.dart';
 
 import '../../../helpers/light_theme_contrast.dart';
 
@@ -92,5 +94,37 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('始终保留检测到的像素尺寸。'), findsOneWidget);
+  });
+
+  testWidgets('原图预览按显示器尺寸封顶解码，与窗口尺寸无关', (WidgetTester tester) async {
+    await _pumpScreen(tester);
+    final display = tester.view.display;
+    final logicalDisplay = display.size / display.devicePixelRatio;
+    final pixelRatio = tester.view.devicePixelRatio;
+    final expected = BoxFitResizeImage(
+      MemoryImage(_sourceImage),
+      width: DecodedMemoryImage.resolveCacheDimension(
+        logicalSize: logicalDisplay.width,
+        constrainedSize: null,
+        pixelRatio: pixelRatio,
+      ),
+      height: DecodedMemoryImage.resolveCacheDimension(
+        logicalSize: logicalDisplay.height,
+        constrainedSize: null,
+        pixelRatio: pixelRatio,
+      ),
+      fit: DecodeFit.contain,
+    );
+
+    BoxFitResizeImage sourcePreview() => tester
+        .widgetList<Image>(find.byType(Image))
+        .map((image) => image.image)
+        .whereType<BoxFitResizeImage>()
+        .single;
+
+    expect(sourcePreview(), expected);
+    await tester.binding.setSurfaceSize(const Size(1100, 900));
+    await tester.pumpAndSettle();
+    expect(sourcePreview(), expected);
   });
 }

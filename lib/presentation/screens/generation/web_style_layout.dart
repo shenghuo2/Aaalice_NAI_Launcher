@@ -9,6 +9,7 @@ import '../../../core/platform/platform_capabilities.dart';
 import '../../../core/shortcuts/default_shortcuts.dart';
 import '../../../core/windowing/workspace_side_panel_contract.dart';
 import '../../../data/models/queue/replication_task.dart';
+import '../../agent_chat/providers/agent_chat_dock_provider.dart';
 import '../../providers/character_prompt_provider.dart';
 import '../../providers/image_generation_provider.dart';
 import '../../providers/generation/preview_selection_provider.dart';
@@ -130,17 +131,19 @@ class _WebStyleGenerationLayoutState
     final leftWidth = layoutState.webLeftPanelExpanded
         ? layoutState.webLeftPanelWidth
         : 40.0;
+    final handleExtent = ResizeHandle.extentOf(context);
     final fixedTagsWidth = layoutState.fixedTagsSidebarExpanded
-        ? layoutState.fixedTagsSidebarWidth + ResizeHandle.defaultWidth
+        ? layoutState.fixedTagsSidebarWidth + handleExtent
         : 0.0;
     final occupiedLeadingWidth =
-        leftWidth +
-        (layoutState.webLeftPanelExpanded ? ResizeHandle.defaultWidth : 0.0);
+        leftWidth + (layoutState.webLeftPanelExpanded ? handleExtent : 0.0);
+    final sideBySideChatWidth = ref.watch(
+      agentChatDockProvider.select((dock) => dock.sideBySideChatWidthDemand),
+    );
 
-    return ShortcutAwareWidget(
+    return PageShortcuts(
       contextType: ShortcutContext.generation,
       shortcuts: _shortcuts,
-      autofocus: true,
       child: GenerationWorkspaceRow(
         occupiedLeadingWidth: occupiedLeadingWidth,
         overlayableLeading: const FixedTagsSidebarSlot(),
@@ -173,6 +176,7 @@ class _WebStyleGenerationLayoutState
         main: const ImagePreviewWidget(),
         rightPanelExpanded: layoutState.rightPanelExpanded,
         preferredRightPanelWidth: layoutState.rightPanelWidth,
+        sideBySideChatWidth: sideBySideChatWidth,
         rightHandle: ResizeHandle(
           onDragStart: () => setState(() => _isResizingRight = true),
           onDragEnd: () => setState(() => _isResizingRight = false),
@@ -189,10 +193,9 @@ class _WebStyleGenerationLayoutState
                 .setRightPanelWidth(newWidth);
           },
         ),
-        rightPanelBuilder: (width, expanded) => RightPanel(
+        rightPanelBuilder: (allocation) => RightPanel(
           isResizing: _isResizingRight,
-          width: width,
-          expanded: expanded,
+          allocation: allocation,
           historyViewport: widget.historyViewport,
         ),
       ),

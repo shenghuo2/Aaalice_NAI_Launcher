@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import '../enums/generation_effort.dart';
 import 'model_capabilities.dart';
 
 /// NovelAI API 常量定义
@@ -96,6 +97,10 @@ class ImageModels {
       'nai-diffusion-5-curated-inpainting';
   static const String animeDiffusionV5FullInpainting =
       'nai-diffusion-5-full-inpainting';
+  static const String animeDiffusionV5FullMedium =
+      'nai-diffusion-5-full-medium';
+  static const String animeDiffusionV5FullMediumInpainting =
+      'nai-diffusion-5-full-medium-inpainting';
 
   /// V5 测试期的历史模型键。
   ///
@@ -115,8 +120,18 @@ class ImageModels {
     furryDiffusion,
   ];
 
+  /// 只通过 Effort 档位选择、不进入模型下拉框的变体。
+  static const List<String> effortVariantModels = [animeDiffusionV5FullMedium];
+
+  /// 可以作为生成模型的全部 ID：下拉框模型加 Effort 变体。
+  static const List<String> supportedModels = [
+    ...allModels,
+    ...effortVariantModels,
+  ];
+
   static const Map<String, String> modelDisplayNames = {
     animeDiffusionV5Full: 'NAI Diffusion V5 (Full)',
+    animeDiffusionV5FullMedium: 'NAI Diffusion V5 (Full, Medium Effort)',
     animeDiffusionV5Curated: 'NAI Diffusion V5 (Curated)',
     animeDiffusionV45Full: 'NAI Diffusion V4.5 (Full)',
     animeDiffusionV45Curated: 'NAI Diffusion V4.5 (Curated)',
@@ -132,11 +147,40 @@ class ImageModels {
   /// [current] 是当前选中的模型：它可能来自元数据导入等非常规途径，
   /// 必须保留在候选项里，否则下拉框会因为 value 不在列表中而断言失败。
   static List<String> visibleModels({String? current}) {
-    final normalized = current == null ? null : migrateLegacyModel(current);
+    final normalized = current == null ? null : selectorModel(current);
     if (normalized != null && !allModels.contains(normalized)) {
       return [normalized, ...allModels];
     }
     return allModels;
+  }
+
+  /// 模型下拉框展示的 ID：Effort 变体显示为它的完整档基础模型。
+  static String selectorModel(String model) {
+    final migrated = migrateLegacyModel(model);
+    return _highEffortModels[migrated] ?? migrated;
+  }
+
+  static const Map<String, String> _mediumEffortVariants = {
+    animeDiffusionV5Full: animeDiffusionV5FullMedium,
+  };
+
+  static const Map<String, String> _highEffortModels = {
+    animeDiffusionV5FullMedium: animeDiffusionV5Full,
+  };
+
+  /// 当前模型的 Effort 档位；没有档位可选时返回 null。
+  static GenerationEffort? effortOf(String model) {
+    if (_highEffortModels.containsKey(model)) return GenerationEffort.medium;
+    if (_mediumEffortVariants.containsKey(model)) return GenerationEffort.high;
+    return null;
+  }
+
+  /// 切到指定档位后的模型；当前模型没有档位时原样返回。
+  static String withEffort(String model, GenerationEffort effort) {
+    return switch (effort) {
+      GenerationEffort.medium => _mediumEffortVariants[model] ?? model,
+      GenerationEffort.high => _highEffortModels[model] ?? model,
+    };
   }
 
   /// 把测试期的历史模型键迁移到正式 ID。
@@ -146,6 +190,13 @@ class ImageModels {
   static String migrateLegacyModel(String model) {
     if (model == v5StagingKey) return animeDiffusionV5Curated;
     return model;
+  }
+
+  /// 迁移历史键后仍是可生成模型时返回其 ID，否则返回 null。
+  static String? importableModelId(String? model) {
+    if (model == null || model.isEmpty) return null;
+    final normalized = migrateLegacyModel(model);
+    return supportedModels.contains(normalized) ? normalized : null;
   }
 
   /// 判断是否使用 V4 起的提示词结构（V4、V4.5、V5 均为 true）
@@ -176,6 +227,7 @@ class ImageModels {
       // V5 Curated 的重绘权重尚未就绪，网页端映射到 V4.5 Curated Inpainting。
       animeDiffusionV5Curated => animeDiffusionV45CuratedInpainting,
       animeDiffusionV5Full => animeDiffusionV5FullInpainting,
+      animeDiffusionV5FullMedium => animeDiffusionV5FullMediumInpainting,
       animeDiffusionV45Full => animeDiffusionV45FullInpainting,
       animeDiffusionV45Curated => animeDiffusionV45CuratedInpainting,
       animeDiffusionV4Full => animeDiffusionV4FullInpainting,
@@ -189,6 +241,7 @@ class ImageModels {
   static String resolveBaseModel(String model) {
     return switch (model) {
       animeDiffusionV5FullInpainting => animeDiffusionV5Full,
+      animeDiffusionV5FullMediumInpainting => animeDiffusionV5FullMedium,
       animeDiffusionV5CuratedInpainting => animeDiffusionV5Curated,
       animeDiffusionV45FullInpainting => animeDiffusionV45Full,
       animeDiffusionV45CuratedInpainting => animeDiffusionV45Curated,
@@ -258,6 +311,14 @@ class Samplers {
     ddim: 'DDIM',
     ddimV3: 'DDIM V3',
   };
+
+  // V4 起不支持 DDIM，回退为 Euler Ancestral；V3 的 DDIM 发送为 ddim_v3
+  static String resolveForModel(String sampler, String model) {
+    if (sampler != ddim && sampler != ddimV3) return sampler;
+    if (ImageModels.isV4Model(model) || model == 'N/A') return kEulerAncestral;
+    if (model.contains('diffusion-3')) return ddimV3;
+    return sampler;
+  }
 }
 
 /// 噪声调度枚举
@@ -377,6 +438,8 @@ class QualityTags {
     // 按这条实证登记；两个 V5 变体在官网代码里没有拆分。
     ImageModels.v5StagingKey: 'very aesthetic, masterpiece, no text',
     ImageModels.animeDiffusionV5Full: 'very aesthetic, masterpiece, no text',
+    ImageModels.animeDiffusionV5FullMedium:
+        'very aesthetic, masterpiece, no text',
     ImageModels.animeDiffusionV5Curated: 'very aesthetic, masterpiece, no text',
 
     // V4.5 系列 (添加到末尾)
@@ -420,6 +483,7 @@ class QualityTags {
   static const Map<String, Map<String, String>> modelQualityTagTiers = {
     ImageModels.v5StagingKey: _v5QualityTiers,
     ImageModels.animeDiffusionV5Full: _v5QualityTiers,
+    ImageModels.animeDiffusionV5FullMedium: _v5QualityTiers,
     ImageModels.animeDiffusionV5Curated: _v5QualityTiers,
   };
 
@@ -696,6 +760,9 @@ enum UcPresetType {
   none, // 不添加预设
 }
 
+/// 负面提示词开头的 UC 预设与其后的内容；未命中预设时 preset 为空。
+typedef UcPresetSplit = ({String preset, String body});
+
 class UcPresets {
   UcPresets._();
 
@@ -714,17 +781,26 @@ class UcPresets {
     };
   }
 
+  static const Map<int, int> _tagHintByApiValue = {
+    heavyApiValue: 2,
+    lightApiValue: 3,
+    humanFocusApiValue: 4,
+    noneApiValue: 0,
+    UCPresets.furryFocus: 5,
+  };
+
   /// 将旧版请求字段的 UC 取值转换为官网的数字提示。
   static int? toTagHint(int apiValue, {bool omit = false}) {
     if (omit) return null;
-    return switch (apiValue) {
-      heavyApiValue => 2,
-      lightApiValue => 3,
-      humanFocusApiValue => 4,
-      noneApiValue => 0,
-      UCPresets.furryFocus => 5,
-      _ => null,
-    };
+    return _tagHintByApiValue[apiValue];
+  }
+
+  /// 官网数字提示还原为旧版请求字段的 UC 取值，无法识别时返回 null。
+  static int? fromTagHint(int tagHint) {
+    for (final entry in _tagHintByApiValue.entries) {
+      if (entry.value == tagHint) return entry.key;
+    }
+    return null;
   }
 
   /// V5 预设（Curated/Full 共用一套）
@@ -876,6 +952,8 @@ class UcPresets {
       case ImageModels.animeDiffusionV5CuratedInpainting:
       case ImageModels.animeDiffusionV5Full:
       case ImageModels.animeDiffusionV5FullInpainting:
+      case ImageModels.animeDiffusionV5FullMedium:
+      case ImageModels.animeDiffusionV5FullMediumInpainting:
         return v5Presets;
       case ImageModels.animeDiffusionV45Full:
         return v45FullPresets;
@@ -991,42 +1069,74 @@ class UcPresets {
     String negativePrompt,
     String model,
     UcPresetType type,
-  ) {
-    final trimmedNegative = negativePrompt.trim();
-    if (trimmedNegative.isEmpty || type == UcPresetType.none) {
-      return trimmedNegative;
-    }
+  ) => splitPreset(negativePrompt, model, type).body;
 
-    for (final presetContent in _getPresetVariants(model, type)) {
-      final stripped = _stripPresetContent(trimmedNegative, presetContent);
-      if (stripped != null) {
-        return stripped;
-      }
+  /// 把负面提示词拆成开头的预设与其后的内容；未命中预设时 preset 为空。
+  static UcPresetSplit splitPreset(
+    String negativePrompt,
+    String model,
+    UcPresetType type,
+  ) => _splitByVariants(negativePrompt, type, _getPresetVariants(model, type));
+
+  /// 根据整数 ucPreset 值剥离预设内容，恢复用户输入的负面提示词。
+  static String stripPresetByInt(
+    String negativePrompt,
+    String model,
+    int ucPreset,
+  ) => splitPresetByInt(negativePrompt, model, ucPreset).body;
+
+  /// 按整数 ucPreset 拆分：先用 [model] 的同档文案，未命中再用所有模型的同档文案取最长命中。
+  /// [model] 可能只是 Source 的家族归类；不同模型的同档文案又可能互为前缀（如 V4 Full 与 V4 Curated 的 light）。
+  static UcPresetSplit splitPresetByInt(
+    String negativePrompt,
+    String? model,
+    int ucPreset,
+  ) {
+    final type = getPresetTypeFromInt(ucPreset);
+    if (model != null) {
+      final split = _splitByVariants(
+        negativePrompt,
+        type,
+        _getPresetVariants(model, type),
+      );
+      if (split.preset.isNotEmpty) return split;
     }
-    return trimmedNegative;
+    return _splitByVariants(
+      negativePrompt,
+      type,
+      _allPresetVariantsLongestFirst(type),
+    );
   }
 
-  static String? _stripPresetContent(
+  static UcPresetSplit _splitByVariants(
     String negativePrompt,
-    String presetContent,
+    UcPresetType type,
+    Iterable<String> variants,
   ) {
-    final trimmedPreset = presetContent.trim();
-    if (trimmedPreset.isEmpty) {
-      return null;
-    }
-    final promptTags = _splitPromptTags(negativePrompt);
-    final presetTags = _splitPromptTags(trimmedPreset);
-    if (promptTags.length < presetTags.length) {
-      return null;
+    final trimmedNegative = negativePrompt.trim();
+    final unmatched = (preset: '', body: trimmedNegative);
+    if (trimmedNegative.isEmpty || type == UcPresetType.none) {
+      return unmatched;
     }
 
-    for (var i = 0; i < presetTags.length; i++) {
-      if (promptTags[i].toLowerCase() != presetTags[i].toLowerCase()) {
-        return null;
-      }
+    final promptTags = _splitPromptTags(trimmedNegative);
+    for (final variant in variants) {
+      final presetTags = _splitPromptTags(variant);
+      if (!_startsWithTags(promptTags, presetTags)) continue;
+      return (
+        preset: promptTags.sublist(0, presetTags.length).join(', '),
+        body: promptTags.sublist(presetTags.length).join(', '),
+      );
     }
+    return unmatched;
+  }
 
-    return promptTags.sublist(presetTags.length).join(', ');
+  static bool _startsWithTags(List<String> promptTags, List<String> prefix) {
+    if (prefix.isEmpty || promptTags.length < prefix.length) return false;
+    for (var i = 0; i < prefix.length; i++) {
+      if (promptTags[i].toLowerCase() != prefix[i].toLowerCase()) return false;
+    }
+    return true;
   }
 
   static List<String> _getPresetVariants(String model, UcPresetType type) {
@@ -1038,14 +1148,15 @@ class UcPresets {
     ];
   }
 
-  /// 根据整数 ucPreset 值剥离预设内容，恢复用户输入的负面提示词。
-  static String stripPresetByInt(
-    String negativePrompt,
-    String model,
-    int ucPreset,
-  ) {
-    final presetType = getPresetTypeFromInt(ucPreset);
-    return stripPreset(negativePrompt, model, presetType);
+  static List<String> _allPresetVariantsLongestFirst(UcPresetType type) {
+    final variants = {
+      for (final model in ImageModels.supportedModels)
+        ..._getPresetVariants(model, type),
+    }.toList();
+    final tagCounts = {
+      for (final variant in variants) variant: _splitPromptTags(variant).length,
+    };
+    return variants..sort((a, b) => tagCounts[b]!.compareTo(tagCounts[a]!));
   }
 
   static List<String> _splitPromptTags(String prompt) {

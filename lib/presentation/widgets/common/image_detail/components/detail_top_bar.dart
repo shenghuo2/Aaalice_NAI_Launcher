@@ -27,6 +27,7 @@ class DetailTopBar extends StatelessWidget {
   final VoidCallback? onFavoriteToggle;
   final bool favoriteBusy;
   final VoidCallback? onSave;
+  final VoidCallback? onSaveAs;
   final VoidCallback? onCopyImage;
   final VoidCallback? onShare;
   final VoidCallback? onWatermark;
@@ -45,6 +46,7 @@ class DetailTopBar extends StatelessWidget {
     this.onFavoriteToggle,
     this.favoriteBusy = false,
     this.onSave,
+    this.onSaveAs,
     this.onCopyImage,
     this.onShare,
     this.onWatermark,
@@ -122,6 +124,7 @@ class DetailTopBar extends StatelessWidget {
                 onFavoriteToggle: onFavoriteToggle,
                 favoriteBusy: favoriteBusy,
                 onSave: onSave,
+                onSaveAs: onSaveAs,
                 onCopyImage: onCopyImage,
                 onShare: onShare,
                 onWatermark: onWatermark,
@@ -139,6 +142,7 @@ class DetailTopBar extends StatelessWidget {
 
 enum _DetailOverflowAction {
   save,
+  saveAs,
   share,
   favorite,
   pushToPicManager,
@@ -159,6 +163,7 @@ class _DetailTopBarActions extends ConsumerWidget {
     this.onFavoriteToggle,
     this.favoriteBusy = false,
     this.onSave,
+    this.onSaveAs,
     this.onCopyImage,
     this.onShare,
     this.onWatermark,
@@ -174,6 +179,7 @@ class _DetailTopBarActions extends ConsumerWidget {
   final VoidCallback? onFavoriteToggle;
   final bool favoriteBusy;
   final VoidCallback? onSave;
+  final VoidCallback? onSaveAs;
   final VoidCallback? onCopyImage;
   final VoidCallback? onShare;
   final VoidCallback? onWatermark;
@@ -244,6 +250,7 @@ class _DetailTopBarActions extends ConsumerWidget {
             isPushing: isPushingToPicManager,
           )
         : null;
+    final canSaveAs = currentImage.showSaveAsButton && onSaveAs != null;
 
     if (compact) {
       final overflowActions = <PopupMenuEntry<_DetailOverflowAction>>[
@@ -253,6 +260,14 @@ class _DetailTopBarActions extends ConsumerWidget {
             child: ListTile(
               leading: const Icon(Icons.save_alt),
               title: Text(l10n.common_save),
+            ),
+          ),
+        if (canSaveAs)
+          PopupMenuItem(
+            value: _DetailOverflowAction.saveAs,
+            child: ListTile(
+              leading: const Icon(Icons.save_as),
+              title: Text(l10n.image_saveAs),
             ),
           ),
         if (veryCompact && onShare != null)
@@ -385,6 +400,9 @@ class _DetailTopBarActions extends ConsumerWidget {
                   case _DetailOverflowAction.save:
                     onSave?.call();
                     break;
+                  case _DetailOverflowAction.saveAs:
+                    onSaveAs?.call();
+                    break;
                   case _DetailOverflowAction.share:
                     onShare?.call();
                     break;
@@ -433,6 +451,12 @@ class _DetailTopBarActions extends ConsumerWidget {
             icon: const Icon(Icons.save_alt, color: Colors.white),
             onPressed: onSave,
             tooltip: l10n.common_save,
+          ),
+        if (canSaveAs)
+          IconButton(
+            icon: const Icon(Icons.save_as, color: Colors.white),
+            onPressed: onSaveAs,
+            tooltip: l10n.image_saveAs,
           ),
         if (onShare != null)
           IconButton(

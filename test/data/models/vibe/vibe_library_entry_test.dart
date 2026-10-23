@@ -88,4 +88,33 @@ void main() {
       ImageModels.animeDiffusionV45Curated,
     );
   });
+
+  test('sortedByName 不区分大小写，名称为空时按 vibeDisplayName 参与排序', () {
+    final entries = [
+      _namedEntry('c', name: '', vibeDisplayName: 'Charlie'),
+      _namedEntry('a', name: 'alpha', vibeDisplayName: 'Zulu'),
+      _namedEntry('b', name: '', vibeDisplayName: 'bravo'),
+    ];
+
+    expect(entries.sortedByName().map((entry) => entry.id), ['a', 'b', 'c']);
+    expect(
+      entries.map((entry) => entry.id),
+      ['c', 'a', 'b'],
+      reason: '排序不能改动原列表',
+    );
+  });
+}
+
+VibeLibraryEntry _namedEntry(
+  String id, {
+  required String name,
+  required String vibeDisplayName,
+}) {
+  return VibeLibraryEntry(
+    id: id,
+    name: name,
+    vibeDisplayName: vibeDisplayName,
+    vibeEncoding: 'encoded-$id',
+    createdAt: DateTime(2026, 4, 14),
+  );
 }

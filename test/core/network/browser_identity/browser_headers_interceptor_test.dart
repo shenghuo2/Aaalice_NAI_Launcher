@@ -55,7 +55,7 @@ void main() {
     );
     expect(
       headers['sec-ch-ua'],
-      '"Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"',
+      '"Not:A-Brand";v="8", "Chromium";v="156", "Google Chrome";v="156"',
     );
     expect(headers['sec-ch-ua-mobile'], '?0');
     expect(headers['sec-ch-ua-platform'], '"Windows"');

@@ -1,7 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/agent/agent_types.dart';
-import '../../../core/agent/resources/agent_chat_resource_reference.dart';
 import '../../../core/agent/resources/agent_chat_resource_reference_codec.dart';
 import '../../../core/online_gallery/gallery_tag_query.dart';
 import '../../../data/datasources/remote/danbooru_api_service.dart';
@@ -9,6 +8,7 @@ import '../../../data/models/online_gallery/gallery_item.dart';
 import '../../../data/models/online_gallery/gallery_source.dart';
 import '../../providers/online_gallery_provider.dart';
 import 'defined_agent_tool.dart';
+import 'online_gallery_resource_identity.dart';
 import 'toolbox_json.dart';
 
 /// Source-capability-aware online-gallery tools backed by the visible gallery.
@@ -47,7 +47,8 @@ class OnlineGalleryToolbox {
         'When source is omitted, the request uses danbooru; an explicit valid source is always respected. '
         'A query may contain at most 6 ordinary tags globally. Sources can enforce lower server limits, so the client pushes down a supported seed and applies remaining tags as residual local filters. '
         'When random=true, limit=N means randomly sample exactly N items from the matching feed (when available); never fetch a larger page and choose items yourself. '
-        'To show returned media, pass 1-12 resource_ref objects to display_images.',
+        'To show returned media, pass 1-12 resource_ref objects to display_images. '
+        'media_id is null when the listing has no real cover yet; that resource_ref resolves to the first media of the work.',
     parameters: toolboxObject(
       properties: {
         'source': {
@@ -386,11 +387,14 @@ class OnlineGalleryToolbox {
   GalleryItem? _find(Map<String, dynamic> params) {
     final source = _source(params['source']);
     if (source == null) return null;
-    final workId = params['work_id'] as String;
+    final identity = OnlineGalleryResourceIdentity(
+      source: source,
+      workId: params['work_id'] as String,
+    );
     return _ref
         .read(onlineGalleryNotifierProvider)
         .posts
-        .where((item) => item.sourceId == source && item.sourceWorkId == workId)
+        .where(identity.matches)
         .firstOrNull;
   }
 }
@@ -437,13 +441,9 @@ Map<String, dynamic> _capabilitiesJson(GallerySourceId source) {
 Map<String, dynamic> _itemJson(GalleryItem item) => {
   'source': item.sourceId.key,
   'work_id': item.sourceWorkId,
-  'media_id': item.cover.id,
+  'media_id': item.coverMediaId,
   'resource_ref': AgentChatResourceReferenceCodec.encodeJsonMap(
-    AgentChatResourceReference(
-      kind: AgentChatResourceKind.onlineGalleryMedia,
-      source: item.sourceId.key,
-      resourceId: item.sourceWorkId,
-      mediaId: item.cover.id,
+    OnlineGalleryResourceIdentity.coverOf(item).toReference(
       display: {
         'source_label': item.sourceId.label,
         if (item.title?.trim().isNotEmpty == true) 'title': item.title!.trim(),
@@ -469,11 +469,11 @@ Map<String, dynamic> _mediaJson(
 }) => {
   'media_id': media.id,
   'resource_ref': AgentChatResourceReferenceCodec.encodeJsonMap(
-    AgentChatResourceReference(
-      kind: AgentChatResourceKind.onlineGalleryMedia,
-      source: source.key,
-      resourceId: workId,
+    OnlineGalleryResourceIdentity(
+      source: source,
+      workId: workId,
       mediaId: media.id,
+    ).toReference(
       display: {
         'source_label': source.label,
         if (title?.trim().isNotEmpty == true) 'title': title!.trim(),

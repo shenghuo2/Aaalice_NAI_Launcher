@@ -12,7 +12,9 @@ import 'package:nai_launcher/presentation/providers/font_provider.dart';
 import 'package:nai_launcher/presentation/providers/font_scale_provider.dart';
 import 'package:nai_launcher/presentation/providers/generation_layout_mode_provider.dart';
 import 'package:nai_launcher/presentation/providers/history_click_behavior_provider.dart';
+import 'package:nai_launcher/presentation/providers/theme_provider.dart';
 import 'package:nai_launcher/presentation/screens/settings/sections/appearance_settings_section.dart';
+import 'package:nai_launcher/presentation/themes/app_theme.dart';
 
 void main() {
   late Directory hiveDir;
@@ -311,6 +313,11 @@ void main() {
       tester.element(find.byType(AppearanceSettingsSection)),
     );
     expect(container.read(fontScaleNotifierProvider), 1.5);
+    final scaleSlider = find.semantics.byPredicate(
+      (node) => node.flagsCollection.isSlider && node.label == '字体大小',
+    );
+    expect(scaleSlider, findsOne, reason: '滑块以面板标题朗读，而不是把数值当名称');
+    expect(scaleSlider.evaluate().single.value, '150%');
 
     await tester.scrollUntilVisible(
       find.text('完成'),
@@ -325,6 +332,61 @@ void main() {
     expect(storage.fontScale, 1.5);
     expect(tester.takeException(), isNull);
   });
+
+  for (final size in [const Size(1000, 1600), const Size(320, 480)]) {
+    testWidgets('主题选择弹窗在 ${size.width.toInt()} 宽度可打开并选中末尾预设', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(size);
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final storage = _FakeStorage();
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            localStorageServiceProvider.overrideWith((ref) => storage),
+          ],
+          child: const MaterialApp(
+            locale: Locale('zh'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: SingleChildScrollView(child: AppearanceSettingsSection()),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('风格').first);
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('选择风格'), findsOneWidget);
+      expect(
+        find.byType(RadioListTile<AppStyle>),
+        findsNWidgets(AppStyle.values.length),
+      );
+
+      final last = AppStyle.values.last;
+      final lastTile = find.widgetWithText(
+        RadioListTile<AppStyle>,
+        last.displayName,
+      );
+      await tester.ensureVisible(lastTile);
+      await tester.pumpAndSettle();
+      await tester.tap(lastTile);
+      await tester.pumpAndSettle();
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(AppearanceSettingsSection)),
+      );
+      expect(container.read(themeNotifierProvider), last);
+      expect(storage.themeIndex, last.index);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('历史点击行为默认经典并可从外观设置切换和持久化', (tester) async {
     await tester.binding.setSurfaceSize(const Size(1000, 1600));
@@ -381,6 +443,15 @@ class _FakeStorage extends LocalStorageService {
   String behavior = 'open_detail';
   String fontFamily = FontConfig.defaultFont.key;
   double fontScale = 1;
+  int themeIndex = 0;
+
+  @override
+  int getThemeIndex() => themeIndex;
+
+  @override
+  Future<void> setThemeIndex(int index) async {
+    themeIndex = index;
+  }
 
   @override
   String getFontFamily() => fontFamily;

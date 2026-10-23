@@ -11,13 +11,16 @@ import 'package:nai_launcher/core/shortcuts/shortcut_config.dart';
 import 'package:nai_launcher/core/storage/local_storage_service.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:nai_launcher/presentation/adaptive/interaction_policy.dart';
+import 'package:nai_launcher/presentation/providers/generation_layout_mode_provider.dart';
 import 'package:nai_launcher/presentation/providers/layout_state_provider.dart';
 import 'package:nai_launcher/presentation/providers/shortcuts_provider.dart';
+import 'package:nai_launcher/presentation/providers/generation/workflow_panel_reveal_provider.dart';
 import 'package:nai_launcher/presentation/screens/generation/desktop_layout.dart';
 import 'package:nai_launcher/presentation/screens/generation/generation_screen.dart';
 import 'package:nai_launcher/presentation/screens/generation/mobile_layout.dart';
 import 'package:nai_launcher/presentation/screens/generation/web_style_layout.dart';
 import 'package:nai_launcher/presentation/screens/generation/widgets/fixed_tags_sidebar.dart';
+import 'package:nai_launcher/presentation/screens/generation/widgets/resize_handle.dart';
 
 import '../../../helpers/flutter_error_collector.dart';
 
@@ -129,6 +132,134 @@ void main() {
     },
   );
 
+  // 触屏呈现下拖拽手柄放宽到命中区尺寸，预留宽度必须随之变化，否则固定词槽位溢出并压住左侧手柄。
+  testWidgets(
+    'expanded touch layout reserves touch-sized handles around fixed tags',
+    (tester) async {
+      final flutterErrors = FlutterErrorCollector.install(tester);
+      addTearDown(flutterErrors.restoreAndAssertNoErrors);
+      PlatformCapabilities.debugOverride = PlatformCapabilities.forPlatform(
+        TargetPlatform.windows,
+      );
+      const touchPolicy = InteractionPolicy(
+        modality: InteractionModality.touch,
+        touchAvailable: true,
+        precisePointerAvailable: true,
+      );
+
+      for (final width in [840.0, 1180.0, 1600.0]) {
+        final container = ProviderContainer(
+          overrides: [
+            shortcutConfigNotifierProvider.overrideWith(
+              _FakeShortcutConfigNotifier.new,
+            ),
+            layoutStateNotifierProvider.overrideWith(
+              _ExpandedFixedTagsLayoutNotifier.new,
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+        await tester.binding.setSurfaceSize(Size(width, 800));
+        await _pumpGeneration(
+          tester,
+          container: container,
+          interactionPolicy: touchPolicy,
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+
+        flutterErrors.expectNoErrors(reason: 'width=$width');
+        final sidebar = tester.getRect(find.byType(FixedTagsSidebar));
+        for (final handle in tester.widgetList(find.byType(ResizeHandle))) {
+          final rect = tester.getRect(find.byWidget(handle));
+          expect(
+            rect.right <= sidebar.left + 0.01 ||
+                rect.left >= sidebar.right - 0.01,
+            isTrue,
+            reason: 'width=$width handle $rect overlaps sidebar $sidebar',
+          );
+        }
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        // 容器在测试结束前不释放，提示词计数的 400ms 防抖必须先走完。
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+
+      await tester.binding.setSurfaceSize(null);
+    },
+  );
+
+  testWidgets('手机上请求呈现工作流面板时打开参数抽屉', (tester) async {
+    PlatformCapabilities.debugOverride = PlatformCapabilities.forPlatform(
+      TargetPlatform.android,
+    );
+    await tester.binding.setSurfaceSize(const Size(360, 760));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await _pumpGeneration(tester);
+    await tester.pump(const Duration(milliseconds: 100));
+    final drawer = find.byKey(const ValueKey('generation-parameters-drawer'));
+    expect(drawer, findsNothing);
+
+    ProviderScope.containerOf(
+      tester.element(find.byType(GenerationScreen)),
+    ).read(workflowPanelRevealProvider.notifier).request();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(drawer, findsOneWidget);
+  });
+
+  for (final mode in GenerationLayoutMode.values) {
+    testWidgets('${mode.name} 布局输入框失焦后焦点回到生成页快捷键锚点', (tester) async {
+      PlatformCapabilities.debugOverride = PlatformCapabilities.forPlatform(
+        TargetPlatform.windows,
+      );
+      final container = ProviderContainer(
+        overrides: [
+          localStorageServiceProvider.overrideWith(
+            (ref) => _PromptStateTestStorage(),
+          ),
+          shortcutConfigNotifierProvider.overrideWith(
+            _FakeShortcutConfigNotifier.new,
+          ),
+          generationLayoutModeNotifierProvider.overrideWith(
+            () => _FixedLayoutModeNotifier(mode),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.binding.setSurfaceSize(const Size(1600, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await _pumpGeneration(
+        tester,
+        container: container,
+        interactionPolicy: const InteractionPolicy(
+          modality: InteractionModality.pointer,
+          touchAvailable: false,
+          precisePointerAvailable: true,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      const anchorLabel = 'ShortcutAwareWidget(generation)';
+      expect(FocusManager.instance.primaryFocus?.debugLabel, anchorLabel);
+
+      final fieldFocus = tester
+          .widget<EditableText>(find.byType(EditableText).first)
+          .focusNode;
+      fieldFocus.requestFocus();
+      await tester.pump();
+      // 与桌面端点输入框外部的处理一致
+      fieldFocus.unfocus();
+      await tester.pump();
+
+      expect(FocusManager.instance.primaryFocus?.debugLabel, anchorLabel);
+
+      // 提示词 token 计数的 400ms 防抖
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 150));
+    });
+  }
+
   testWidgets('layout state survives the 840 precise-pointer boundary', (
     tester,
   ) async {
@@ -182,6 +313,9 @@ void main() {
       find.byKey(const Key('generation-fixed-tags-overlay')),
       findsOneWidget,
     );
+    // Token 计数有 400ms 防抖（prompt_token_counter_provider.dart）。这条用例的
+    // container 由 addTearDown 释放，晚于框架的挂起计时器检查，先走完计时器。
+    await tester.pump(const Duration(milliseconds: 400));
     flutterErrors.expectNoErrors(reason: '839↔840 boundary transition');
   });
 
@@ -462,6 +596,15 @@ Future<void> _pumpGeneration(
 class _ExpandedFixedTagsLayoutNotifier extends LayoutStateNotifier {
   @override
   LayoutState build() => const LayoutState(fixedTagsSidebarExpanded: true);
+}
+
+class _FixedLayoutModeNotifier extends GenerationLayoutModeNotifier {
+  _FixedLayoutModeNotifier(this.mode);
+
+  final GenerationLayoutMode mode;
+
+  @override
+  GenerationLayoutMode build() => mode;
 }
 
 class _FakeShortcutConfigNotifier extends ShortcutConfigNotifier {

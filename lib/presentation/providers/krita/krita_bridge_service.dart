@@ -3,15 +3,16 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui';
 
-import 'package:image/image.dart' as img;
-
 import '../../../core/krita/krita_bridge_models.dart';
 import '../../../core/models/image_generation_artifact.dart';
 import '../../../core/utils/app_logger.dart';
+import '../../../core/utils/decoded_image_size.dart';
 import '../../../core/utils/focused_inpaint_utils.dart';
+import '../../../core/utils/inpaint_mask_utils.dart';
 import '../../../core/utils/nai_resolution_adapter.dart';
 import '../../../data/models/image/image_params.dart';
 import '../../../data/models/image/image_stream_chunk.dart';
+import '../generation/generation_error_classifier.dart';
 
 typedef KritaBridgeBaseParamsReader = ImageParams Function();
 typedef KritaBridgePromptSnapshot = ({String prompt, String negativePrompt});
@@ -165,8 +166,8 @@ class KritaBridgeService implements KritaBridgeMessageService {
       'prompt': promptSnapshot.prompt,
       'negative_prompt': promptSnapshot.negativePrompt,
       'model': params.model,
-      'sampler': params.sampler,
-      'steps': params.steps,
+      'sampler': params.effectiveSampler,
+      'steps': params.effectiveSteps,
       'cfg_scale': params.scale,
       'seed': params.seed,
       'width': params.width,
@@ -248,24 +249,27 @@ class KritaBridgeService implements KritaBridgeMessageService {
       return;
     }
 
-    final request = KritaBridgeGenerateRequest(
-      id: id,
-      params: mapping.params.copyWith(nSamples: 1),
-      focusedInpaintEnabled: mapping.focusedInpaintEnabled,
-      minimumContextPixels: mapping.minimumContextPixels.toDouble(),
-      focusedSelectionRect: _resolveFocusedSelectionRect(mapping),
-    );
-
     _isBridgeGenerating = true;
     _activeRequestId = id;
     _activeRequestReporter?.call(id);
     _cancelled = false;
     AppLogger.i(
-      'Accepted Krita request: $id action=${request.params.action.name}',
+      'Accepted Krita request: $id action=${mapping.params.action.name}',
       _logTag,
     );
 
+    var rejectedLocally = false;
     try {
+      final request = KritaBridgeGenerateRequest(
+        id: id,
+        params: await _withBinaryMask(mapping.params.copyWith(nSamples: 1)),
+        focusedInpaintEnabled: mapping.focusedInpaintEnabled,
+        minimumContextPixels: mapping.minimumContextPixels.toDouble(),
+        focusedSelectionRect: _resolveFocusedSelectionRect(mapping),
+      );
+      if (_cancelled) {
+        return;
+      }
       final artifact = await _generateImage(request);
       if (_cancelled) {
         return;
@@ -292,6 +296,8 @@ class KritaBridgeService implements KritaBridgeMessageService {
       );
       AppLogger.i('Completed Krita request: ${request.id}', _logTag);
     } catch (error) {
+      // 本地拒绝时请求没有发出，立即改选区重试不该被冷却挡住，也没有扣费
+      rejectedLocally = isDeterministicGenerationError(error);
       if (!_cancelled) {
         final code = _mapErrorCode(error);
         AppLogger.e(
@@ -300,11 +306,11 @@ class KritaBridgeService implements KritaBridgeMessageService {
           null,
           _logTag,
         );
-        _startFailureCooldown();
+        if (!rejectedLocally) _startFailureCooldown();
         _sendError(id, code, _publicErrorMessage(code));
       }
     } finally {
-      _schedulePostBillingRefresh();
+      if (!rejectedLocally) _schedulePostBillingRefresh();
       _isBridgeGenerating = false;
       _activeRequestId = null;
       _activeRequestReporter?.call(null);
@@ -314,6 +320,17 @@ class KritaBridgeService implements KritaBridgeMessageService {
 
   static void _noop() {}
 
+  // 未重装的旧插件会把选区写成灰度 39，官网 alpha>155 采样会把它整片丢掉。
+  Future<ImageParams> _withBinaryMask(ImageParams params) async {
+    final mask = params.maskImage;
+    if (mask == null) {
+      return params;
+    }
+    return params.copyWith(
+      maskImage: await InpaintMaskUtils.normalizeMaskBytesAsync(mask),
+    );
+  }
+
   Rect? _resolveFocusedSelectionRect(KritaImageParamsMapping mapping) {
     final selection = _toRect(mapping.selectionRect);
     final sourceImage = mapping.params.sourceImage;
@@ -322,16 +339,12 @@ class KritaBridgeService implements KritaBridgeMessageService {
         sourceImage == null) {
       return selection;
     }
-    img.Image? decoded;
-    try {
-      decoded = img.decodeImage(sourceImage);
-    } catch (_) {
-      return selection;
-    }
-    if (decoded == null) return selection;
+    // 协议层只接受带 IHDR 的 PNG，编码头即给出与解码一致的尺寸。
+    final sourceSize = DecodedImageSize.readHeader(sourceImage);
+    if (sourceSize == null) return selection;
     return FocusedInpaintUtils.constrainSelectionRect(
-          sourceWidth: decoded.width,
-          sourceHeight: decoded.height,
+          sourceWidth: sourceSize.$1,
+          sourceHeight: sourceSize.$2,
           selectionRect: selection,
           minContextMegaPixels: mapping.minimumContextPixels.toDouble(),
         ) ??
@@ -451,7 +464,8 @@ class KritaBridgeService implements KritaBridgeMessageService {
     };
   }
 
-  Map<String, dynamic> _paramsMetadata(ImageParams params) {
+  Map<String, dynamic> _paramsMetadata(ImageParams requested) {
+    final params = requested.resolveFixedSettings();
     return {
       'prompt': params.prompt,
       'negative_prompt': params.negativePrompt,
@@ -473,6 +487,9 @@ class KritaBridgeService implements KritaBridgeMessageService {
   }
 
   KritaBridgeErrorCode _mapErrorCode(Object error) {
+    if (EmptyInpaintMaskException.matches(error)) {
+      return KritaBridgeErrorCode.emptyMask;
+    }
     final message = error.toString().toLowerCase();
     if (message.contains('401') ||
         message.contains('unauthorized') ||

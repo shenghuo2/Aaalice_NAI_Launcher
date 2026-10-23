@@ -153,36 +153,19 @@ class LocalGalleryNotifier extends _$LocalGalleryNotifier {
   DateTime? _lastSynchronizedAt;
   int _filterRequestSerial = 0;
   final Map<String, String> _deferredAdmissions = {};
+  final Map<String, String> _deferredRemovals = {};
 
   DateTime? get lastSynchronizedAt => _lastSynchronizedAt;
 
   @override
   LocalGalleryState build() {
     if (_cachedState != null) return _cachedState!;
-
-    // 监听缓存清理事件
-    GalleryCacheManager().registerOnCacheCleared(_resetState);
-    ref.onDispose(() {
-      GalleryCacheManager().unregisterOnCacheCleared(_resetState);
-    });
-
     return const LocalGalleryState();
   }
 
   void _setState(LocalGalleryState newState) {
     _cachedState = newState;
     state = newState;
-  }
-
-  void _resetState() {
-    _cachedState = null;
-    _service = null;
-    _initialization = null;
-    _favoriteCountLoad = null;
-    _lastSynchronizedAt = null;
-    _filterRequestSerial++;
-    _deferredAdmissions.clear();
-    _setState(const LocalGalleryState());
   }
 
   /// 获取共享服务实例，所有调用方等待同一个初始化 Future。
@@ -204,6 +187,7 @@ class LocalGalleryNotifier extends _$LocalGalleryNotifier {
     }
     _service = service;
     await _flushDeferredAdmissions(service);
+    await _flushDeferredRemovals(service);
     return service;
   }
 
@@ -215,9 +199,11 @@ class LocalGalleryNotifier extends _$LocalGalleryNotifier {
     final filePaths = _deferredAdmissions.values.toList(growable: false);
     _deferredAdmissions.clear();
 
+    var addedCount = 0;
     for (final filePath in filePaths) {
       try {
-        await service.addNewImageImmediately(filePath);
+        final result = await service.addNewImageImmediately(filePath);
+        if (result == GalleryIndexAdmission.added) addedCount++;
       } catch (e) {
         AppLogger.e(
           '[AddNewImages] Failed to admit deferred image: $filePath',
@@ -226,6 +212,25 @@ class LocalGalleryNotifier extends _$LocalGalleryNotifier {
           'LocalGalleryNotifier',
         );
       }
+    }
+    if (addedCount > 0) GalleryCacheManager().invalidateStatistics();
+  }
+
+  /// 在途的初始化枚举可能早于删除，服务就绪后按磁盘现状再移除一次。
+  Future<void> _flushDeferredRemovals(LocalGalleryService service) async {
+    if (_deferredRemovals.isEmpty) return;
+
+    final filePaths = _deferredRemovals.values.toList(growable: false);
+    _deferredRemovals.clear();
+    try {
+      await service.removeDeletedImagesImmediately(filePaths);
+    } catch (e, stackTrace) {
+      AppLogger.e(
+        '[RemoveDeletedImages] Failed to apply deferred removals',
+        e,
+        stackTrace,
+        'LocalGalleryNotifier',
+      );
     }
   }
 
@@ -459,8 +464,10 @@ class LocalGalleryNotifier extends _$LocalGalleryNotifier {
   /// 执行增量扫描，更新文件列表和索引
   Future<void> refresh({bool scan = true}) async {
     if (!state.isInitialized) {
+      // 共享服务已被别处初始化时，页面初始化只读它的内存列表，还得真正刷一次磁盘。
+      final serviceWasReady = ref.read(galleryServiceProvider).isInitialized;
       await initialize();
-      return;
+      if (!serviceWasReady || !state.isInitialized) return;
     }
 
     _setState(state.copyWith(isLoading: true));
@@ -536,6 +543,48 @@ class LocalGalleryNotifier extends _$LocalGalleryNotifier {
     return _admitImmediately(service, filePaths);
   }
 
+  /// 文件已从磁盘删掉后调用：直接移出列表，不为几张图重新枚举整个图库根目录。
+  Future<void> removeDeletedImages(List<String> filePaths) async {
+    if (filePaths.isEmpty) return;
+
+    final service = _service;
+    if (service == null) {
+      for (final filePath in filePaths) {
+        final key = galleryFilePathKey(filePath);
+        _deferredAdmissions.remove(key);
+        _deferredRemovals[key] = filePath;
+      }
+      return;
+    }
+
+    try {
+      final removedCount = await service.removeDeletedImagesImmediately(
+        filePaths,
+      );
+      if (removedCount == 0) return;
+      _favoriteCountLoad = null;
+      _setState(
+        state.copyWith(
+          totalCount: service.totalCount,
+          filteredCount: service.filteredCount,
+        ),
+      );
+      if (!state.isInitialized) return;
+      if (state.isGroupedView) {
+        await _loadGroupedImages();
+      } else {
+        await loadPage(state.currentPage, showLoading: false);
+      }
+    } catch (e, stackTrace) {
+      AppLogger.e(
+        '[RemoveDeletedImages] Failed to remove deleted images',
+        e,
+        stackTrace,
+        'LocalGalleryNotifier',
+      );
+    }
+  }
+
   Future<GalleryIndexAdmission> _admitImmediately(
     LocalGalleryService service,
     List<String> filePaths,
@@ -566,11 +615,11 @@ class LocalGalleryNotifier extends _$LocalGalleryNotifier {
         );
       }
 
-      // 扫描器抢先收录时同样要重取首页，否则开着图库会看不到新图。
+      // 扫描器抢先收录时同样要重取，否则开着图库会看不到新图。
       if (admission.isIndexed &&
           state.isInitialized &&
-          state.currentPage == 0) {
-        await loadPage(0, showLoading: false);
+          (state.isGroupedView || state.currentPage == 0)) {
+        await _reloadFirstView();
       }
     } catch (e) {
       AppLogger.e(
@@ -580,6 +629,8 @@ class LocalGalleryNotifier extends _$LocalGalleryNotifier {
         'LocalGalleryNotifier',
       );
       return GalleryIndexAdmission.failed;
+    } finally {
+      if (addedCount > 0) GalleryCacheManager().invalidateStatistics();
     }
 
     return admission;
@@ -895,6 +946,15 @@ class LocalGalleryNotifier extends _$LocalGalleryNotifier {
     }
   }
 
+  /// 分组视图重载整份分组列表，否则静默重取首页。
+  Future<void> _reloadFirstView() async {
+    if (state.isGroupedView) {
+      await _loadGroupedImages();
+    } else {
+      await loadPage(0, showLoading: false);
+    }
+  }
+
   Future<void> _loadGroupedImages() async {
     _setState(state.copyWith(isGroupedLoading: true));
     try {
@@ -1191,8 +1251,7 @@ class LocalGalleryNotifier extends _$LocalGalleryNotifier {
         ),
       );
 
-      // 刷新当前页
-      await loadPage(0, showLoading: false);
+      await _reloadFirstView();
     } on GalleryCancelledException {
       _setState(state.copyWith(isRebuildingIndex: false, isLoading: false));
     } on GalleryScanException catch (e) {

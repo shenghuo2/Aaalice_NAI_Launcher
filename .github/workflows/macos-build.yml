@@ -35,7 +35,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FLUTTER_VERSION: "3.44.2"
+  FLUTTER_VERSION: "3.47.5"
   PUB_HOSTED_URL: "https://pub.dev"
   UPSTREAM_MACOS_BASELINE_ASSET: "NAI_Launcher_macOS_3.0.0+36_Portable.zip"
   UPSTREAM_MACOS_BASELINE_URL: "https://github.com/Aaalice233/Aaalice_NAI_Launcher/releases/download/v3.0.0/NAI_Launcher_macOS_3.0.0%2B36_Portable.zip"

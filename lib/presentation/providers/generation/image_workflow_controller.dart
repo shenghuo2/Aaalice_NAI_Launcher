@@ -9,11 +9,13 @@ import '../../../core/constants/api_constants.dart';
 import '../../../core/constants/storage_keys.dart';
 import '../../../core/storage/local_storage_service.dart';
 import '../../../core/utils/app_logger.dart';
+import '../../../core/utils/enhance_request_plan.dart';
 import '../../../core/utils/focused_inpaint_utils.dart';
 import '../../../core/utils/nai_resolution_adapter.dart';
 import '../../../data/models/image/image_params.dart';
 import 'generation_panel_expansion_provider.dart';
 import 'generation_params_notifier.dart';
+import 'generation_request_preparation_service.dart';
 
 enum ImageWorkflowMode { base, inpaint, enhance, upscale }
 
@@ -400,6 +402,7 @@ class ImageWorkflowState {
     this.focusedInpaintEnabled = false,
     this.minimumContextMegaPixels = 88.0,
     this.focusedSelectionRect,
+    this.focusedContextCrop,
   });
 
   final ImageWorkflowMode mode;
@@ -421,9 +424,25 @@ class ImageWorkflowState {
   final double minimumContextMegaPixels;
   final Rect? focusedSelectionRect;
 
+  /// 聚焦外扩的取景框（源图像素坐标）：只送这块去生成，结果贴回整张源图；与选区互斥
+  final Rect? focusedContextCrop;
+
   bool get isEnhance => mode == ImageWorkflowMode.enhance;
   bool get isInpaint => mode == ImageWorkflowMode.inpaint;
   bool get isUpscale => mode == ImageWorkflowMode.upscale;
+
+  GenerationFocusedSnapshot get focusedSnapshot => GenerationFocusedSnapshot(
+    enabled: focusedInpaintEnabled,
+    minimumContextMegaPixels: minimumContextMegaPixels,
+    selectionRect: focusedSelectionRect,
+    contextCrop: focusedContextCrop,
+  );
+
+  /// 聚焦重绘既没有选区也没有取景框，聚焦区域取蒙版外接矩形。
+  bool get focusesOnMaskExtent =>
+      focusedInpaintEnabled &&
+      focusedSelectionRect == null &&
+      focusedContextCrop == null;
 
   ImageWorkflowState copyWith({
     ImageWorkflowMode? mode,
@@ -442,10 +461,12 @@ class ImageWorkflowState {
     bool? focusedInpaintEnabled,
     double? minimumContextMegaPixels,
     Rect? focusedSelectionRect,
+    Rect? focusedContextCrop,
     bool clearSourceSize = false,
     bool clearBaseSnapshot = false,
     bool clearEnhanceEntryParams = false,
     bool clearFocusedSelectionRect = false,
+    bool clearFocusedContextCrop = false,
     // 聚焦重绘归属于当前这张源图：换图或退出重绘时开关和选区必须一起归零，
     // 只清选区会让下一次进重绘仍带着上一张图的聚焦状态。
     bool resetFocusedInpaint = false,
@@ -482,6 +503,9 @@ class ImageWorkflowState {
       focusedSelectionRect: clearFocusedSelectionRect || resetFocusedInpaint
           ? null
           : (focusedSelectionRect ?? this.focusedSelectionRect),
+      focusedContextCrop: clearFocusedContextCrop || resetFocusedInpaint
+          ? null
+          : (focusedContextCrop ?? this.focusedContextCrop),
     );
   }
 }
@@ -973,7 +997,7 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
         imageBytes,
         currentWidth: sourceWidth ?? _params.width,
         currentHeight: sourceHeight ?? _params.height,
-        isStableDiffusionFamily: _usesStableDiffusionImportBounds(
+        isStableDiffusionFamily: ImageModels.usesStableDiffusionImportBounds(
           _params.model,
         ),
       );
@@ -1016,7 +1040,9 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
       imageBytes,
       currentWidth: sourceWidth ?? params.width,
       currentHeight: sourceHeight ?? params.height,
-      isStableDiffusionFamily: _usesStableDiffusionImportBounds(params.model),
+      isStableDiffusionFamily: ImageModels.usesStableDiffusionImportBounds(
+        params.model,
+      ),
     );
 
     if (_isDisposed || requestId != _sourceImageRequestId) return;
@@ -1270,6 +1296,7 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
     state = state.copyWith(
       focusedInpaintEnabled: value,
       clearFocusedSelectionRect: !value,
+      clearFocusedContextCrop: !value,
     );
   }
 
@@ -1295,6 +1322,7 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
     state = state.copyWith(
       focusedSelectionRect: constrainedSelection,
       clearFocusedSelectionRect: constrainedSelection == null,
+      clearFocusedContextCrop: true,
     );
   }
 
@@ -1314,6 +1342,7 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
     );
   }
 
+  /// [focusedContextCrop] 为聚焦外扩的取景框（[sourceImage] 像素坐标），给定时忽略选区
   void applyInpaintEditorResult({
     Uint8List? sourceImage,
     int? sourceWidth,
@@ -1322,6 +1351,7 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
     required bool focusedInpaintEnabled,
     required Rect? focusedSelectionRect,
     required double minimumContextMegaPixels,
+    Rect? focusedContextCrop,
     bool forceDisableFocusedInpaint = false,
     bool sourceIsOutpaint = true,
     bool useExactSourceDimensions = false,
@@ -1358,7 +1388,7 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
           sourceImage,
           currentWidth: _params.width,
           currentHeight: _params.height,
-          isStableDiffusionFamily: _usesStableDiffusionImportBounds(
+          isStableDiffusionFamily: ImageModels.usesStableDiffusionImportBounds(
             _params.model,
           ),
         );
@@ -1378,8 +1408,31 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
     final actualSourceHeight = hasReplacementSource
         ? (importInfo?.originalHeight ?? sourceHeight)
         : (state.sourceImageHeight ?? state.sourceHeight);
-    final constrainedSelection = switch ((
+    final contextCrop = switch ((
       forceDisableFocusedInpaint,
+      focusedContextCrop,
+      actualSourceWidth,
+      actualSourceHeight,
+    )) {
+      (false, final Rect crop, final int width, final int height)
+          when FocusedInpaintUtils.resolveGeometryForCrop(
+                sourceWidth: width,
+                sourceHeight: height,
+                crop: crop,
+              ) !=
+              null =>
+        crop,
+      _ => null,
+    };
+    if (focusedContextCrop != null && contextCrop == null) {
+      AppLogger.w(
+        'Discarded focus outpaint crop $focusedContextCrop for source '
+            '${actualSourceWidth}x$actualSourceHeight',
+        'ImageWorkflow',
+      );
+    }
+    final constrainedSelection = switch ((
+      forceDisableFocusedInpaint || contextCrop != null,
       focusedSelectionRect,
       actualSourceWidth,
       actualSourceHeight,
@@ -1396,7 +1449,7 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
     final effectiveFocusedInpaintEnabled =
         !forceDisableFocusedInpaint &&
         focusedInpaintEnabled &&
-        constrainedSelection != null;
+        (constrainedSelection != null || contextCrop != null);
     state = state.copyWith(
       mode: ImageWorkflowMode.inpaint,
       sourceWidth: hasReplacementSource
@@ -1412,7 +1465,11 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
       focusedInpaintEnabled: effectiveFocusedInpaintEnabled,
       minimumContextMegaPixels: minimumContextMegaPixels.clamp(16.0, 192.0),
       focusedSelectionRect: constrainedSelection,
-      clearFocusedSelectionRect: !effectiveFocusedInpaintEnabled,
+      clearFocusedSelectionRect:
+          !effectiveFocusedInpaintEnabled || constrainedSelection == null,
+      focusedContextCrop: effectiveFocusedInpaintEnabled ? contextCrop : null,
+      clearFocusedContextCrop:
+          !effectiveFocusedInpaintEnabled || contextCrop == null,
     );
     setPanelExpanded(true);
 
@@ -1636,29 +1693,23 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
       return;
     }
 
-    final baseWidth = state.sourceWidth ?? state.baseWidth ?? _params.width;
-    final baseHeight = state.sourceHeight ?? state.baseHeight ?? _params.height;
-    // max 档按原尺寸发请求，由服务端等比放到面积上限；模型不支持或原图太大时
-    // 自动退回倍率档，避免 upscaled_enhance 发给不认识它的模型。
-    final useMaxScale = state.enhance.maxScale && isMaxEnhanceAvailable;
-    final factor = useMaxScale ? 1.0 : effectiveEnhanceFactor;
-    final targetSize = EnhanceScales.resolveTargetSize(
-      sourceWidth: baseWidth,
-      sourceHeight: baseHeight,
-      factor: factor,
+    final settings = state.enhance;
+    final plan = EnhanceRequestPlan.resolve(
+      capabilities: _params.capabilities,
+      sourceWidth: state.sourceWidth ?? state.baseWidth ?? _params.width,
+      sourceHeight: state.sourceHeight ?? state.baseHeight ?? _params.height,
+      level: settings.level,
+      factor: settings.upscaleFactor,
+      maxScale: settings.maxScale,
+      individual: settings.showIndividualSettings
+          ? (strength: settings.strength, noise: settings.noise)
+          : null,
     );
-    final resolved = state.enhance.showIndividualSettings
-        ? (strength: state.enhance.strength, noise: state.enhance.noise)
-        : EnhanceLevels.resolve(state.enhance.level);
 
-    _paramsNotifier.updateSize(
-      targetSize.width,
-      targetSize.height,
-      persist: false,
-    );
-    _paramsNotifier.updateStrength(resolved.strength);
-    _paramsNotifier.updateNoise(resolved.noise);
-    _paramsNotifier.updateUpscaledEnhance(useMaxScale);
+    _paramsNotifier.updateSize(plan.width, plan.height, persist: false);
+    _paramsNotifier.updateStrength(plan.strength);
+    _paramsNotifier.updateNoise(plan.noise);
+    _paramsNotifier.updateUpscaledEnhance(plan.maxScale);
     _paramsNotifier.updateIsEnhanceRequest(true);
     _paramsNotifier.updateAction(ImageGenerationAction.img2img);
   }
@@ -1699,13 +1750,6 @@ class ImageWorkflowController extends Notifier<ImageWorkflowState> {
 
     _paramsNotifier.updateIsOutpaint(false);
     _paramsNotifier.updateAction(ImageGenerationAction.img2img);
-  }
-
-  bool _usesStableDiffusionImportBounds(String model) {
-    final baseModel = ImageModels.resolveBaseModel(model);
-    return baseModel == ImageModels.animeCurated ||
-        baseModel == ImageModels.animeFull ||
-        baseModel == ImageModels.furry;
   }
 
   ({int width, int height}) _clampToRequestLimits(int width, int height) {

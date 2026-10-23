@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import '../../../core/cache/gallery_cache_manager.dart';
 import '../../../core/database/datasources/gallery_data_source.dart';
 import '../../../core/exceptions/gallery_exceptions.dart';
 import '../../../core/utils/app_logger.dart';
@@ -255,6 +256,32 @@ class LocalGalleryServiceImpl implements LocalGalleryService {
       );
       return GalleryIndexAdmission.failed;
     }
+  }
+
+  @override
+  Future<int> removeDeletedImagesImmediately(List<String> filePaths) async {
+    _ensureInitialized();
+    final missing = <String>[];
+    for (final filePath in filePaths) {
+      final tracked = _query.resolveTrackedPath(filePath);
+      // 调用方传错路径时不能把磁盘上还在的图从图库里藏起来。
+      if (!await File(tracked).exists()) missing.add(tracked);
+    }
+    final removed = _query.removePaths(missing);
+    if (removed.isEmpty) return 0;
+    try {
+      await _repository.markAsDeleted(removed);
+      GalleryCacheManager().invalidateStatistics();
+    } catch (error, stackTrace) {
+      // 列表已按磁盘移除；残留的索引行由下一次扫描的一致性检查清掉。
+      AppLogger.e(
+        '[RemoveDeletedImages] Failed to mark index rows as deleted',
+        error,
+        stackTrace,
+        'LocalGalleryService',
+      );
+    }
+    return removed.length;
   }
 
   @override

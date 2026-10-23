@@ -6,6 +6,7 @@ import '../../constants/api_constants.dart';
 import '../../enums/precise_ref_type.dart';
 import '../../utils/app_logger.dart';
 import '../../utils/character_center_resolver.dart';
+import '../../utils/exif_orientation.dart';
 import '../../utils/inpaint_mask_utils.dart';
 import '../../utils/nai_resolution_adapter.dart';
 import '../../utils/nai_api_utils.dart';
@@ -53,10 +54,11 @@ class NAIImageRequestBuildResult {
 
 class NAIImageRequestBuilder {
   NAIImageRequestBuilder({
-    required this.params,
+    required ImageParams params,
     required this.encodeVibe,
     List<PreciseReference>? preciseReferences,
-  }) : _preciseReferences =
+  }) : params = params.resolveFixedSettings(),
+       _preciseReferences =
            (preciseReferences ??
                    (params.capabilities.supportsPreciseReference
                        ? params.preciseReferences
@@ -74,21 +76,18 @@ class NAIImageRequestBuilder {
     required String effectiveNegativePrompt,
     required bool isStream,
   }) {
-    final noiseSchedule = params.capabilities.supportsNoiseSchedule
-        ? NoiseSchedules.resolve(
-            params.noiseSchedule,
-            allowNative: params.capabilities.allowsNativeNoiseSchedule,
-          )
-        : NoiseSchedules.karras;
+    final requestSampler =
+        params.capabilities.fixedSettings?.sampler ?? sampler;
+    final noiseSchedule = params.effectiveNoiseSchedule;
     final usesBrownianEulerAncestral =
-        sampler == Samplers.kEulerAncestral &&
+        requestSampler == Samplers.kEulerAncestral &&
         noiseSchedule != NoiseSchedules.native;
     final requestParameters = <String, dynamic>{
       'params_version': _officialParamsVersion,
       'width': params.width,
       'height': params.height,
       'scale': params.scale,
-      'sampler': sampler,
+      'sampler': requestSampler,
       'steps': params.steps,
       'n_samples': params.nSamples,
       'ucPresetId': _resolveUcPresetId(),
@@ -100,7 +99,8 @@ class NAIImageRequestBuilder {
       'add_original_image': params.action == ImageGenerationAction.infill
           ? false
           : params.addOriginalImage,
-      'cfg_rescale': params.cfgRescale,
+      if (params.capabilities.supportsCfgRescale)
+        'cfg_rescale': params.cfgRescale,
       'noise_schedule': noiseSchedule,
       if (params.isV4Model || params.inpaintStrength != 1.0)
         'inpaintImg2ImgStrength': params.inpaintStrength,
@@ -356,8 +356,13 @@ class NAIImageRequestBuilder {
         return vibeEncodingMap;
       }
 
-      requestParameters['reference_image_multiple'] = rawImageVibes
-          .map((vibe) => base64Encode(vibe.rawImageData!))
+      final uploads = await Future.wait(
+        rawImageVibes.map(
+          (vibe) => ExifOrientation.bakeToPngAsync(vibe.rawImageData!),
+        ),
+      );
+      requestParameters['reference_image_multiple'] = uploads
+          .map(base64Encode)
           .toList(growable: false);
       requestParameters['reference_strength_multiple'] = rawImageVibes
           .map((vibe) => vibe.strength)
@@ -632,6 +637,7 @@ class NAIImageRequestBuilder {
       qualityTier: params.qualityTier,
       characters: _buildAutoTextCharacters(),
       useCoords: params.useCoords,
+      modelMode: params.modelMode,
     );
     final effectivePrompt = promptSemantics.effectivePrompt;
     final effectiveNegativePrompt = promptSemantics.effectiveNegativePrompt;
@@ -681,6 +687,10 @@ class NAIImageRequestBuilder {
       );
       final normalizedSource = await normalizedSourceFuture;
       inpaintMaskArtifacts = await maskArtifactsFuture;
+      // 空 latent 蒙版发出去只会原样返回底图，白白占用一次付费请求。
+      if (inpaintMaskArtifacts.isLatentMaskEmpty) {
+        throw const EmptyInpaintMaskException();
+      }
       normalizedSourceImageBytes = normalizedSource;
       requestParameters['image'] = base64Encode(normalizedSource);
       requestParameters['mask'] = base64Encode(

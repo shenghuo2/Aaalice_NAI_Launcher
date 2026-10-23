@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/services/file_export_service.dart';
 import '../../../../core/utils/app_logger.dart';
-import '../../../../core/utils/file_name_sanitizer.dart';
 import '../../../../core/utils/localization_extension.dart';
 import '../../../../core/utils/vibe_export_utils.dart';
 import '../../../../data/models/vibe/vibe_library_category.dart';
@@ -17,6 +16,7 @@ import '../../../../data/models/vibe/vibe_reference.dart';
 import '../../../adaptive/adaptive_presenter.dart';
 import '../../../providers/generation/generation_params_notifier.dart';
 import '../../../widgets/common/app_toast.dart';
+import '../../../widgets/common/surface_ink_well.dart';
 import '../../../widgets/library_export/library_export_controls.dart';
 import '../../../widgets/library_export/library_export_panel.dart';
 import '../../../widgets/library_export/library_selection_controller.dart';
@@ -136,6 +136,8 @@ class _VibeExportDialogState extends ConsumerState<VibeExportDialog> {
   Uint8List? _selectedExternalCarrierImageBytes;
   String? _selectedExternalCarrierImagePath;
   String? _carrierImageErrorMessage;
+  ({VibeLibraryEntry entry, List<VibeExportImageCandidate> options})?
+  _carrierImageOptionsMemo;
 
   late final LibrarySelectionTree<VibeLibraryEntry> _tree;
   late final LibrarySelectionController _selection;
@@ -191,9 +193,16 @@ class _VibeExportDialogState extends ConsumerState<VibeExportDialog> {
     if (entry == null) {
       return const <VibeExportImageCandidate>[];
     }
-    return VibeExportUtils.collectImageCandidates(entry)
+    // build 每次重建都会读取，按条目身份缓存，免得反复比较整张原图
+    final memo = _carrierImageOptionsMemo;
+    if (memo != null && identical(memo.entry, entry)) {
+      return memo.options;
+    }
+    final options = VibeExportUtils.collectImageCandidates(entry)
         .where((candidate) => _isPngBytes(candidate.bytes))
         .toList(growable: false);
+    _carrierImageOptionsMemo = (entry: entry, options: options);
+    return options;
   }
 
   List<VibeExportFormat> get _availableFormats {
@@ -407,19 +416,14 @@ class _VibeExportDialogState extends ConsumerState<VibeExportDialog> {
           const SizedBox(height: 8),
           ...formats.map((format) {
             final isSelected = _exportFormat == format;
-            return InkWell(
-              onTap: () => _setExportFormat(format),
+            return SurfaceInkWell(
               borderRadius: BorderRadius.circular(8),
-              child: Container(
+              color: isSelected
+                  ? theme.colorScheme.primaryContainer.withValues(alpha: 0.3)
+                  : theme.colorScheme.surfaceContainer,
+              onTap: () => _setExportFormat(format),
+              child: Padding(
                 padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  color: isSelected
-                      ? theme.colorScheme.primaryContainer.withValues(
-                          alpha: 0.3,
-                        )
-                      : theme.colorScheme.surfaceContainer,
-                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -662,14 +666,6 @@ class _VibeExportDialogState extends ConsumerState<VibeExportDialog> {
     return segments.isEmpty ? path : segments.last;
   }
 
-  String _embeddedPngFileName(VibeLibraryEntry entry) {
-    final baseName = entry.displayName.trim().isEmpty
-        ? 'vibe'
-        : entry.displayName.trim();
-    final safeBaseName = FileNameSanitizer.sanitize(baseName, fallback: 'vibe');
-    return '${safeBaseName}_vibe.png';
-  }
-
   /// 构建选择操作按钮
   Widget _buildSelectionActions(ThemeData theme) {
     final allSelected = _selection.isEverythingSelected;
@@ -804,7 +800,7 @@ class _VibeExportDialogState extends ConsumerState<VibeExportDialog> {
                   _SourceTypeBadge(sourceType: entry.sourceType),
                   Text(
                     context.l10n.vibe_export_strengthPercent(
-                      (entry.strength * 100).toInt(),
+                      (entry.strength * 100).round(),
                     ),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.outline,
@@ -973,7 +969,7 @@ class _VibeExportDialogState extends ConsumerState<VibeExportDialog> {
     final exportedPath = await VibeExportUtils.exportToEmbeddedPng(
       [entry.toVibeReference()],
       carrierImageBytes: carrierImageBytes,
-      fileName: _embeddedPngFileName(entry),
+      fileName: VibeExportUtils.embeddedPngFileName(entry.displayName),
       defaultModel: _defaultModel,
     );
 

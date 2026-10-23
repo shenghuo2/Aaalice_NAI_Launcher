@@ -17,6 +17,7 @@ import 'package:nai_launcher/presentation/prompt_assistant/providers/prompt_assi
 import 'package:nai_launcher/presentation/prompt_assistant/providers/prompt_assistant_state_provider.dart';
 import 'package:nai_launcher/presentation/providers/character_position_canvas_provider.dart';
 import 'package:nai_launcher/presentation/providers/character_prompt_provider.dart';
+import 'package:nai_launcher/presentation/providers/generation/generation_params_notifier.dart';
 import 'package:nai_launcher/presentation/providers/prompt_token_counter_provider.dart';
 import 'package:nai_launcher/presentation/screens/generation/widgets/prompt_input.dart';
 import 'package:nai_launcher/presentation/themes/core/input_surface_style.dart';
@@ -682,6 +683,75 @@ void main() {
     expect(find.byType(CharacterPromptEditor), findsOneWidget);
     expect(tester.getSize(sheet).height, greaterThan(600));
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('V5 节约档把负向提示词设为只读并说明原因', (tester) async {
+    final storage = _TestLocalStorageService(
+      defaultModel: 'nai-diffusion-5-full-medium',
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localStorageServiceProvider.overrideWith((ref) => storage),
+          characterPromptNotifierProvider.overrideWith(
+            _TestCharacterPromptNotifier.new,
+          ),
+          promptTokenUsageProvider(
+            PromptTokenCountTarget.positive,
+          ).overrideWith(
+            (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 1471),
+          ),
+          promptTokenUsageProvider(
+            PromptTokenCountTarget.negative,
+          ).overrideWith(
+            (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 1471),
+          ),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh'),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          home: Scaffold(
+            body: SizedBox(
+              width: 960,
+              height: 420,
+              child: PromptInputWidget(autoGrow: true),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final lockedLabel = find.byKey(
+      const ValueKey('generation_negative_locked_label'),
+    );
+    expect(lockedLabel, findsNothing);
+    final ucButton = tester.widget<TextButton>(
+      find.descendant(
+        of: find.byType(UcPresetSelector),
+        matching: find.byType(TextButton),
+      ),
+    );
+    expect(ucButton.onPressed, isNull);
+    expect(
+      find.descendant(
+        of: find.byType(UcPresetSelector),
+        matching: find.text('重度'),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byIcon(Icons.block).first);
+    await tester.pump();
+
+    final negativeInput = tester.widget<UnifiedPromptInput>(
+      find.byKey(const ValueKey('generation_prompt_negative_input')),
+    );
+    expect(negativeInput.config.readOnly, isTrue);
+    expect(lockedLabel, findsOneWidget);
+    expect(find.text('节约档不发送'), findsOneWidget);
   });
 
   testWidgets('V5 透明背景开关切换正负面提示词后仍然可见', (tester) async {
@@ -1765,6 +1835,74 @@ void main() {
 
     expect(wrapper.enableWheelAdjustment, isFalse);
     expect(input.scrollPhysics, isNull);
+  });
+
+  testWidgets('自动补全关闭时权重工具栏的改动进入生成参数', (tester) async {
+    const prompt = 'alpha, beta, gamma';
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          localStorageServiceProvider.overrideWith(
+            (ref) =>
+                _TestLocalStorageService()
+                  ..values[StorageKeys.enableAutocomplete] = false,
+          ),
+          characterPromptNotifierProvider.overrideWith(
+            _TestCharacterPromptNotifier.new,
+          ),
+          promptTokenUsageProvider(
+            PromptTokenCountTarget.positive,
+          ).overrideWith(
+            (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 512),
+          ),
+          promptTokenUsageProvider(
+            PromptTokenCountTarget.negative,
+          ).overrideWith(
+            (ref) async => const PromptTokenUsage(usedTokens: 0, limit: 512),
+          ),
+        ],
+        child: const MaterialApp(
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          home: Scaffold(
+            body: SizedBox(width: 960, height: 420, child: PromptInputWidget()),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final promptField = find
+        .descendant(
+          of: find.byKey(const ValueKey('generation_prompt_positive_input')),
+          matching: find.byType(TextField),
+        )
+        .first;
+    await tester.tap(promptField);
+    await tester.enterText(promptField, prompt);
+    await tester.pump();
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: prompt,
+        selection: TextSelection(baseOffset: 7, extentOffset: 11),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('weight_adjust_toolbar_surface')),
+        matching: find.byIcon(Icons.add),
+      ),
+    );
+    await tester.pump();
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(PromptInputWidget)),
+    );
+    expect(
+      container.read(generationParamsNotifierProvider).prompt,
+      'alpha, 1.05::beta::, gamma',
+    );
   });
 
   for (final fitContent in [false, true]) {

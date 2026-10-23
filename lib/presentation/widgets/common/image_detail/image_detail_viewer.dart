@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'package:flutter/services.dart';
@@ -40,6 +42,9 @@ class ImageDetailCallbacks {
   /// 保存回调
   final Future<void> Function(ImageDetailData image)? onSave;
 
+  /// 另存为回调
+  final Future<void> Function(ImageDetailData image)? onSaveAs;
+
   /// 复制图像回调
   final Future<void> Function(ImageDetailData image)? onCopyImage;
 
@@ -53,6 +58,7 @@ class ImageDetailCallbacks {
     this.onFavoriteToggle,
     this.onReuseMetadata,
     this.onSave,
+    this.onSaveAs,
     this.onCopyImage,
     this.onSendToImg2Img,
     this.onSendToReversePrompt,
@@ -90,6 +96,9 @@ class ImageDetailViewer extends ConsumerStatefulWidget {
   /// Hero 标签前缀
   final String? heroTagPrefix;
 
+  /// 跳页前等待元数据预取的上限
+  final Duration prefetchWaitLimit;
+
   const ImageDetailViewer({
     super.key,
     required this.images,
@@ -98,7 +107,12 @@ class ImageDetailViewer extends ConsumerStatefulWidget {
     this.showThumbnails = true,
     this.callbacks,
     this.heroTagPrefix,
+    this.prefetchWaitLimit = metadataPrefetchWaitLimit,
   });
+
+  /// 打开或跳页前等待元数据预取的默认上限；超时照常显示加载态，读完再回填
+  @visibleForTesting
+  static const Duration metadataPrefetchWaitLimit = Duration(milliseconds: 250);
 
   /// 打开图像详情查看器
   static Future<void> show(
@@ -109,7 +123,15 @@ class ImageDetailViewer extends ConsumerStatefulWidget {
     bool showThumbnails = true,
     ImageDetailCallbacks? callbacks,
     String? heroTagPrefix,
-  }) {
+    Duration prefetchWaitLimit = metadataPrefetchWaitLimit,
+  }) async {
+    if (images.isNotEmpty) {
+      await _prefetchWithinLimit(
+        images[initialIndex.clamp(0, images.length - 1)],
+        prefetchWaitLimit,
+      );
+      if (!context.mounted) return;
+    }
     final isWindows = PlatformCapabilities.current.isWindows;
     final transitionDuration = isWindows
         ? Duration.zero
@@ -118,7 +140,7 @@ class ImageDetailViewer extends ConsumerStatefulWidget {
         ? Duration.zero
         : const Duration(milliseconds: 250);
 
-    return Navigator.of(context).push(
+    await Navigator.of(context).push(
       PageRouteBuilder(
         // Windows + 外部截图工具 + 焦点切换下，透明路由和快照过渡更容易触发
         // Flutter 引擎原生崩溃；Windows 走纯黑不透明且无动画路径。
@@ -135,6 +157,7 @@ class ImageDetailViewer extends ConsumerStatefulWidget {
             showThumbnails: showThumbnails,
             callbacks: callbacks,
             heroTagPrefix: heroTagPrefix,
+            prefetchWaitLimit: prefetchWaitLimit,
           );
           if (isWindows) {
             return viewer;
@@ -189,6 +212,7 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
   final Set<String> _favoriteToggleBusy = {};
   bool _isClosing = false;
   DateTime? _lastCloseRequestedAt;
+  int _navigationRequest = 0;
   late final ResizablePaneController _metadataPanelWidthController;
 
   @override
@@ -201,10 +225,33 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
       initialWidth: _initialMetadataPanelWidth,
     );
 
+    _refreshWhenPrefetched(_currentIndex);
+    _prefetchNeighbors(_currentIndex);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToThumbnail(_currentIndex, animate: false);
       _focusNode.requestFocus();
     });
+  }
+
+  // 滑动只会到相邻页，提前预取让切页后的首帧就有元数据
+  void _prefetchNeighbors(int index) {
+    for (final neighbor in [index - 1, index + 1]) {
+      if (neighbor < 0 || neighbor >= widget.images.length) continue;
+      unawaited(widget.images[neighbor].prefetchMetadata());
+    }
+  }
+
+  // 预取超时时页面已先行显示；读完后重建一次，顶栏等同步读取方才能拿到元数据
+  void _refreshWhenPrefetched(int index) {
+    if (index < 0 || index >= widget.images.length) return;
+    final image = widget.images[index];
+    if (!image.isPrefetchingMetadata) return;
+    unawaited(
+      image.prefetchMetadata().then((_) {
+        if (mounted && _currentIndex == index) setState(() {});
+      }),
+    );
   }
 
   void _scrollToThumbnail(int index, {bool animate = true}) {
@@ -234,7 +281,10 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
 
   void _goToPage(int index) {
     if (index < 0 || index >= widget.images.length) return;
+    _navigationRequest++;
 
+    // 动画过半才切页，预取多半已完成；没读完的切页后由 _onPageChanged 回填
+    unawaited(widget.images[index].prefetchMetadata());
     _pageController.animateToPage(
       index,
       duration: const Duration(milliseconds: 300),
@@ -244,36 +294,27 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
 
   void _jumpToPage(int index) {
     if (index < 0 || index >= widget.images.length) return;
+    unawaited(_jumpAfterPrefetch(index, ++_navigationRequest));
+  }
+
+  // 缩略图可跳到任意页，立即切页前先等预取；等待期间又切了页则放弃这次跳转
+  Future<void> _jumpAfterPrefetch(int index, int request) async {
+    await _prefetchWithinLimit(widget.images[index], widget.prefetchWaitLimit);
+    if (!mounted ||
+        request != _navigationRequest ||
+        !_pageController.hasClients) {
+      return;
+    }
     _pageController.jumpToPage(index);
   }
 
   void _onPageChanged(int index) {
+    // 滑动换页同样作废还在等预取的缩略图跳转
+    _navigationRequest++;
     setState(() => _currentIndex = index);
     _scrollToThumbnail(index);
-  }
-
-  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
-
-    switch (event.logicalKey) {
-      case LogicalKeyboardKey.arrowLeft:
-        _goToPage(_currentIndex - 1);
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.arrowRight:
-        _goToPage(_currentIndex + 1);
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.escape:
-        _handleKeyboardCloseRequest();
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.home:
-        _goToPage(0);
-        return KeyEventResult.handled;
-      case LogicalKeyboardKey.end:
-        _goToPage(widget.images.length - 1);
-        return KeyEventResult.handled;
-      default:
-        return KeyEventResult.ignored;
-    }
+    _refreshWhenPrefetched(index);
+    _prefetchNeighbors(index);
   }
 
   void _handleKeyboardCloseRequest() {
@@ -335,6 +376,8 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
         }
       });
     });
+    // 按键不会排帧，画面静止时帧后回调要等到下一次重绘才执行
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   ImageDetailData get _currentImage => widget.images[_currentIndex];
@@ -479,6 +522,10 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
       ShortcutIds.previousImage: () => _goToPage(_currentIndex - 1),
       // 下一张
       ShortcutIds.nextImage: () => _goToPage(_currentIndex + 1),
+      // 第一张
+      ShortcutIds.firstImage: () => _goToPage(0),
+      // 最后一张
+      ShortcutIds.lastImage: () => _goToPage(widget.images.length - 1),
       // 放大
       ShortcutIds.zoomIn: _zoomIn,
       // 缩小
@@ -502,50 +549,57 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
     return PageShortcuts(
       contextType: ShortcutContext.viewer,
       shortcuts: shortcuts,
-      child: Focus(
+      reclaimFallbackFocus: false,
+      child: FallbackFocusHome(
         focusNode: _focusNode,
-        onKeyEvent: _handleKeyEvent,
-        child: Scaffold(
-          backgroundColor: ImageViewportSurface.background,
-          body: LayoutBuilder(
-            builder: (context, constraints) {
-              final showSideMetadata = constraints.maxWidth >= 1100;
-              if (!showSideMetadata || !widget.showMetadataPanel) {
-                return _buildMainContent(
-                  showMetadataAction: widget.showMetadataPanel,
-                );
-              }
-
-              final maximumPanelWidth =
-                  WorkspaceSidePanelContract.constrainedWorkspaceWidth(
-                    workspaceWidth: constraints.maxWidth,
-                    preferredWidth: WorkspaceSidePanelContract.maximumWidth,
-                    occupiedWidth: ResizeHandle.defaultWidth,
-                    minimumPrimaryWidth: _minimumImagePaneWidth,
-                    minimumWidth: _minimumMetadataPanelWidth,
+        child: Focus(
+          focusNode: _focusNode,
+          child: Scaffold(
+            backgroundColor: ImageViewportSurface.background,
+            body: LayoutBuilder(
+              builder: (context, constraints) {
+                final showSideMetadata = constraints.maxWidth >= 1100;
+                if (!showSideMetadata || !widget.showMetadataPanel) {
+                  return _buildMainContent(
+                    showMetadataAction: widget.showMetadataPanel,
                   );
-              return Row(
-                children: [
-                  Expanded(child: _buildMainContent(showMetadataAction: false)),
-                  ResizeHandle(
-                    key: const ValueKey('image-detail-metadata-resize-handle'),
-                    onDrag: (delta) =>
-                        _metadataPanelWidthController.resizeBy(-delta),
-                  ),
-                  ResizablePane(
-                    controller: _metadataPanelWidthController,
-                    minimumWidth: _minimumMetadataPanelWidth,
-                    maximumWidth: maximumPanelWidth,
-                    child: DetailMetadataPanel(
-                      currentImage: _currentImage,
-                      initialExpanded: true,
-                      collapsible: false,
-                      fillAvailableWidth: true,
+                }
+
+                final maximumPanelWidth =
+                    WorkspaceSidePanelContract.constrainedWorkspaceWidth(
+                      workspaceWidth: constraints.maxWidth,
+                      preferredWidth: WorkspaceSidePanelContract.maximumWidth,
+                      occupiedWidth: ResizeHandle.extentOf(context),
+                      minimumPrimaryWidth: _minimumImagePaneWidth,
+                      minimumWidth: _minimumMetadataPanelWidth,
+                    );
+                return Row(
+                  children: [
+                    Expanded(
+                      child: _buildMainContent(showMetadataAction: false),
                     ),
-                  ),
-                ],
-              );
-            },
+                    ResizeHandle(
+                      key: const ValueKey(
+                        'image-detail-metadata-resize-handle',
+                      ),
+                      onDrag: (delta) =>
+                          _metadataPanelWidthController.resizeBy(-delta),
+                    ),
+                    ResizablePane(
+                      controller: _metadataPanelWidthController,
+                      minimumWidth: _minimumMetadataPanelWidth,
+                      maximumWidth: maximumPanelWidth,
+                      child: DetailMetadataPanel(
+                        currentImage: _currentImage,
+                        initialExpanded: true,
+                        collapsible: false,
+                        fillAvailableWidth: true,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -605,6 +659,9 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
             ),
             onSave: widget.callbacks?.onSave != null
                 ? () => widget.callbacks!.onSave!(_currentImage)
+                : null,
+            onSaveAs: widget.callbacks?.onSaveAs != null
+                ? () => widget.callbacks!.onSaveAs!(_currentImage)
                 : null,
             onCopyImage: _currentImage.showCopyButton
                 ? () => _copyImageToClipboard(context)
@@ -764,11 +821,12 @@ class _ImageDetailViewerState extends ConsumerState<ImageDetailViewer> {
       final stripMetadata = ref
           .read(shareImageSettingsProvider)
           .effectiveStripMetadataForCopyAndDrag;
-      final shareImage = await ImageShareSanitizer.prepareForCopyOrDrag(
-        imageBytes,
-        fileName: fileName,
-        stripMetadata: stripMetadata,
-      );
+      final shareImage =
+          await ImageShareSanitizer.prepareForCopyOrDragInBackground(
+            imageBytes,
+            fileName: fileName,
+            stripMetadata: stripMetadata,
+          );
       if (!context.mounted) return;
       final renderBox = context.findRenderObject() as RenderBox?;
       final origin = renderBox == null
@@ -840,3 +898,7 @@ class _NavigationButton extends StatelessWidget {
     );
   }
 }
+
+// 磁盘阻塞时打开与跳页不能一直等；超时只是不再等，读取照常继续
+Future<void> _prefetchWithinLimit(ImageDetailData image, Duration limit) =>
+    image.prefetchMetadata().timeout(limit, onTimeout: () {});

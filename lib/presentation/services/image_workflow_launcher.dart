@@ -13,6 +13,7 @@ import '../../data/models/image/image_params.dart';
 import '../../data/models/metadata/metadata_import_options.dart';
 import '../../data/services/image_metadata_service.dart';
 import '../providers/generation/image_workflow_controller.dart';
+import '../providers/generation/workflow_panel_reveal_provider.dart';
 import '../providers/image_generation_provider.dart';
 import '../providers/krita/krita_bridge_notifier.dart';
 import '../providers/quality_preset_provider.dart';
@@ -75,20 +76,21 @@ class ImageWorkflowLauncher {
     }
 
     final params = read(generationParamsNotifierProvider);
+    final isInpaint = mode == ImageEditorMode.inpaint;
     final result = await ImageEditorScreen.show(
       context,
       initialImage: imageBytes,
-      existingMask: mode == ImageEditorMode.inpaint ? params.maskImage : null,
-      existingFocusRect: mode == ImageEditorMode.inpaint
-          ? workflow.focusedSelectionRect
-          : null,
-      initialMinimumContextMegaPixels: mode == ImageEditorMode.inpaint
+      existingMask: isInpaint ? params.maskImage : null,
+      existingFocusRect: isInpaint ? workflow.focusedSelectionRect : null,
+      initialMinimumContextMegaPixels: isInpaint
           ? workflow.minimumContextMegaPixels
           : 88.0,
-      initialFocusedInpaintEnabled: mode == ImageEditorMode.inpaint
-          ? workflow.focusedInpaintEnabled
-          : false,
-      focusedInpaintCostConfig: mode == ImageEditorMode.inpaint
+      // 聚焦外扩在编辑器里由取景框表示，不走选区式聚焦
+      initialFocusedInpaintEnabled:
+          isInpaint &&
+          workflow.focusedInpaintEnabled &&
+          workflow.focusedContextCrop == null,
+      focusedInpaintCostConfig: isInpaint
           ? ImageEditorFocusedInpaintCostConfig(
               model: params.model,
               steps: params.steps,
@@ -109,9 +111,13 @@ class ImageWorkflowLauncher {
                   false,
               extraPerSampleCost:
                   AnlasCalculator.resolvePreciseReferenceExtraCost(params),
+              currentWidth: params.width,
+              currentHeight: params.height,
             )
           : null,
-      showMaskExport: mode == ImageEditorMode.inpaint,
+      showMaskExport: isInpaint,
+      supportsFocusOutpaint: isInpaint,
+      existingFrameRect: isInpaint ? workflow.focusedContextCrop : null,
       mode: mode,
       title: mode == ImageEditorMode.edit
           ? context.l10n.img2img_editImage
@@ -126,6 +132,7 @@ class ImageWorkflowLauncher {
 
     AppLogger.d(
       'Editor returned: mode=$mode, hasImageChanges=${result.hasImageChanges}, '
+          'hasSourceImageChanges=${result.hasSourceImageChanges}, '
           'hasMaskChanges=${result.hasMaskChanges}, '
           'modifiedBytes=${result.modifiedImage?.length ?? 0}, '
           'maskBytes=${result.maskImage?.length ?? 0}, '
@@ -141,6 +148,7 @@ class ImageWorkflowLauncher {
           'outputHeight=${result.outputHeight}, '
           'compressionApplied=${result.compressionApplied}, '
           'focusRect=${result.focusAreaRect}, '
+          'focusOutpaintCrop=${result.focusOutpaint?.crop}, '
           'minContext=${result.minimumContextMegaPixels.toStringAsFixed(2)}, '
           'focusedEnabled=${result.focusedInpaintEnabled}',
       'ImageWorkflow',
@@ -163,9 +171,46 @@ class ImageWorkflowLauncher {
 
     final effectiveMask =
         result.maskImage != null &&
-            InpaintMaskUtils.hasMaskedPixels(result.maskImage!)
+            await InpaintMaskUtils.hasMaskedPixelsAsync(result.maskImage!)
         ? result.maskImage
         : null;
+    if (!context.mounted || (isCurrent != null && !isCurrent())) {
+      return false;
+    }
+    applyInpaintEditorResult(workflowNotifier, result, effectiveMask);
+    if (effectiveMask != null) {
+      AppToast.success(context, context.l10n.img2img_inpaintMaskReady);
+    } else if (result.maskImage != null) {
+      AppToast.warning(context, context.l10n.toast_noValidMaskIgnored);
+    } else if (result.hasSourceImageChanges) {
+      AppToast.success(context, context.l10n.img2img_inpaintSourceUpdated);
+    }
+    return true;
+  }
+
+  @visibleForTesting
+  static void applyInpaintEditorResult(
+    ImageWorkflowController workflowNotifier,
+    ImageEditorResult result,
+    Uint8List? effectiveMask,
+  ) {
+    final focusOutpaint = result.focusOutpaint;
+    if (focusOutpaint != null) {
+      workflowNotifier.applyInpaintEditorResult(
+        sourceImage: focusOutpaint.sourceImage,
+        sourceWidth: focusOutpaint.width,
+        sourceHeight: focusOutpaint.height,
+        maskImage: effectiveMask,
+        focusedInpaintEnabled: true,
+        focusedSelectionRect: null,
+        // 没有可生成的蒙版时只换成整张画布，不再聚焦
+        focusedContextCrop: effectiveMask == null ? null : focusOutpaint.crop,
+        minimumContextMegaPixels: result.minimumContextMegaPixels,
+        sourceIsOutpaint: false,
+        useExactSourceDimensions: result.compressionApplied,
+      );
+      return;
+    }
     workflowNotifier.applyInpaintEditorResult(
       sourceImage: result.hasOutpaintChanges
           ? result.outpaintSourceImage
@@ -184,12 +229,6 @@ class ImageWorkflowLauncher {
       sourceIsOutpaint: result.hasOutpaintChanges,
       useExactSourceDimensions: result.compressionApplied,
     );
-    if (effectiveMask != null) {
-      AppToast.success(context, context.l10n.img2img_inpaintMaskReady);
-    } else if (result.maskImage != null) {
-      AppToast.warning(context, context.l10n.toast_noValidMaskIgnored);
-    }
-    return true;
   }
 
   static void openEnhance(WidgetRef ref, Uint8List imageBytes) =>
@@ -203,6 +242,7 @@ class ImageWorkflowLauncher {
     workflowNotifier.replaceSourceImage(imageBytes);
     workflowNotifier.enterEnhanceMode();
     workflowNotifier.setPanelExpanded(true);
+    read(workflowPanelRevealProvider.notifier).request();
   }
 
   static Future<void> openInpaint(
@@ -228,6 +268,7 @@ class ImageWorkflowLauncher {
     workflowNotifier.replaceSourceImage(imageBytes);
     workflowNotifier.enterUpscaleMode();
     workflowNotifier.setPanelExpanded(true);
+    read(workflowPanelRevealProvider.notifier).request();
   }
 
   static Future<void> openDirectorTools(
@@ -305,12 +346,7 @@ class ImageWorkflowLauncher {
     if (isCurrent != null) prepareSource();
 
     if (metadata != null && metadata.hasData) {
-      _applyVariationMetadata(
-        metadata,
-        read,
-        paramsNotifier,
-        fallbackModel: read(generationParamsNotifierProvider).model,
-      );
+      _applyVariationMetadata(metadata, read, paramsNotifier);
     } else {
       paramsNotifier.randomizeSeed();
       paramsNotifier.updateStrength(0.45);
@@ -349,13 +385,11 @@ class ImageWorkflowLauncher {
   static void _applyVariationMetadata(
     NaiImageMetadata metadata,
     _ImageWorkflowRead read,
-    GenerationParamsNotifier notifier, {
-    required String fallbackModel,
-  }) {
+    GenerationParamsNotifier notifier,
+  ) {
     MetadataImportApplier.applyPromptAndGenerationParams(
       metadata: metadata,
       options: MetadataImportOptions.all(),
-      currentModel: fallbackModel,
       target: MetadataImportTarget(
         updatePrompt: notifier.updatePrompt,
         updateNegativePrompt: notifier.updateNegativePrompt,
@@ -384,6 +418,7 @@ class ImageWorkflowLauncher {
           applyImportedUcPreset(read, value);
         },
         updateTransparentBackground: notifier.updateTransparentBackground,
+        updateModelMode: notifier.updateModelMode,
       ),
     );
 

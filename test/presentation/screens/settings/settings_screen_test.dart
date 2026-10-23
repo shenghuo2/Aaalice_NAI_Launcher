@@ -20,6 +20,7 @@ import 'package:nai_launcher/presentation/screens/cloud_sync/cloud_sync_screen.d
 import 'package:nai_launcher/presentation/screens/settings/sections/account_settings_section.dart';
 import 'package:nai_launcher/presentation/screens/settings/sections/appearance_settings_section.dart';
 import 'package:nai_launcher/presentation/screens/settings/sections/integrations_settings_section.dart';
+import 'package:nai_launcher/presentation/screens/settings/sections/model_services/model_services_settings_section.dart';
 import 'package:nai_launcher/presentation/screens/settings/sections/prompt_assistant_settings_section.dart';
 import 'package:nai_launcher/presentation/screens/settings/sections/shortcut_settings_section.dart';
 import 'package:nai_launcher/presentation/screens/settings/settings_screen.dart';
@@ -27,6 +28,8 @@ import 'package:nai_launcher/presentation/screens/settings/settings_section.dart
 import 'package:nai_launcher/presentation/themes/core/layered_surface_style.dart';
 import 'package:nai_launcher/presentation/widgets/common/desktop_window_frame.dart';
 import 'package:window_manager/window_manager.dart';
+
+import '../../../helpers/adaptive_panel_expectations.dart';
 
 class _NoopDesktopWindowController implements DesktopWindowController {
   @override
@@ -257,32 +260,29 @@ void main() {
 
     final segmentedButton = find.descendant(
       of: integrations,
-      matching: find.byType(SegmentedButton<int>),
+      matching: find.byType(SegmentedButton<IntegrationPanel>),
     );
     expect(segmentedButton, findsOneWidget);
 
     final segments = tester
-        .widget<SegmentedButton<int>>(segmentedButton)
+        .widget<SegmentedButton<IntegrationPanel>>(segmentedButton)
         .segments;
     final segmentLabels = segments
         .map((segment) => (segment.label as Text).data)
         .toList();
 
-    final promptAssistantSection = find.byType(PromptAssistantSettingsSection);
-    expect(promptAssistantSection, findsOneWidget);
+    // 服务商管理独立成首个分页，提示词助手页只保留路由与规则。
+    expect(find.byType(ModelServicesSettingsSection), findsOneWidget);
+    await tester.tap(find.text('提示词助手'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PromptAssistantSettingsSection), findsOneWidget);
     expect(
-      tester
-          .getTopLeft(
-            find.byKey(const ValueKey('prompt-assistant-provider-section')),
-          )
-          .dy,
-      lessThan(
-        tester
-            .getTopLeft(
-              find.byKey(const ValueKey('prompt-assistant-routing-section')),
-            )
-            .dy,
-      ),
+      find.byKey(const ValueKey('prompt-assistant-provider-section')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('prompt-assistant-routing-section')),
+      findsOneWidget,
     );
     expect(
       tester
@@ -291,6 +291,7 @@ void main() {
       '集成',
     );
     expect(segmentLabels, const [
+      '模型服务',
       '提示词助手',
       'ComfyUI',
       'Krita',
@@ -422,7 +423,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final addProvider = find.byKey(
-      const ValueKey('prompt-assistant-add-provider'),
+      const ValueKey('model-services-add-provider'),
     );
     final contentScrollable = find.descendant(
       of: find.byKey(const ValueKey('settings-section-scroll-view')),
@@ -453,6 +454,7 @@ void main() {
     );
     expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('OpenAI Chat Completions'), findsOneWidget);
+    expectPanelHeaderScrollsWithContent(tester);
     expect(tester.takeException(), isNull);
 
     final selectedProtocolRect = tester.getRect(
@@ -482,20 +484,42 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpAndSettle();
 
-    final providerCard = find.byKey(
-      const ValueKey('prompt-assistant-provider-openai_chat'),
-    );
-    expect(providerCard, findsOneWidget);
-    expect(find.text('连接配置'), findsOneWidget);
+    // 窄屏保存后直接进入新服务商的详情页，预设默认模型已加入。
+    expect(find.byType(ProviderDetailPage), findsOneWidget);
     expect(
-      find.descendant(of: providerCard, matching: find.byIcon(Icons.key)),
-      findsNothing,
-    );
-    expect(
-      find.descendant(of: providerCard, matching: find.byIcon(Icons.key_off)),
-      findsNothing,
+      find.byKey(const ValueKey('model-services-model-gpt-4.1-mini')),
+      findsOneWidget,
     );
     expect(tester.takeException(), isNull);
+
+    Future<void> expectFormHeaderScrolls(Finder trigger, String formKey) async {
+      await tester.ensureVisible(trigger);
+      await tester.pumpAndSettle();
+      await tester.tap(trigger);
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey(formKey)), findsOneWidget);
+      expectPanelHeaderScrollsWithContent(tester, reason: formKey);
+      expect(tester.takeException(), isNull, reason: formKey);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey(formKey)), findsNothing);
+    }
+
+    await expectFormHeaderScrolls(
+      find.byKey(const ValueKey('model-services-add-model')),
+      'model-services-model-form',
+    );
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(ProviderDetailPage), findsNothing);
+    await tester.ensureVisible(find.text('提示词助手'));
+    await tester.tap(find.text('提示词助手'));
+    await tester.pumpAndSettle();
+    await expectFormHeaderScrolls(
+      find.text('新增规则'),
+      'prompt-assistant-rule-dialog',
+    );
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
@@ -612,22 +636,24 @@ void main() {
 
     final integrations = find.byType(IntegrationsSettingsSection);
     expect(integrations, findsOneWidget);
-    final segmentedButton = tester.widget<SegmentedButton<int>>(
+    final segmentedButton = tester.widget<SegmentedButton<IntegrationPanel>>(
       find.descendant(
         of: integrations,
-        matching: find.byType(SegmentedButton<int>),
+        matching: find.byType(SegmentedButton<IntegrationPanel>),
       ),
     );
     expect(segmentedButton.segments.map((segment) => segment.enabled), [
       isTrue,
+      isTrue,
       isFalse,
+      isTrue,
     ]);
     // Android 不提供 Krita / MCP / DLSSNR 集成，分段导航里不出现这些入口。
     expect(
       segmentedButton.segments
           .map((segment) => (segment.label as Text).data)
           .toList(),
-      const ['提示词助手', 'ComfyUI'],
+      const ['模型服务', '提示词助手', 'ComfyUI', 'Pic Manager'],
     );
     expect(find.text('桌面浮层交互'), findsNothing);
 
@@ -861,6 +887,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await tester.tap(find.text('提示词助手'));
+    await tester.pumpAndSettle();
 
     Finder contentScrollable() => find.descendant(
       of: find.byKey(const ValueKey('settings-section-scroll-view')),
@@ -901,6 +929,7 @@ void main() {
     // A real manual resize still crosses the responsive breakpoint normally.
     await tester.binding.setSurfaceSize(const Size(390, 700));
     await tester.pumpAndSettle();
+    expect(find.byType(PromptAssistantSettingsSection), findsOneWidget);
     expect(
       tester.state<ScrollableState>(contentScrollable()).position.pixels,
       closeTo(desktopOffset, 1),

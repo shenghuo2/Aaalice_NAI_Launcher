@@ -18,11 +18,14 @@ import 'package:nai_launcher/data/models/agent/agent_settings.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:nai_launcher/presentation/agent_settings/providers/agent_settings_provider.dart';
 import 'package:nai_launcher/data/models/prompt_assistant/prompt_assistant_models.dart';
+import 'package:nai_launcher/presentation/screens/settings/sections/agent/agent_chat_placement_card.dart';
 import 'package:nai_launcher/presentation/screens/settings/sections/agent/agent_profile_actions.dart';
 import 'package:nai_launcher/presentation/screens/settings/sections/agent/skill_management_panel.dart';
 import 'package:nai_launcher/presentation/screens/settings/sections/agent_settings_section.dart';
 import 'package:nai_launcher/presentation/screens/settings/widgets/settings_card.dart';
 import 'package:nai_launcher/presentation/screens/settings/widgets/settings_page_layout.dart';
+
+import '../../../helpers/fake_save_file_picker.dart';
 
 class _MemoryLocalStorage extends LocalStorageService {
   final Map<String, Object?> _values = {};
@@ -202,6 +205,7 @@ void main() {
 
       expect(find.byType(AgentSettingsSection), findsOneWidget);
       expect(find.byType(SettingsPageLayout), findsOneWidget);
+      expect(find.byType(AgentChatPlacementCard), findsOneWidget);
       final pageLeft = tester.getTopLeft(find.byType(SettingsPageLayout)).dx;
       expect(tester.getTopLeft(find.byType(SettingsCard).first).dx, pageLeft);
       expect(
@@ -442,6 +446,11 @@ void main() {
         await tester.binding.setSurfaceSize(size);
         await tester.pump(const Duration(milliseconds: 400));
         expect(find.byType(AgentSettingsSection), findsOneWidget);
+        expect(
+          find.byType(RadioListTile<AgentPermissionMode>),
+          findsNWidgets(AgentPermissionMode.values.length),
+          reason: '$size',
+        );
         expect(tester.takeException(), isNull);
       }
     } finally {
@@ -976,27 +985,20 @@ void main() {
   });
 
   testWidgets('配置导入审阅器在极端尺寸保留滚动内容和应用取消操作', (tester) async {
-    FilePicker? originalFilePicker;
-    try {
-      originalFilePicker = FilePicker.platform;
-    } catch (_) {
-      originalFilePicker = null;
-    }
     final profile = const AgentProfileService().exportProfile(
       const AgentSettings(),
     );
-    FilePicker.platform = _FakeFilePicker(
-      FilePickerResult([
-        PlatformFile(
-          name: 'agent-profile.json',
-          size: profile.length,
-          bytes: Uint8List.fromList(profile.codeUnits),
-        ),
-      ]),
+    useFakeFilePicker(
+      _FakeFilePicker(
+        FilePickerResult([
+          PlatformFile(
+            name: 'agent-profile.json',
+            size: profile.length,
+            bytes: Uint8List.fromList(profile.codeUnits),
+          ),
+        ]),
+      ),
     );
-    addTearDown(() {
-      if (originalFilePicker != null) FilePicker.platform = originalFilePicker;
-    });
 
     final root = Directory('tool/.tmp/agent-profile-dialog-test')
       ..createSync(recursive: true);

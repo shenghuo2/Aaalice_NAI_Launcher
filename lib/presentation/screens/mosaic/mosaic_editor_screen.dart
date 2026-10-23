@@ -7,24 +7,21 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../core/mosaic/mosaic_derivative_registry.dart';
+import '../../../core/derivatives/derivative_registry.dart';
+import '../../../core/derivatives/derivative_render.dart';
 import '../../../core/mosaic/mosaic_render_service.dart';
-import '../../../core/platform/platform_capabilities.dart';
-import '../../../core/services/android_media_store_service.dart';
 import '../../../core/services/native_share_service.dart';
-import '../../../core/storage/local_storage_service.dart';
 import '../../../core/utils/app_logger.dart';
-import '../../../core/utils/image_save_utils.dart';
 import '../../../core/utils/image_share_sanitizer.dart';
 import '../../../core/utils/localization_extension.dart';
 import '../../../data/models/mosaic/mosaic_settings.dart';
-import '../../../data/repositories/gallery_folder_repository.dart';
-import '../../../data/services/fixed_tag/fixed_tag_usage_record_store.dart';
-import '../../providers/local_gallery_provider.dart';
 import '../../providers/mosaic_settings_provider.dart';
 import '../../providers/share_image_settings_provider.dart';
 import '../../widgets/image_editor/widgets/color_picker.dart';
 import '../../widgets/common/horizontal_segmented_control.dart';
+import '../../widgets/common/labeled_slider_rows.dart';
+import '../derivatives/derivative_copy_save_run.dart';
+import '../derivatives/derivative_copy_saver.dart';
 import 'mosaic_editor_canvas.dart';
 
 class MosaicEditorSource {
@@ -67,7 +64,7 @@ class _MosaicEditorScreenState extends ConsumerState<MosaicEditorScreen> {
   final _previewFocusNode = FocusNode(debugLabel: 'mosaic preview');
   final _undo = <_MosaicSnapshot>[];
   final _redo = <_MosaicSnapshot>[];
-  MosaicCancellationToken? _renderToken;
+  DerivativeCopySaveRun? _saveRun;
 
   late MosaicSettings _settings;
   late MosaicSettings _initialSettings;
@@ -82,11 +79,12 @@ class _MosaicEditorScreenState extends ConsumerState<MosaicEditorScreen> {
   ui.Image? _processedImage;
   bool _loading = true;
   bool _processingPreview = false;
-  bool _saving = false;
   Object? _loadError;
   Object? _previewError;
   int _processedEpoch = 0;
   int _regionSequence = 0;
+
+  bool get _saving => _saveRun != null;
 
   @override
   void initState() {
@@ -106,7 +104,7 @@ class _MosaicEditorScreenState extends ConsumerState<MosaicEditorScreen> {
 
   @override
   void dispose() {
-    _renderToken?.cancel();
+    _saveRun?.close();
     _processedEpoch++;
     _previewFocusNode.dispose();
     _processedImage?.dispose();
@@ -593,129 +591,74 @@ class _MosaicEditorScreenState extends ConsumerState<MosaicEditorScreen> {
       _showError(context.l10n.mosaic_noRegionError);
       return;
     }
-    final token = MosaicCancellationToken();
-    _renderToken = token;
-    setState(() => _saving = true);
-    try {
-      final result = await widget.renderCopy(
-        MosaicRenderRequest(
-          sourceBytes: _sourceBytes,
-          settings: _settings,
-          regions: _regions,
-          preserveMetadata: _settings.preserveMetadata,
-          sourceFileName: _sourceFileName,
-        ),
-        cancellationToken: token,
-      );
-      if (!mounted || token.isCancelled) return;
-      final galleryRoot = await GalleryFolderRepository.instance.getRootPath();
-      if (!mounted || token.isCancelled) return;
-      if (galleryRoot == null || galleryRoot.isEmpty) {
-        throw StateError(context.l10n.localGallery_saveDirectoryNotSet);
-      }
-      final output = await ImageSaveUtils.saveBytesToDatedPath(
-        rootPath: galleryRoot,
-        bytes: result.bytes,
-        preferredFileName: result.fileName,
-      );
-      await FixedTagUsageRecordStore().copyForDerivative(
-        sourceBytes: _sourceBytes,
-        outputBytes: result.bytes,
-      );
-      Object? systemGalleryError;
-      if (PlatformCapabilities.current.supportsSystemGalleryExport) {
-        try {
-          await AndroidMediaStoreService.savePng(
-            bytes: result.bytes,
-            fileName: result.fileName,
-          );
-        } on Object catch (error, stackTrace) {
-          systemGalleryError = error;
-          AppLogger.e(
-            'Redacted copy saved but system gallery export failed',
-            error,
-            stackTrace,
-            'MosaicEditor',
-          );
-        }
-      }
-      if (!mounted) return;
-      final sourcePath = _sourcePath;
-      if (sourcePath != null) {
-        await MosaicDerivativeRegistry(
-          ref.read(localStorageServiceProvider),
-        ).register(outputPath: output, sourcePath: sourcePath);
-      }
-      if (!mounted) return;
-      if (_settings.rememberLastStyle) {
-        await ref.read(mosaicSettingsProvider.notifier).saveDefaults(_settings);
-      }
-      if (!mounted) return;
-      final galleryRefreshError = await _refreshGalleryAfterSave();
-      if (!mounted) return;
-      if (systemGalleryError != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.l10n.mosaic_systemGalleryExportFailed),
-          ),
-        );
-      }
-      if (galleryRefreshError != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.l10n.mosaic_galleryRefreshFailed)),
-        );
-      }
-      await _showSaved(result, output);
-      if (mounted) Navigator.of(context).pop(output);
-    } on MosaicCancelledException {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(context.l10n.mosaic_cancelled)));
-      }
-    } on Object catch (error, stackTrace) {
+    final l10n = context.l10n;
+    final settingsNotifier = ref.read(mosaicSettingsProvider.notifier);
+    final run = DerivativeCopySaveRun(
+      saver: ref.read(derivativeCopySaverProvider(DerivativeKind.mosaic)),
+      notices: DerivativeCopySaveNotices.capture(
+        context,
+        saved: l10n.mosaic_saved,
+        failed: l10n.mosaic_failedGeneric,
+        systemGalleryFailed: l10n.mosaic_systemGalleryExportFailed,
+        galleryIndexFailed: l10n.mosaic_galleryRefreshFailed,
+      ),
+    );
+    final settings = _settings;
+    final request = MosaicRenderRequest(
+      sourceBytes: _sourceBytes,
+      settings: settings,
+      regions: _regions,
+      preserveMetadata: settings.preserveMetadata,
+      sourceFileName: _sourceFileName,
+    );
+    setState(() => _saveRun = run);
+    final outcome = await run.save(
+      render: (cancellationToken) =>
+          widget.renderCopy(request, cancellationToken: cancellationToken),
+      sourceBytes: request.sourceBytes,
+      sourcePath: _sourcePath,
+    );
+    if (outcome case DerivativeCopyFailed(:final error, :final stackTrace)) {
       AppLogger.e(
         'Failed to create redacted copy',
         error,
         stackTrace,
         'MosaicEditor',
       );
-      if (mounted) _showError('${context.l10n.mosaic_failedGeneric}\n$error');
-    } finally {
-      _renderToken = null;
-      if (mounted) setState(() => _saving = false);
+    }
+    if (outcome is DerivativeCopySaved && settings.rememberLastStyle) {
+      unawaited(_rememberStyle(settingsNotifier, settings));
+    }
+    if (run.isClosed || !mounted) return;
+    setState(() => _saveRun = null);
+    switch (outcome) {
+      case DerivativeCopySaved(:final copy, :final outputPath):
+        await _showSaved(copy, outputPath);
+        if (mounted) Navigator.of(context).pop(outputPath);
+      case DerivativeCopyCancelled():
+        return;
+      case DerivativeCopyFailed(:final error):
+        _showError('${context.l10n.mosaic_failedGeneric}\n$error');
     }
   }
 
-  Future<Object?> _refreshGalleryAfterSave() async {
-    Object? galleryRefreshError;
+  static Future<void> _rememberStyle(
+    MosaicSettingsNotifier notifier,
+    MosaicSettings settings,
+  ) async {
     try {
-      final previousError = ref.read(localGalleryNotifierProvider).error;
-      await ref.read(localGalleryNotifierProvider.notifier).refresh();
-      if (!mounted) return null;
-      final refreshError = ref.read(localGalleryNotifierProvider).error;
-      if (refreshError != null && !identical(refreshError, previousError)) {
-        galleryRefreshError = refreshError;
-        AppLogger.e(
-          'Redacted copy saved but gallery refresh failed',
-          refreshError.details ?? refreshError.code.name,
-          null,
-          'MosaicEditor',
-        );
-      }
+      await notifier.saveDefaults(settings);
     } on Object catch (error, stackTrace) {
-      galleryRefreshError = error;
       AppLogger.e(
-        'Redacted copy saved but gallery refresh failed',
+        'Redacted copy saved but its style was not remembered',
         error,
         stackTrace,
         'MosaicEditor',
       );
     }
-    return galleryRefreshError;
   }
 
-  Future<void> _showSaved(MosaicRenderResult result, String output) async {
+  Future<void> _showSaved(DerivativeRenderedCopy result, String output) async {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -746,7 +689,7 @@ class _MosaicEditorScreenState extends ConsumerState<MosaicEditorScreen> {
     );
   }
 
-  Future<void> _share(MosaicRenderResult result) async {
+  Future<void> _share(DerivativeRenderedCopy result) async {
     final stripMetadata = ref
         .read(shareImageSettingsProvider)
         .effectiveStripMetadataForCopyAndDrag;
@@ -806,9 +749,8 @@ class _MosaicEditorScreenState extends ConsumerState<MosaicEditorScreen> {
   Widget build(BuildContext context) {
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
     return PopScope(
-      canPop: !_saving,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _saving) _renderToken?.cancel();
+        if (didPop) _saveRun?.close();
       },
       child: Material(
         color: Theme.of(context).colorScheme.surface,
@@ -852,7 +794,7 @@ class _MosaicEditorScreenState extends ConsumerState<MosaicEditorScreen> {
         ),
         IconButton(
           tooltip: context.l10n.common_close,
-          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.close),
         ),
       ],
@@ -1171,28 +1113,34 @@ class _MosaicEditorScreenState extends ConsumerState<MosaicEditorScreen> {
     ),
     const SizedBox(height: 10),
     if (_settings.effect == MosaicEffect.pixelate)
-      _MosaicSlider(
-        label: context.l10n.mosaic_pixelSize,
-        value: _settings.pixelSizeRatio,
-        min: 0.004,
-        max: 0.08,
-        onChangeStart: _pushUndo,
-        onChanged: (value) => _changeSettings(
-          _settings.copyWith(pixelSizeRatio: value),
-          recordUndo: false,
-        ),
+      LabeledSliderRows(
+        sliders: [
+          _ratioSlider(
+            label: context.l10n.mosaic_pixelSize,
+            value: _settings.pixelSizeRatio,
+            min: 0.004,
+            max: 0.08,
+            onChanged: (value) => _changeSettings(
+              _settings.copyWith(pixelSizeRatio: value),
+              recordUndo: false,
+            ),
+          ),
+        ],
       ),
     if (_settings.effect == MosaicEffect.blur)
-      _MosaicSlider(
-        label: context.l10n.mosaic_blurStrength,
-        value: _settings.blurSigmaRatio,
-        min: 0.003,
-        max: 0.06,
-        onChangeStart: _pushUndo,
-        onChanged: (value) => _changeSettings(
-          _settings.copyWith(blurSigmaRatio: value),
-          recordUndo: false,
-        ),
+      LabeledSliderRows(
+        sliders: [
+          _ratioSlider(
+            label: context.l10n.mosaic_blurStrength,
+            value: _settings.blurSigmaRatio,
+            min: 0.003,
+            max: 0.06,
+            onChanged: (value) => _changeSettings(
+              _settings.copyWith(blurSigmaRatio: value),
+              recordUndo: false,
+            ),
+          ),
+        ],
       ),
     if (_settings.effect == MosaicEffect.solid)
       ListTile(
@@ -1212,44 +1160,65 @@ class _MosaicEditorScreenState extends ConsumerState<MosaicEditorScreen> {
       ),
   ];
 
+  LabeledSlider _ratioSlider({
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required ValueChanged<double>? onChanged,
+  }) {
+    // 选区贴边时可移动范围会收成一点，滑块区间不能为空
+    final safeMax = math.max(min + 0.000001, max);
+    return LabeledSlider(
+      label: label,
+      value: value.clamp(min, safeMax).toDouble(),
+      min: min,
+      max: safeMax,
+      valueText: _percentText,
+      onChangeStart: onChanged == null ? null : (_) => _pushUndo(),
+      onChanged: onChanged,
+    );
+  }
+
   List<Widget> _buildMaskControls() => [
-    _MosaicSlider(
-      label: context.l10n.mosaic_opacity,
-      value: _settings.opacity,
-      min: 0.1,
-      max: 1,
-      onChangeStart: _pushUndo,
-      onChanged: (value) => _changeSettings(
-        _settings.copyWith(opacity: value),
-        recordUndo: false,
-      ),
-    ),
-    _MosaicSlider(
-      label: context.l10n.mosaic_cornerRadius,
-      value: _settings.cornerRadiusRatio,
-      min: 0,
-      max: 0.5,
-      onChangeStart: _pushUndo,
-      onChanged: (value) => _changeSettings(
-        _settings.copyWith(cornerRadiusRatio: value),
-        recordUndo: false,
-      ),
-    ),
-    _MosaicSlider(
-      label: context.l10n.mosaic_brushSize,
-      value: _settings.brushSizeRatio,
-      min: 0.01,
-      max: 0.16,
-      onChangeStart: _pushUndo,
-      onChanged: (value) {
-        _changeSettings(
-          _settings.copyWith(brushSizeRatio: value),
-          recordUndo: false,
-        );
-        if (_selectedRegion?.shape == MosaicShape.brush) {
-          _setSelectedBrushSize(value);
-        }
-      },
+    LabeledSliderRows(
+      sliders: [
+        _ratioSlider(
+          label: context.l10n.mosaic_opacity,
+          value: _settings.opacity,
+          min: 0.1,
+          max: 1,
+          onChanged: (value) => _changeSettings(
+            _settings.copyWith(opacity: value),
+            recordUndo: false,
+          ),
+        ),
+        _ratioSlider(
+          label: context.l10n.mosaic_cornerRadius,
+          value: _settings.cornerRadiusRatio,
+          min: 0,
+          max: 0.5,
+          onChanged: (value) => _changeSettings(
+            _settings.copyWith(cornerRadiusRatio: value),
+            recordUndo: false,
+          ),
+        ),
+        _ratioSlider(
+          label: context.l10n.mosaic_brushSize,
+          value: _settings.brushSizeRatio,
+          min: 0.01,
+          max: 0.16,
+          onChanged: (value) {
+            _changeSettings(
+              _settings.copyWith(brushSizeRatio: value),
+              recordUndo: false,
+            );
+            if (_selectedRegion?.shape == MosaicShape.brush) {
+              _setSelectedBrushSize(value);
+            }
+          },
+        ),
+      ],
     ),
     SwitchListTile(
       contentPadding: EdgeInsets.zero,
@@ -1366,68 +1335,71 @@ class _MosaicEditorScreenState extends ConsumerState<MosaicEditorScreen> {
   List<Widget> _buildRegionGeometryControls(MosaicRegion selected) => [
     if (selected.shape != MosaicShape.brush) ...[
       const SizedBox(height: 8),
-      _MosaicSlider(
-        label: context.l10n.mosaic_positionX,
-        value: selected.left,
-        min: 0,
-        max: math.max(0.001, 1 - selected.width),
-        onChangeStart: _pushUndo,
-        onChanged: selected.locked
-            ? null
-            : (value) => _updateRegion(
-                selected.copyWith(left: value),
-                recordUndo: false,
-              ),
-      ),
-      _MosaicSlider(
-        label: context.l10n.mosaic_positionY,
-        value: selected.top,
-        min: 0,
-        max: math.max(0.001, 1 - selected.height),
-        onChangeStart: _pushUndo,
-        onChanged: selected.locked
-            ? null
-            : (value) => _updateRegion(
-                selected.copyWith(top: value),
-                recordUndo: false,
-              ),
-      ),
-      _MosaicSlider(
-        label: context.l10n.mosaic_width,
-        value: selected.width,
-        min: 0.02,
-        max: math.max(0.02, 1 - selected.left),
-        onChangeStart: _pushUndo,
-        onChanged: selected.locked
-            ? null
-            : (value) => _updateRegion(
-                selected.copyWith(width: value),
-                recordUndo: false,
-              ),
-      ),
-      _MosaicSlider(
-        label: context.l10n.mosaic_height,
-        value: selected.height,
-        min: 0.02,
-        max: math.max(0.02, 1 - selected.top),
-        onChangeStart: _pushUndo,
-        onChanged: selected.locked
-            ? null
-            : (value) => _updateRegion(
-                selected.copyWith(height: value),
-                recordUndo: false,
-              ),
+      LabeledSliderRows(
+        sliders: [
+          _ratioSlider(
+            label: context.l10n.mosaic_positionX,
+            value: selected.left,
+            min: 0,
+            max: math.max(0.001, 1 - selected.width),
+            onChanged: selected.locked
+                ? null
+                : (value) => _updateRegion(
+                    selected.copyWith(left: value),
+                    recordUndo: false,
+                  ),
+          ),
+          _ratioSlider(
+            label: context.l10n.mosaic_positionY,
+            value: selected.top,
+            min: 0,
+            max: math.max(0.001, 1 - selected.height),
+            onChanged: selected.locked
+                ? null
+                : (value) => _updateRegion(
+                    selected.copyWith(top: value),
+                    recordUndo: false,
+                  ),
+          ),
+          _ratioSlider(
+            label: context.l10n.mosaic_width,
+            value: selected.width,
+            min: 0.02,
+            max: math.max(0.02, 1 - selected.left),
+            onChanged: selected.locked
+                ? null
+                : (value) => _updateRegion(
+                    selected.copyWith(width: value),
+                    recordUndo: false,
+                  ),
+          ),
+          _ratioSlider(
+            label: context.l10n.mosaic_height,
+            value: selected.height,
+            min: 0.02,
+            max: math.max(0.02, 1 - selected.top),
+            onChanged: selected.locked
+                ? null
+                : (value) => _updateRegion(
+                    selected.copyWith(height: value),
+                    recordUndo: false,
+                  ),
+          ),
+        ],
       ),
     ] else
-      _MosaicSlider(
-        label: context.l10n.mosaic_brushSize,
-        value: selected.brushSizeRatio,
-        min: 0.01,
-        max: 0.16,
-        onChangeStart: _pushUndo,
-        onChanged: selected.locked
-            ? null
-            : (value) => _setSelectedBrushSize(value),
+      LabeledSliderRows(
+        sliders: [
+          _ratioSlider(
+            label: context.l10n.mosaic_brushSize,
+            value: selected.brushSizeRatio,
+            min: 0.01,
+            max: 0.16,
+            onChanged: selected.locked
+                ? null
+                : (value) => _setSelectedBrushSize(value),
+          ),
+        ],
       ),
   ];
 
@@ -1588,64 +1560,4 @@ class _MosaicSnapshot {
   final MosaicShape drawShape;
 }
 
-class _MosaicSlider extends StatelessWidget {
-  const _MosaicSlider({
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.onChangeStart,
-    required this.onChanged,
-  });
-
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final VoidCallback onChangeStart;
-  final ValueChanged<double>? onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final safeMax = math.max(min + 0.000001, max);
-    final safeValue = value.clamp(min, safeMax).toDouble();
-    return Semantics(
-      label: label,
-      value: '${(safeValue * 100).toStringAsFixed(1)}%',
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final percentage = Text('${(safeValue * 100).toStringAsFixed(0)}%');
-          final slider = Slider(
-            value: safeValue,
-            min: min,
-            max: safeMax,
-            onChangeStart: onChanged == null ? null : (_) => onChangeStart(),
-            onChanged: onChanged,
-          );
-          if (constraints.maxWidth < 350 ||
-              MediaQuery.textScalerOf(context).scale(14) > 20) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label),
-                Row(
-                  children: [
-                    Expanded(child: slider),
-                    percentage,
-                  ],
-                ),
-              ],
-            );
-          }
-          return Row(
-            children: [
-              SizedBox(width: 116, child: Text(label)),
-              Expanded(child: slider),
-              percentage,
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
+String _percentText(double value) => '${(value * 100).toStringAsFixed(0)}%';

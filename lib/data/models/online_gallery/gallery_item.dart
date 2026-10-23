@@ -23,6 +23,19 @@ class GalleryMedia {
     this.metadata = const {},
   });
 
+  /// List payloads without media use this until the work detail loads.
+  factory GalleryMedia.pending(String workId) =>
+      GalleryMedia(id: pendingIdFor(workId), mediaType: 'image');
+
+  static String pendingIdFor(String workId) => '${workId}_pending';
+
+  /// Cover of entries that carry no media at all, such as text-only entries.
+  static const GalleryMedia noImage = GalleryMedia(id: noImageId);
+  static const String noImageId = 'no-image';
+
+  static bool isPlaceholderId(String? id, String workId) =>
+      id == noImageId || id == pendingIdFor(workId);
+
   final String id;
   final String previewUrl;
   final String displayUrl;
@@ -248,6 +261,12 @@ class GalleryItem {
   bool get isAnimated => mediaCapability.isAnimatedImage;
 
   bool get hasValidPreview => previewUrl.isNotEmpty;
+  bool get hasPendingCover =>
+      cover.id == GalleryMedia.pendingIdFor(sourceWorkId);
+
+  /// Null while the cover is a placeholder that detail media never contains.
+  String? get coverMediaId =>
+      GalleryMedia.isPlaceholderId(cover.id, sourceWorkId) ? null : cover.id;
   bool get hasFile => downloadUrl.isNotEmpty;
   bool get hasLarge => (largeFileUrl ?? '').isNotEmpty;
   String? get mediaTypeLabel {

@@ -17,11 +17,13 @@ class AgentToolPermissionController {
     estimateAnlas,
     required List<String> Function(String toolName, Map<String, dynamic> args)
     describeFileTargets,
+    required int? Function() chargeConfirmThreshold,
     required void Function(AgentToolApprovalRequest? request) onApprovalChanged,
     required bool Function() isMounted,
   }) : _auditSink = auditSink,
        _estimateAnlas = estimateAnlas,
        _describeFileTargets = describeFileTargets,
+       _chargeConfirmThreshold = chargeConfirmThreshold,
        _onApprovalChanged = onApprovalChanged,
        _isMounted = isMounted;
 
@@ -29,6 +31,8 @@ class AgentToolPermissionController {
   final Future<int?> Function(String, Map<String, dynamic>) _estimateAnlas;
   final List<String> Function(String, Map<String, dynamic>)
   _describeFileTargets;
+  // 调用时才读，保护模式阈值改动无需重建工具注册表。
+  final int? Function() _chargeConfirmThreshold;
   final void Function(AgentToolApprovalRequest?) _onApprovalChanged;
   final bool Function() _isMounted;
   final Map<String, AgentPermissionDecision> _toolDecisions = {};
@@ -109,9 +113,13 @@ class AgentToolPermissionController {
       return null;
     }
     if (decision == AgentPermissionDecision.block) {
-      return const BeforeToolCallResult(
+      return BeforeToolCallResult(
         block: true,
-        reason: 'This tool is blocked by its permission domain policy.',
+        reason: estimatedAnlas != null && estimatedAnlas < 0
+            ? 'The Anlas cost of this call cannot be calculated, so it was '
+                  'not sent; check the tool limits (for example the source '
+                  'image size) and adjust the arguments.'
+            : 'This tool is blocked by its permission domain policy.',
       );
     }
     final previousApproval = _approvalCompleter;
@@ -179,6 +187,7 @@ class AgentToolPermissionController {
             toolName: toolName,
             policy: policy,
             estimatedAnlas: estimatedAnlas,
+            chargeConfirmThreshold: _chargeConfirmThreshold(),
           );
     if (fileTargets.isEmpty || toolName == 'save_generated_image') {
       return decision;

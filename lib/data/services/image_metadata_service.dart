@@ -2,15 +2,14 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:hive/hive.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../../core/utils/app_logger.dart';
-import '../../core/utils/isolate_pool.dart';
 import '../models/gallery/nai_image_metadata.dart';
 import 'fixed_tag/fixed_tag_usage_record_store.dart';
 import 'metadata/cache_manager.dart';
 import 'metadata/hash_calculator.dart';
-import 'metadata/preloader.dart';
+import 'metadata/metadata_parse_executor.dart';
 import 'metadata/unified_metadata_parser.dart';
 
 /// 解析任务取消 Token
@@ -122,7 +121,7 @@ class ParseStatistics {
 /// - ImageMetadataService: 主服务，协调各组件
 /// - MetadataCacheManager: L1/L2 缓存管理
 /// - FileHashCalculator: 文件哈希计算
-/// - MetadataPreloader: 后台预加载队列
+/// - MetadataParseExecutor: 后台 isolate 解析
 /// - UnifiedMetadataParser: 统一元数据解析器
 ///
 /// 新特性：
@@ -138,7 +137,7 @@ class ImageMetadataService {
   // 子组件
   final _cacheManager = MetadataCacheManager();
   final _hashCalculator = FileHashCalculator();
-  final _preloader = MetadataPreloader();
+  MetadataParseExecutor _parseExecutor = const MetadataParseExecutor();
   final _fixedTagUsageRecords = FixedTagUsageRecordStore();
 
   // 并发控制
@@ -162,6 +161,12 @@ class ImageMetadataService {
     await _fixedTagUsageRecords.initialize();
   }
 
+  /// 传 null 恢复默认的后台执行器。
+  @visibleForTesting
+  void debugSetParseExecutorForTesting(MetadataParseExecutor? executor) {
+    _parseExecutor = executor ?? const MetadataParseExecutor();
+  }
+
   /// 前台立即获取元数据（高优先级）
   ///
   /// [path] 文件路径
@@ -176,12 +181,12 @@ class ImageMetadataService {
       return null;
     }
 
-    final hash = await _hashCalculator.calculate(path);
+    final hashed = await _hashCalculator.snapshot(path);
     return _withRecordedFixedTags(
-      hash,
+      hashed.hash,
       await _resolveMetadataImmediate(
         path,
-        hash: hash,
+        hashed: hashed,
         cancelToken: cancelToken,
       ),
     );
@@ -189,25 +194,14 @@ class ImageMetadataService {
 
   Future<NaiImageMetadata?> _resolveMetadataImmediate(
     String path, {
-    required String hash,
+    required FileHashSnapshot hashed,
     ParseCancelToken? cancelToken,
   }) async {
-    final stopwatch = Stopwatch()..start();
-
-    // 检查 L1 内存缓存
-    final memoryCached = _cacheManager.getFromMemory(hash);
-    if (memoryCached != null) {
-      stopwatch.stop();
+    final hash = hashed.hash;
+    final cached = await _cacheManager.lookup(hash);
+    if (cached != null) {
       _statistics.recordCacheHit();
-      return memoryCached;
-    }
-
-    // 检查 L2 持久化缓存
-    final persistentCached = _cacheManager.getFromPersistent(hash);
-    if (persistentCached != null) {
-      stopwatch.stop();
-      _statistics.recordCacheHit();
-      return persistentCached;
+      return cached;
     }
 
     // 检查是否有正在进行的解析
@@ -240,15 +234,12 @@ class ImageMetadataService {
     _activeTimeouts[hash] = timeoutTimer;
 
     try {
-      // 执行解析
       final result = await _parseAndCache(
         path,
-        hash: hash,
+        hashed: hashed,
         cancelToken: cancelToken,
         isHighPriority: true,
       );
-
-      stopwatch.stop();
 
       if (!taskCompleter.isCompleted) {
         taskCompleter.complete(result);
@@ -289,12 +280,12 @@ class ImageMetadataService {
       return null;
     }
 
-    final hash = await _hashCalculator.calculate(path);
+    final hashed = await _hashCalculator.snapshot(path);
     return _withRecordedFixedTags(
-      hash,
+      hashed.hash,
       await _resolveMetadata(
         path,
-        hash: hash,
+        hashed: hashed,
         cancelToken: cancelToken,
         timeout: timeout,
       ),
@@ -303,24 +294,17 @@ class ImageMetadataService {
 
   Future<NaiImageMetadata?> _resolveMetadata(
     String path, {
-    required String hash,
+    required FileHashSnapshot hashed,
     ParseCancelToken? cancelToken,
     Duration? timeout,
   }) async {
+    final hash = hashed.hash;
     final stopwatch = Stopwatch()..start();
 
-    // 检查 L1 内存缓存
-    final memoryCached = _cacheManager.getFromMemory(hash);
-    if (memoryCached != null) {
+    final cached = await _cacheManager.lookup(hash);
+    if (cached != null) {
       _statistics.recordCacheHit();
-      return memoryCached;
-    }
-
-    // 检查 L2 持久化缓存
-    final persistentCached = _cacheManager.getFromPersistent(hash);
-    if (persistentCached != null) {
-      _statistics.recordCacheHit();
-      return persistentCached;
+      return cached;
     }
 
     // 检查是否有正在进行的解析
@@ -355,7 +339,7 @@ class ImageMetadataService {
     try {
       final result = await _parseAndCache(
         path,
-        hash: hash,
+        hashed: hashed,
         cancelToken: cancelToken,
       );
 
@@ -392,7 +376,7 @@ class ImageMetadataService {
 
   /// 从字节数组获取元数据
   Future<NaiImageMetadata?> getMetadataFromBytes(Uint8List bytes) async {
-    final hash = _hashCalculator.calculateFromBytes(bytes);
+    final hash = await _hashCalculator.calculateFromBytesInBackground(bytes);
     return _withRecordedFixedTags(
       hash,
       await _resolveMetadataFromBytes(bytes, hash: hash),
@@ -403,15 +387,8 @@ class ImageMetadataService {
     Uint8List bytes, {
     required String hash,
   }) async {
-    // 检查 L1 内存缓存
-    final memoryCached = _cacheManager.getFromMemory(hash);
-    if (memoryCached != null) return memoryCached;
-
-    // 检查 L2 持久化缓存
-    final persistentCached = _cacheManager.getFromPersistent(hash);
-    if (persistentCached != null) {
-      return persistentCached;
-    }
+    final cached = await _cacheManager.lookup(hash);
+    if (cached != null) return cached;
 
     // 检查是否有正在进行的解析
     final existingTask = _pendingTasks[hash];
@@ -454,10 +431,8 @@ class ImageMetadataService {
   Future<MetadataParseResult> getMetadataParseResultFromBytes(
     Uint8List bytes,
   ) async {
-    final hash = _hashCalculator.calculateFromBytes(bytes);
-    final cached =
-        _cacheManager.getFromMemory(hash) ??
-        _cacheManager.getFromPersistent(hash);
+    final hash = await _hashCalculator.calculateFromBytesInBackground(bytes);
+    final cached = await _cacheManager.lookup(hash);
     if (cached != null) {
       return MetadataParseResult.success(
         _withRecordedFixedTags(hash, cached)!,
@@ -470,13 +445,7 @@ class ImageMetadataService {
 
     final stopwatch = Stopwatch()..start();
     try {
-      // PNG stealth metadata can require a full pixel decode. Keep it off the
-      // UI isolate even though the surrounding cache API is asynchronous.
-      final result = await ComputeGate().runCompute(
-        UnifiedMetadataParser.parseFromImage,
-        bytes,
-        debugLabel: 'image_metadata_from_bytes',
-      );
+      final result = await _parseExecutor.parseBytes(bytes);
       final metadata = result.success ? result.metadata : null;
       if (metadata != null && metadata.hasData) {
         try {
@@ -510,69 +479,28 @@ class ImageMetadataService {
     }
   }
 
-  /// 将图像加入预加载队列
-  void enqueuePreload({
-    required String taskId,
-    String? filePath,
-    Uint8List? bytes,
-  }) {
-    _preloader.enqueue(taskId: taskId, filePath: filePath, bytes: bytes);
-  }
-
-  /// 从缓存获取元数据（同步检查）
+  /// 从 L1 内存缓存同步获取元数据
+  ///
+  /// L2 需要读盘，只在 [getCachedAsync] 里查；需要首帧就有元数据的界面先用它预取。
+  /// 已知路径会同步 stat 一次校验文件身份，文件被改写或删除时返回 null。
   NaiImageMetadata? getCached(String path) {
-
-    final hash = _hashCalculator.getHashForPath(path);
+    final hash = _hashCalculator.verifiedHashForPathSync(path);
     if (hash == null) return null;
-
-    // 检查 L1 内存缓存
-    final memoryCached = _cacheManager.getFromMemory(hash);
-    if (memoryCached != null) {
-      return _withRecordedFixedTags(hash, memoryCached);
-    }
-
-    // 检查 L2 持久化缓存
-    final persistentCached = _cacheManager.getFromPersistent(hash);
-    if (persistentCached != null) {
-      return _withRecordedFixedTags(hash, persistentCached);
-    }
-    return null;
+    return _withRecordedFixedTags(hash, _cacheManager.getFromMemory(hash));
   }
 
-  /// 取消指定路径的解析任务
-  void cancelParse(String path) {
-    final hash = _hashCalculator.getHashForPath(path);
-    if (hash != null) {
-      _cancelTask(hash);
-    }
+  /// 依次查 L1、L2，不解析文件；L2 命中会放入 L1，之后 [getCached] 可同步取到
+  Future<NaiImageMetadata?> getCachedAsync(String path) async {
+    final hash = await _hashCalculator.verifiedHashForPath(path);
+    if (hash == null) return null;
+    return _withRecordedFixedTags(hash, await _cacheManager.lookup(hash));
   }
 
-  /// 取消所有进行中的解析任务
-  void cancelAllParses() {
-    final hashes = List<String>.from(_pendingTasks.keys);
-    for (final hash in hashes) {
-      _cancelTask(hash);
-    }
-  }
-
-  /// 清除所有缓存
-  Future<void> clearCache() async {
-    await _cacheManager.clear();
+  /// 清除 L1 与路径哈希缓存；L2 保留
+  void clearMemoryCache() {
+    _cacheManager.clearMemory();
     _hashCalculator.clearCache();
   }
-
-  /// 清除持久化缓存
-  Future<void> clearPersistentCache() async {
-    await _cacheManager.clearPersistent();
-  }
-
-  /// 通知路径变更（文件重命名检测）
-  void notifyPathChanged(String oldPath, String newPath) {
-    _hashCalculator.notifyPathChanged(oldPath, newPath);
-  }
-
-  /// 预加载（简写）
-  void preload(String path) => enqueuePreload(taskId: path, filePath: path);
 
   // ==================== 统计信息 ====================
 
@@ -582,17 +510,17 @@ class ImageMetadataService {
   /// L1 内存缓存命中率
   double get memoryCacheHitRate => _cacheManager.memoryHitRate;
 
+  /// L1 内存缓存估算字节数
+  int get memoryCacheEstimatedBytes => _cacheManager.estimatedMemoryBytes;
+
   /// L2 持久化缓存大小
   Future<int> get persistentCacheSize async => _cacheManager.persistentSize;
 
   /// L2 持久化缓存命中率
   double get persistentCacheHitRate => _cacheManager.persistentHitRate;
 
-  /// Hive 缓存 Box（用于 L2CacheCleaner 访问）
-  Box<String>? get persistentBox => _cacheManager.box;
-
-  /// 获取哈希对应的所有路径
-  List<String> getPathsForHash(String hash) => _hashCalculator.getPathsForHash(hash);
+  /// L2 持久化缓存在磁盘上的文件字节数
+  Future<int> get persistentCacheFileBytes => _cacheManager.persistentFileBytes;
 
   /// 获取解析统计
   ParseStatistics get parseStatistics => _statistics;
@@ -601,7 +529,6 @@ class ImageMetadataService {
   void resetStatistics() {
     _cacheManager.resetStatistics();
     _hashCalculator.resetStatistics();
-    _preloader.resetStatistics();
     _statistics.reset();
   }
 
@@ -609,14 +536,10 @@ class ImageMetadataService {
   Map<String, dynamic> getStats() => {
     ..._cacheManager.getStatistics(),
     ..._hashCalculator.getStatistics(),
-    ..._preloader.getStatistics(),
     ..._statistics.toMap(),
     'pendingTasks': _pendingTasks.length,
     'activeTimeouts': _activeTimeouts.length,
   };
-
-  /// 获取预加载队列状态
-  Map<String, dynamic> getPreloadQueueStatus() => _preloader.getStatistics();
 
   // ==================== 私有方法 ====================
 
@@ -657,14 +580,6 @@ class ImageMetadataService {
     _activeTimeouts.remove(hash);
   }
 
-  void _cancelTask(String hash) {
-    final task = _pendingTasks[hash];
-    if (task != null && !task.completer.isCompleted) {
-      task.completer.complete(null);
-      _cleanupTask(hash);
-    }
-  }
-
   void _checkCancelled(ParseCancelToken? token) {
     if (token?.isCancelled ?? false) {
       throw const _ParseCancelledException();
@@ -673,7 +588,7 @@ class ImageMetadataService {
 
   Future<NaiImageMetadata?> _parseAndCache(
     String path, {
-    required String hash,
+    required FileHashSnapshot hashed,
     ParseCancelToken? cancelToken,
     bool isHighPriority = false,
   }) async {
@@ -701,11 +616,7 @@ class ImageMetadataService {
       try {
         _checkCancelled(cancelToken);
 
-        final result = UnifiedMetadataParser.parseFromFile(
-          path,
-          useGradualRead: true,
-          useCache: true,
-        );
+        final result = await _parseExecutor.parseFile(path);
 
         parseStopwatch.stop();
 
@@ -714,7 +625,7 @@ class ImageMetadataService {
         } else {
           parseError = result.errorMessage;
         }
-      } catch (e, _) {
+      } catch (e) {
         parseStopwatch.stop();
         AppLogger.w('[MetadataFlow] Unified parse error: $e', 'ImageMetadataService');
         metadata = null;
@@ -724,7 +635,19 @@ class ImageMetadataService {
 
       // 缓存结果
       if (metadata != null && metadata.hasData) {
-        await _cacheManager.save(hash, metadata);
+        // 哈希与解析各读一次盘；其间文件被改写时，读到的内容不属于这个哈希
+        if (!await hashed.isUnchanged()) {
+          _statistics.recordFailure(
+            'file_changed_during_parse',
+            totalStopwatch.elapsed,
+          );
+          AppLogger.w(
+            '[MetadataFlow] File changed during parse, result discarded: $path',
+            'ImageMetadataService',
+          );
+          return null;
+        }
+        await _cacheManager.save(hashed.hash, metadata);
         _statistics.recordSuccess(totalStopwatch.elapsed);
       } else {
         if (metadata == null) {
@@ -768,7 +691,7 @@ class ImageMetadataService {
         return null;
       }
 
-      final result = UnifiedMetadataParser.parseFromImage(bytes);
+      final result = await _parseExecutor.parseBytes(bytes);
       final metadata = result.success ? result.metadata : null;
 
       if (metadata != null && metadata.hasData) {

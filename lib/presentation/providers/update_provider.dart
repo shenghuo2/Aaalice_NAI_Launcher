@@ -26,8 +26,11 @@ enum UpdateStatus {
 class UpdateState {
   final UpdateStatus status;
   final VersionInfo? versionInfo;
-  final String? errorMessage;
   final UpdateCheckFailureType? checkFailureType;
+  final UpdateInstallFailure? installFailure;
+
+  /// 上次更新脚本留下的日志，随安装失败一起展示。
+  final String? errorLogPath;
   final double downloadProgress;
   final int receivedBytes;
   final int totalBytes;
@@ -40,8 +43,9 @@ class UpdateState {
   const UpdateState({
     this.status = UpdateStatus.idle,
     this.versionInfo,
-    this.errorMessage,
     this.checkFailureType,
+    this.installFailure,
+    this.errorLogPath,
     this.downloadProgress = 0,
     this.receivedBytes = 0,
     this.totalBytes = 0,
@@ -53,8 +57,9 @@ class UpdateState {
   UpdateState copyWith({
     UpdateStatus? status,
     VersionInfo? versionInfo,
-    String? errorMessage,
     UpdateCheckFailureType? checkFailureType,
+    UpdateInstallFailure? installFailure,
+    String? errorLogPath,
     double? downloadProgress,
     int? receivedBytes,
     int? totalBytes,
@@ -62,11 +67,16 @@ class UpdateState {
     DownloadedUpdate? downloadedUpdate,
     bool? notificationVisible,
   }) {
+    // 失败详情属于当前状态：只改提示可见性等字段时沿用，切换状态时清空
+    final keepsFailure = status == null;
     return UpdateState(
       status: status ?? this.status,
       versionInfo: versionInfo ?? this.versionInfo,
-      errorMessage: errorMessage,
-      checkFailureType: checkFailureType,
+      checkFailureType:
+          checkFailureType ?? (keepsFailure ? this.checkFailureType : null),
+      installFailure:
+          installFailure ?? (keepsFailure ? this.installFailure : null),
+      errorLogPath: errorLogPath ?? (keepsFailure ? this.errorLogPath : null),
       downloadProgress: downloadProgress ?? this.downloadProgress,
       receivedBytes: receivedBytes ?? this.receivedBytes,
       totalBytes: totalBytes ?? this.totalBytes,
@@ -124,14 +134,12 @@ class UpdateStateNotifier extends _$UpdateStateNotifier {
           checkService.currentVersion,
         )) {
       if (result != null && !result.success) {
-        final logSuffix = result.logPath == null
-            ? ''
-            : '\n日志：${result.logPath}';
         state = UpdateState(
           status: UpdateStatus.error,
           versionInfo: restored.versionInfo,
           downloadedUpdate: restored.update,
-          errorMessage: '${result.message ?? '安装更新失败'}$logSuffix',
+          installFailure: _executionFailureOf(result),
+          errorLogPath: result.logPath,
           notificationVisible: true,
         );
       } else {
@@ -163,7 +171,8 @@ class UpdateStateNotifier extends _$UpdateStateNotifier {
     if (result != null && !result.success) {
       state = UpdateState(
         status: UpdateStatus.error,
-        errorMessage: result.message ?? '安装更新失败，请查看更新日志',
+        installFailure: _executionFailureOf(result),
+        errorLogPath: result.logPath,
         notificationVisible: true,
       );
     }
@@ -199,9 +208,6 @@ class UpdateStateNotifier extends _$UpdateStateNotifier {
       if (manual) {
         state = UpdateState(
           status: UpdateStatus.error,
-          errorMessage: error is UpdateCheckException
-              ? null
-              : _formatError(error),
           checkFailureType: error is UpdateCheckException
               ? error.type
               : UpdateCheckFailureType.unknown,
@@ -272,7 +278,6 @@ class UpdateStateNotifier extends _$UpdateStateNotifier {
 
     state = state.copyWith(
       status: UpdateStatus.downloading,
-      errorMessage: null,
       downloadProgress: 0,
       receivedBytes: 0,
       totalBytes: versionInfo.primaryAsset?.size ?? 0,
@@ -313,11 +318,13 @@ class UpdateStateNotifier extends _$UpdateStateNotifier {
         versionInfo: versionInfo,
         notificationVisible: true,
       );
-    } catch (error) {
+    } catch (error, stackTrace) {
+      AppLogger.w('Update download failed: $error', 'UpdateNotifier');
+      AppLogger.d('$stackTrace', 'UpdateNotifier');
       state = UpdateState(
         status: UpdateStatus.error,
         versionInfo: versionInfo,
-        errorMessage: _formatError(error),
+        installFailure: _installFailureOf(error),
         notificationVisible: true,
       );
     } finally {
@@ -339,7 +346,6 @@ class UpdateStateNotifier extends _$UpdateStateNotifier {
 
     state = state.copyWith(
       status: UpdateStatus.installing,
-      errorMessage: null,
       notificationVisible: true,
     );
     try {
@@ -355,10 +361,12 @@ class UpdateStateNotifier extends _$UpdateStateNotifier {
         );
         _scheduleReminder(UpdateCheckService.defaultReminderDelay);
       }
-    } catch (error) {
+    } catch (error, stackTrace) {
+      AppLogger.w('Update install failed: $error', 'UpdateNotifier');
+      AppLogger.d('$stackTrace', 'UpdateNotifier');
       state = state.copyWith(
         status: UpdateStatus.error,
-        errorMessage: _formatError(error),
+        installFailure: _installFailureOf(error),
         notificationVisible: true,
       );
     }
@@ -382,21 +390,16 @@ class UpdateStateNotifier extends _$UpdateStateNotifier {
     state = const UpdateState();
   }
 
-  String _formatError(Object error) {
-    if (error is UpdateCheckException) return error.message;
-    if (error is UpdateInstallException) return error.message;
-    if (error is DioException) {
-      return switch (error.type) {
-        DioExceptionType.connectionTimeout ||
-        DioExceptionType.sendTimeout ||
-        DioExceptionType.receiveTimeout => '网络连接超时，请稍后重试',
-        DioExceptionType.connectionError => '无法连接更新服务器，请检查网络或代理设置',
-        DioExceptionType.cancel => '操作已取消',
-        _ => '更新请求失败，请稍后重试',
-      };
-    }
-    return '更新操作失败，请稍后重试';
-  }
+  static UpdateInstallFailure _installFailureOf(Object error) =>
+      error is UpdateInstallException
+      ? error.failure
+      : UpdateInstallFailure.unknown;
+
+  static UpdateInstallFailure _executionFailureOf(
+    UpdateExecutionResult result,
+  ) => result.interrupted
+      ? UpdateInstallFailure.installInterrupted
+      : UpdateInstallFailure.installFailed;
 }
 
 /// 保持既有调用方使用的简洁 Provider 名称。

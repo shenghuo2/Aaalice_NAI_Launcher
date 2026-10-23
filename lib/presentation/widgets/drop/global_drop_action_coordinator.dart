@@ -63,6 +63,7 @@ Future<String?> showVibeLibraryNamingForm({
         ? '${l10n.vibe_saveToLibrary_saveAsBundle} (${vibes.length})'
         : l10n.vibe_saveToLibrary_title,
     dialogWidth: 520,
+    headerScrollsWithContent: true,
     builder: (dialogContext, scrollController) => _VibeLibraryNamingForm(
       vibes: vibes,
       initialName: initialName,
@@ -466,11 +467,11 @@ class GlobalDropActionCoordinator {
         : l10n.drop_addedMultipleToVibe(addedCount);
   }
 
-  Future<bool> _handleVibeReuse(
+  bool _handleVibeReuse(
     VibeReference vibe,
     GenerationParamsNotifier notifier,
     AppLocalizations l10n,
-  ) async {
+  ) {
     final currentState = ref.read(generationParamsNotifierProvider);
     const maxCount = 16;
     if (currentState.vibeReferencesV4.length >= maxCount) {

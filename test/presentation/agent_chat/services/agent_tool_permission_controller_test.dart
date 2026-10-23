@@ -21,6 +21,7 @@ void main() {
         auditSink: audit,
         estimateAnlas: (_, _) async => throw StateError('Read does not bill'),
         describeFileTargets: (_, _) => const [],
+        chargeConfirmThreshold: () => null,
         onApprovalChanged: (_) =>
             fail('Read should not request write approval'),
         isMounted: () => true,
@@ -66,52 +67,93 @@ void main() {
       expect(controller.takeDecision('read'), AgentPermissionDecision.allow);
     },
   );
-  test('full access runs destructive tools without approval', () async {
-    final descriptor = describeAgentToolPermission('delete_fixed_tag');
-    final controller = AgentToolPermissionController(
-      auditSink: MemoryAgentAuditSink(),
-      estimateAnlas: (_, _) async => throw StateError('Delete does not bill'),
-      describeFileTargets: (_, _) => const [],
-      onApprovalChanged: (_) => fail('Full access must not ask for deletes'),
-      isMounted: () => true,
-    );
-    addTearDown(controller.dispose);
-    controller.configure(
-      AgentToolRegistry(
-        tools: const [],
-        catalog: AgentToolPermissionCatalog(
-          toolNames: const ['delete_fixed_tag'],
-          descriptors: [descriptor],
-        ),
-        policy: agentPermissionPolicy(safeMode: false, fullAccess: true),
-      ),
-    );
-    const call = ToolCallContent(
-      id: 'delete',
-      name: 'delete_fixed_tag',
-      arguments: {'id': 'tag-1'},
-    );
-    final assistant = AssistantMessage(
-      content: [call],
-      stopReason: StopReason.toolUse,
-    );
-
-    final result = await controller.beforeToolCall(
-      BeforeToolCallContext(
-        assistantMessage: assistant,
-        toolCall: call,
-        args: call.arguments,
-        context: AgentContext(
-          systemPrompt: '',
-          messages: [assistant],
+  group('full access deletions', () {
+    AgentToolPermissionController fullAccessController(
+      String toolName,
+      void Function(AgentToolApprovalRequest? request) onApprovalChanged,
+    ) {
+      final controller = AgentToolPermissionController(
+        auditSink: MemoryAgentAuditSink(),
+        estimateAnlas: (_, _) async => null,
+        describeFileTargets: (_, _) => const [],
+        chargeConfirmThreshold: () => null,
+        onApprovalChanged: onApprovalChanged,
+        isMounted: () => true,
+      );
+      addTearDown(controller.dispose);
+      controller.configure(
+        AgentToolRegistry(
           tools: const [],
+          catalog: AgentToolPermissionCatalog(
+            toolNames: [toolName],
+            descriptors: [describeAgentToolPermission(toolName)],
+          ),
+          policy: agentPermissionPolicy(safeMode: false, fullAccess: true),
         ),
-      ),
-      null,
-    );
+      );
+      return controller;
+    }
 
-    expect(result, isNull);
-    expect(controller.takeDecision('delete'), AgentPermissionDecision.allow);
+    Future<BeforeToolCallResult?> gate(
+      AgentToolPermissionController controller,
+      ToolCallContent call,
+    ) {
+      final assistant = AssistantMessage(
+        content: [call],
+        stopReason: StopReason.toolUse,
+      );
+      return controller.beforeToolCall(
+        BeforeToolCallContext(
+          assistantMessage: assistant,
+          toolCall: call,
+          args: call.arguments,
+          context: AgentContext(
+            systemPrompt: '',
+            messages: [assistant],
+            tools: const [],
+          ),
+        ),
+        null,
+      );
+    }
+
+    test('still ask before deleting saved data', () async {
+      final requests = <AgentToolApprovalRequest?>[];
+      final controller = fullAccessController(
+        'delete_vibe_library_entry',
+        requests.add,
+      );
+      const call = ToolCallContent(
+        id: 'delete',
+        name: 'delete_vibe_library_entry',
+        arguments: {'entry_id': 'vibe-1'},
+      );
+
+      final pending = gate(controller, call);
+      await pumpEventQueue();
+      expect(requests.single?.toolName, 'delete_vibe_library_entry');
+      expect(requests.single?.estimatedAnlas, isNull);
+
+      expect(controller.resolveApproval('delete', false), isTrue);
+      expect((await pending)?.block, isTrue);
+      expect(requests.last, isNull);
+      expect(controller.takeDecision('delete'), AgentPermissionDecision.block);
+    });
+
+    test('run page-state removals without approval', () async {
+      final controller = fullAccessController(
+        'remove_character',
+        (_) => fail('Removing a character must not ask in full access'),
+      );
+      const call = ToolCallContent(
+        id: 'remove',
+        name: 'remove_character',
+        arguments: {'index': 0},
+      );
+
+      expect(await gate(controller, call), isNull);
+      expect(controller.takeDecision('remove'), AgentPermissionDecision.allow);
+    });
   });
 
   group('AgentToolPermissionController billing decisions', () {
@@ -165,6 +207,10 @@ void main() {
       );
 
       expect(result?.block, isTrue);
+      expect(
+        result?.reason,
+        contains('cost of this call cannot be calculated'),
+      );
       expect(approval, isNull);
     });
 
@@ -256,6 +302,85 @@ void main() {
       );
     });
 
+    test('autopilot submits below the threshold without approval', () async {
+      AgentToolApprovalRequest? approval;
+      final controller = _controller(
+        mode: AgentAccessMode.allowWrite,
+        estimate: 49,
+        onApproval: (value) => approval = value,
+        chargeApproval: AgentChargeApproval.confirmAtThreshold,
+        chargeConfirmThreshold: () => 50,
+      );
+
+      final pending = controller.beforeToolCall(_context('cheap'), null);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(approval, isNull);
+      expect(await pending, isNull);
+      expect(controller.takeDecision('cheap'), AgentPermissionDecision.allow);
+    });
+
+    test('autopilot still asks at the threshold', () async {
+      AgentToolApprovalRequest? approval;
+      final controller = _controller(
+        mode: AgentAccessMode.allowWrite,
+        estimate: 50,
+        onApproval: (value) => approval = value,
+        chargeApproval: AgentChargeApproval.confirmAtThreshold,
+        chargeConfirmThreshold: () => 50,
+      );
+
+      final pending = controller.beforeToolCall(_context('costly'), null);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(approval?.estimatedAnlas, 50);
+      expect(controller.resolveApproval('costly', false), isTrue);
+      expect((await pending)?.block, isTrue);
+    });
+
+    test('autopilot reads the threshold for every call', () async {
+      int? threshold = 10;
+      final approvals = <AgentToolApprovalRequest?>[];
+      final controller = _controller(
+        mode: AgentAccessMode.allowWrite,
+        estimate: 20,
+        onApproval: approvals.add,
+        chargeApproval: AgentChargeApproval.confirmAtThreshold,
+        chargeConfirmThreshold: () => threshold,
+      );
+
+      final pending = controller.beforeToolCall(_context('first'), null);
+      await Future<void>.delayed(Duration.zero);
+      expect(approvals.single?.estimatedAnlas, 20);
+      controller.resolveApproval('first', false);
+      await pending;
+
+      threshold = null;
+      final second = controller.beforeToolCall(_context('second'), null);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(approvals.whereType<AgentToolApprovalRequest>(), hasLength(1));
+      expect(await second, isNull);
+    });
+
+    test('autopilot never treats an unknown cost as free', () async {
+      AgentToolApprovalRequest? approval;
+      final controller = _controller(
+        mode: AgentAccessMode.allowWrite,
+        estimate: null,
+        onApproval: (value) => approval = value,
+        chargeApproval: AgentChargeApproval.confirmAtThreshold,
+      );
+
+      final pending = controller.beforeToolCall(_context('unknown'), null);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(approval?.toolName, 'submit_generation');
+      expect(approval?.estimatedAnlas, isNull);
+      controller.resolveApproval('unknown', false);
+      expect((await pending)?.block, isTrue);
+    });
+
     test('stale window response cannot resolve a newer approval', () async {
       final controller = _controller(
         mode: AgentAccessMode.allowWrite,
@@ -324,6 +449,8 @@ AgentToolPermissionController _controller({
   required int? estimate,
   required void Function(AgentToolApprovalRequest?) onApproval,
   List<String> Function(String, Map<String, dynamic>)? describeFileTargets,
+  AgentChargeApproval chargeApproval = AgentChargeApproval.confirmEach,
+  int? Function()? chargeConfirmThreshold,
 }) {
   final descriptor = describeAgentToolPermission('submit_generation');
   final catalog = AgentToolPermissionCatalog(
@@ -334,9 +461,11 @@ AgentToolPermissionController _controller({
     auditSink: MemoryAgentAuditSink(),
     estimateAnlas: (_, _) async => estimate,
     describeFileTargets: describeFileTargets ?? ((_, _) => const []),
+    chargeConfirmThreshold: chargeConfirmThreshold ?? () => null,
     onApprovalChanged: onApproval,
     isMounted: () => true,
   );
+  addTearDown(controller.dispose);
   controller.configure(
     AgentToolRegistry(
       tools: const [],
@@ -344,7 +473,7 @@ AgentToolPermissionController _controller({
       policy: AgentPermissionPolicy({
         descriptor.domain: mode,
         AgentPermissionDomain.file: mode,
-      }),
+      }, chargeApproval: chargeApproval),
     ),
   );
   return controller;

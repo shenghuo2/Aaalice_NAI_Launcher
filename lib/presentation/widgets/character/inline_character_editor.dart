@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/autocomplete/autocomplete_settings.dart'
+    show replaceUnderscoresPreferenceProvider;
 import '../../../data/models/character/character_prompt.dart';
+import '../../../data/models/image/image_params.dart' show ImageParamsExtension;
 import '../../adaptive/adaptive_presenter.dart';
 import '../../adaptive/interaction_policy.dart';
 import '../../prompt_assistant/providers/prompt_assistant_history_provider.dart';
@@ -221,18 +224,33 @@ class _CharacterPromptEditorState extends ConsumerState<CharacterPromptEditor> {
     final enableSdSyntaxAutoConvert = ref.watch(
       sdSyntaxAutoConvertSettingsProvider,
     );
+    final separateNumericWeightClosing = ref.watch(
+      separateNumericWeightClosingSettingsProvider,
+    );
+    final replaceUnderscores = ref.watch(replaceUnderscoresPreferenceProvider);
 
+    final isNegative = _tabIndex == 1;
+    // 模型固定生成参数时角色负向提示词不会发送，只读保留。
+    final negativeLocked =
+        isNegative &&
+        ref.watch(
+          generationParamsNotifierProvider.select(
+            (params) => params.usesFixedSettings,
+          ),
+        );
     final inputConfig = UnifiedPromptConfig.compactMode.copyWith(
+      readOnly: negativeLocked,
       hintText: hintText,
       enableAutocomplete: enableAutocomplete,
       enableAutoFormat: enableAutoFormat,
       enableSyntaxHighlight: enableHighlight,
       enableSdSyntaxAutoConvert: enableSdSyntaxAutoConvert,
+      separateNumericWeightClosing: separateNumericWeightClosing,
+      replaceUnderscores: replaceUnderscores,
       showClearButton: false,
       clearNeedsConfirm: false,
     );
 
-    final isNegative = _tabIndex == 1;
     final viewportHeight = MediaQuery.sizeOf(context).height;
     final minimumHeight = widget.compact ? 88.0 : 112.0;
     final maximumHeight = math.max(
@@ -266,7 +284,7 @@ class _CharacterPromptEditorState extends ConsumerState<CharacterPromptEditor> {
             sessionId: isNegative
                 ? PromptHistorySessionIds.characterNegative(widget.character.id)
                 : PromptHistorySessionIds.characterPrompt(widget.character.id),
-            enableAssistant: true,
+            enableAssistant: !negativeLocked,
             showTagModeSwitch: false,
             assistantTapRegionGroupId: CharacterPromptEditor.tapRegionGroupId(
               widget.character.id,

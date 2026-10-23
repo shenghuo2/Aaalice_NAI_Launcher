@@ -91,6 +91,9 @@ class StorageKeys {
   static const String generationLayoutMode = 'generation_layout_mode';
   static const String mobileGenerationGestureHintCompleted =
       'mobile_generation_gesture_hint_completed';
+  // Last confirmed metadata import categories stay on this device.
+  static const String metadataImportLastSelection =
+      'metadata_import_last_selection';
   static const String historyClickBehavior = 'history_click_behavior';
   static const String previewTransparencyBackground =
       'preview_transparency_background';
@@ -118,6 +121,18 @@ class StorageKeys {
   // Panel Width Keys (面板宽度)
   static const String historyPanelWidth = 'history_panel_width';
   static const String rightPanelTab = 'right_panel_tab';
+
+  // Agent Chat Dock Keys (智能体聊天停靠与浮窗，本机布局)
+  static const String agentChatDockMode = 'agent_chat_dock_mode';
+  static const String agentChatDockFoldedPane = 'agent_chat_dock_folded_pane';
+  static const String agentChatDockStackedChatFraction =
+      'agent_chat_dock_stacked_chat_fraction';
+  static const String agentChatDockSideBySideChatWidth =
+      'agent_chat_dock_side_by_side_chat_width';
+  static const String agentChatFloatingEnabled = 'agent_chat_floating_enabled';
+  static const String agentChatFloatingVisible = 'agent_chat_floating_visible';
+  static const String agentChatFloatingRect = 'agent_chat_floating_rect';
+
   static const String agentChatActiveSession = 'agent_chat_active_session';
   static const String defaultModel = 'default_model';
   static const String defaultSampler = 'default_sampler';
@@ -129,6 +144,11 @@ class StorageKeys {
       'selected_resolution_preset_id';
   static const String imageSavePath = 'image_save_path';
   static const String autoSaveImages = 'auto_save_images';
+  static const String syncImagesToSystemGallery =
+      'sync_images_to_system_gallery';
+  static const String imageSaveFolderTemplate = 'image_save_folder_template';
+  static const String imageSaveFileNameTemplate =
+      'image_save_file_name_template';
   static const String imageStraightAlpha = 'image_straight_alpha';
   static const String shareStripMetadata = 'share_strip_metadata';
   static const String shareWatermark = 'share_watermark';
@@ -171,7 +191,11 @@ class StorageKeys {
   static const String autoFormatPrompt = 'auto_format_prompt';
   static const String highlightEmphasis = 'highlight_emphasis';
   static const String sdSyntaxAutoConvert = 'sd_syntax_auto_convert';
+  static const String separateNumericWeightClosing =
+      'separate_numeric_weight_closing';
   static const String resolveAliasOnCopy = 'resolve_alias_on_copy';
+  static const String detectMultiCharacterOnPaste =
+      'detect_multi_character_on_paste';
   static const String enablePromptWeightScroll = 'enable_prompt_weight_scroll';
   static const String promptRegexRules = 'prompt_regex_rules'; // 规则JSON字符串列表
 
@@ -189,6 +213,7 @@ class StorageKeys {
   static const String lastVarietyPlus = 'last_variety_plus';
   static const String lastTransparentBackground = 'last_transparent_background';
   static const String lastE2eUpscale = 'last_e2e_upscale';
+  static const String imageModelMode = 'image_model_mode';
 
   // Gallery Keys (画廊相关)
   static const String generationHistory = 'generation_history';

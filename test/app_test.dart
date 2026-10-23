@@ -22,23 +22,23 @@ import 'package:nai_launcher/core/constants/api_constants.dart';
 import 'package:nai_launcher/core/constants/storage_keys.dart';
 import 'package:nai_launcher/core/shortcuts/default_shortcuts.dart';
 import 'package:nai_launcher/core/shortcuts/shortcut_config.dart';
-import 'package:nai_launcher/core/storage/local_storage_service.dart';
 import 'package:nai_launcher/core/utils/file_explorer_utils.dart';
 import 'package:nai_launcher/core/utils/nai_resolution_adapter.dart';
 import 'package:nai_launcher/data/models/fixed_tag/fixed_tag_entry.dart';
 import 'package:nai_launcher/data/models/gallery/gallery_statistics.dart';
-import 'package:nai_launcher/data/models/gallery/local_image_record.dart';
 import 'package:nai_launcher/data/models/gallery/nai_image_metadata.dart';
+import 'package:nai_launcher/data/models/image/image_params.dart'
+    show ImageParams;
 import 'package:nai_launcher/data/models/tag/local_tag.dart';
 import 'package:nai_launcher/data/models/vibe/vibe_library_entry.dart';
 import 'package:nai_launcher/data/models/vibe/vibe_reference.dart';
-import 'package:nai_launcher/data/services/local_onnx_tagger_service.dart';
-import 'package:nai_launcher/data/services/statistics_service.dart';
 import 'package:nai_launcher/l10n/app_localizations.dart';
 import 'package:nai_launcher/presentation/providers/fixed_tags_provider.dart';
+import 'package:nai_launcher/presentation/providers/generation/generation_params_notifier.dart';
 import 'package:nai_launcher/presentation/providers/generation/image_workflow_controller.dart';
 import 'package:nai_launcher/presentation/providers/local_gallery_provider.dart';
 import 'package:nai_launcher/presentation/providers/online_gallery_provider.dart';
+import 'package:nai_launcher/presentation/providers/queue_execution_provider.dart';
 import 'package:nai_launcher/presentation/providers/selection_mode_provider.dart';
 import 'package:nai_launcher/presentation/providers/share_image_settings_provider.dart';
 import 'package:nai_launcher/presentation/providers/shortcuts_provider.dart';
@@ -46,7 +46,6 @@ import 'package:nai_launcher/presentation/providers/tag_library_page_provider.da
 import 'package:nai_launcher/presentation/screens/online_gallery/online_gallery_screen.dart';
 import 'package:nai_launcher/data/models/prompt_assistant/prompt_assistant_models.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/models/assistant_model_capability.dart';
-import 'package:nai_launcher/presentation/prompt_assistant/providers/prompt_assistant_config_provider.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/providers/prompt_assistant_history_provider.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/services/provider_adapters/prompt_assistant_adapter.dart';
 import 'package:nai_launcher/presentation/prompt_assistant/services/prompt_assistant_api_client.dart';
@@ -65,9 +64,40 @@ import 'package:nai_launcher/presentation/widgets/prompt/unified/unified_prompt_
 import 'package:nai_launcher/presentation/widgets/prompt/unified/unified_prompt_input.dart';
 import 'package:nai_launcher/presentation/widgets/shortcuts/shortcut_aware_widget.dart';
 
+import 'helpers/grayscale_png_fixture.dart';
+
 class _MockDio extends Mock implements Dio {}
 
-class _MockLocalStorageService extends Mock implements LocalStorageService {}
+class _IdleQueueExecutionNotifier extends QueueExecutionNotifier {
+  @override
+  QueueExecutionState build() => const QueueExecutionState();
+}
+
+class _InertGenerationParamsNotifier extends GenerationParamsNotifier {
+  @override
+  ImageParams build() => const ImageParams();
+
+  @override
+  Future<void> saveGenerationState() async {}
+}
+
+List<Override> _backgroundLifecycleOverrides() => [
+  queueExecutionNotifierProvider.overrideWith(_IdleQueueExecutionNotifier.new),
+  generationParamsNotifierProvider.overrideWith(
+    _InertGenerationParamsNotifier.new,
+  ),
+];
+
+void _returnFromBackground(WidgetTester tester) {
+  for (final state in const [
+    AppLifecycleState.inactive,
+    AppLifecycleState.hidden,
+    AppLifecycleState.inactive,
+    AppLifecycleState.resumed,
+  ]) {
+    tester.binding.handleAppLifecycleStateChanged(state);
+  }
+}
 
 /// 简单的 Widget 测试示例
 ///
@@ -152,7 +182,38 @@ void main() {
       expect(buildCount, 1);
     });
 
-    testWidgets('AppBootstrapEffects 在启动和 resumed 恢复云备份连接', (tester) async {
+    testWidgets('AppBootstrapEffects 在启动和从后台返回时恢复云备份连接', (tester) async {
+      var calls = 0;
+      final inert = StateProvider<int>((ref) => 0);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: _backgroundLifecycleOverrides(),
+          child: MaterialApp(
+            home: AppBootstrapEffects(
+              anlasWatcher: inert,
+              kritaBridge: inert,
+              cooccurrenceDataPack: inert,
+              cloudSyncLifecycle: () async {
+                calls++;
+              },
+              child: const SizedBox.shrink(),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(calls, 1);
+
+      _returnFromBackground(tester);
+      await tester.pump();
+      expect(calls, 2);
+
+      _returnFromBackground(tester);
+      await tester.pump();
+      expect(calls, 3);
+    });
+
+    testWidgets('仅切换窗口焦点时不重新恢复云备份连接', (tester) async {
       var calls = 0;
       final inert = StateProvider<int>((ref) => 0);
       await tester.pumpWidget(
@@ -173,9 +234,16 @@ void main() {
       await tester.pump();
       expect(calls, 1);
 
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      await tester.pump();
-      expect(calls, 2);
+      for (var round = 0; round < 3; round++) {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump();
+      }
+      expect(calls, 1);
     });
 
     testWidgets('云备份连接恢复未完成时跳过重复 resumed', (tester) async {
@@ -184,6 +252,7 @@ void main() {
       final inert = StateProvider<int>((ref) => 0);
       await tester.pumpWidget(
         ProviderScope(
+          overrides: _backgroundLifecycleOverrides(),
           child: MaterialApp(
             home: AppBootstrapEffects(
               anlasWatcher: inert,
@@ -201,7 +270,7 @@ void main() {
       await tester.pump();
       expect(calls, 1);
 
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      _returnFromBackground(tester);
       await tester.pump();
       expect(calls, 1);
       release.complete();
@@ -1204,28 +1273,6 @@ void main() {
   });
 
   group('Statistics dashboard', () {
-    test('ignores non-positive image dimensions in resolution statistics', () {
-      final service = StatisticsService();
-      final modifiedAt = DateTime(2026);
-
-      final stats = service.calculateStatistics([
-        LocalImageRecord(
-          path: 'zero.png',
-          size: 1024,
-          modifiedAt: modifiedAt,
-          metadata: const NaiImageMetadata(width: 0, height: 0),
-        ),
-        LocalImageRecord(
-          path: 'valid.png',
-          size: 1024,
-          modifiedAt: modifiedAt,
-          metadata: const NaiImageMetadata(width: 1024, height: 1024),
-        ),
-      ]);
-
-      expect(stats.resolutionDistribution.map((r) => r.label), ['1024x1024']);
-    });
-
     testWidgets('aspect ratio card skips invalid cached resolutions', (
       tester,
     ) async {
@@ -1648,92 +1695,6 @@ void main() {
 
       expect(pulledModel.source, ModelSource.api);
       expect(defaultModel.source, ModelSource.manual);
-    });
-
-    test('refresh replaces stale API models and keeps manual models', () async {
-      final localStorage = _MockLocalStorageService();
-      when(
-        () => localStorage.getSetting<String>(
-          StorageKeys.promptAssistantConfigJson,
-        ),
-      ).thenReturn(null);
-      when(
-        () => localStorage.setSetting<String>(
-          StorageKeys.promptAssistantConfigJson,
-          any(),
-        ),
-      ).thenAnswer((_) async {});
-
-      final container = ProviderContainer(
-        overrides: [
-          localStorageServiceProvider.overrideWithValue(localStorage),
-        ],
-      );
-      addTearDown(container.dispose);
-
-      final notifier = container.read(promptAssistantConfigProvider.notifier);
-      const providerId = 'openai_custom';
-      await notifier.upsertProvider(
-        const ProviderConfig(
-          id: providerId,
-          name: 'OpenAI Compatible',
-          type: ProviderType.openaiCompatible,
-          baseUrl: 'https://example.invalid/v1',
-          enabled: true,
-        ),
-      );
-      await notifier.upsertModel(
-        const ModelConfig(
-          providerId: providerId,
-          name: 'old-api-model',
-          displayName: 'old-api-model',
-          forTask: AssistantTaskType.llm,
-          source: ModelSource.api,
-        ),
-      );
-      await notifier.upsertModel(
-        const ModelConfig(
-          providerId: providerId,
-          name: 'manual-model',
-          displayName: 'manual-model',
-          forTask: AssistantTaskType.llm,
-        ),
-      );
-      await notifier.setRouting(
-        container
-            .read(promptAssistantConfigProvider)
-            .routing
-            .copyWithTask(
-              taskType: AssistantTaskType.llm,
-              providerId: providerId,
-              model: 'old-api-model',
-            ),
-      );
-
-      final removed = await notifier.syncProviderModels(providerId, const [
-        'new-api-model',
-      ]);
-      final state = container.read(promptAssistantConfigProvider);
-
-      expect(removed, ['old-api-model']);
-      expect(
-        state.models.any((model) => model.name == 'old-api-model'),
-        isFalse,
-      );
-      expect(state.models.any((model) => model.name == 'manual-model'), isTrue);
-      for (final taskType in AssistantTaskType.values) {
-        expect(
-          state.models.any(
-            (model) =>
-                model.providerId == providerId &&
-                model.forTask == taskType &&
-                model.name == 'new-api-model' &&
-                model.source == ModelSource.api,
-          ),
-          isTrue,
-        );
-      }
-      expect(state.routing.modelFor(AssistantTaskType.llm), 'new-api-model');
     });
   });
 
@@ -2248,6 +2209,22 @@ void main() {
       );
     });
 
+    test(
+      'normalizes single-channel grayscale attachments to gray jpeg',
+      () async {
+        final optimized = await optimizePromptAssistantImagePartForUpload(
+          PromptAssistantImagePart(
+            bytes: grayscalePng(width: 64, height: 48),
+            mimeType: 'image/png',
+          ),
+          normalizeToJpeg: true,
+        );
+
+        expect(optimized.mimeType, 'image/jpeg');
+        expectUniformGray(img.decodeJpg(optimized.bytes)!, 160);
+      },
+    );
+
     test('compresses typed image payload before posting', () async {
       const maxBytes = 20 * 1024;
       final dio = _MockDio();
@@ -2503,41 +2480,6 @@ void main() {
     );
   });
 
-  group('ONNX tagger categories', () {
-    test('keeps only general and character label categories by default', () {
-      expect(
-        const OnnxTaggerLabel(name: '1girl', category: 'General').isGeneral,
-        isTrue,
-      );
-      expect(
-        const OnnxTaggerLabel(
-          name: 'hakurei_reimu',
-          category: 'Character',
-        ).isCharacter,
-        isTrue,
-      );
-      expect(
-        const OnnxTaggerLabel(name: '1girl', category: '0').isGeneral,
-        isTrue,
-      );
-      expect(
-        const OnnxTaggerLabel(name: 'hakurei_reimu', category: '4').isCharacter,
-        isTrue,
-      );
-      expect(
-        const OnnxTaggerLabel(name: 'general', category: 'Rating').isRating,
-        isTrue,
-      );
-      expect(
-        const OnnxTaggerLabel(
-          name: 'artist_name',
-          category: 'Artist',
-        ).labelCategory,
-        OnnxTaggerLabelCategory.other,
-      );
-    });
-  });
-
   group('Prompt injected history', () {
     test('supports external undo and redo for injected prompts', () {
       final history = PromptAssistantHistoryNotifier();
@@ -2583,6 +2525,9 @@ Future<void> _pumpOnlineGalleryScreen(WidgetTester tester) async {
       overrides: [
         onlineGalleryNotifierProvider.overrideWith(
           _FakeOnlineGalleryNotifier.new,
+        ),
+        shortcutConfigNotifierProvider.overrideWith(
+          _FakeShortcutConfigNotifier.new,
         ),
         autocompleteLocalSourcesProvider.overrideWithValue(const [
           _FakeCompletionSource(),

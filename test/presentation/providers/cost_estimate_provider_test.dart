@@ -20,6 +20,8 @@ import 'package:nai_launcher/presentation/providers/generation/image_workflow_co
 import 'package:nai_launcher/presentation/providers/image_generation_provider.dart';
 import 'package:nai_launcher/presentation/providers/subscription_provider.dart';
 
+import '../../helpers/shared_compute_gate.dart';
+
 void main() {
   late Directory hiveTempDir;
 
@@ -344,9 +346,69 @@ void main() {
       },
     );
 
+    test('should estimate focus outpaint from the fixed frame crop', () {
+      final workflow = container.read(imageWorkflowControllerProvider.notifier);
+      final subscription = container.read(
+        subscriptionNotifierProvider.notifier,
+      );
+      subscription.state = const SubscriptionState.loaded(
+        UserSubscription(tier: 1),
+      );
+      const crop = Rect.fromLTWH(384, 0, 832, 1216);
+
+      workflow.applyInpaintEditorResult(
+        sourceImage: _buildPng(width: 1216, height: 1216),
+        sourceWidth: 1216,
+        sourceHeight: 1216,
+        sourceIsOutpaint: false,
+        useExactSourceDimensions: true,
+        maskImage: _buildMask(
+          width: 1216,
+          height: 1216,
+          rect: const Rect.fromLTWH(831, 0, 385, 1216),
+        ),
+        focusedInpaintEnabled: true,
+        focusedSelectionRect: null,
+        focusedContextCrop: crop,
+        minimumContextMegaPixels: 88,
+      );
+      container
+          .read(generationParamsNotifierProvider.notifier)
+          .updateInpaintStrength(0.5);
+
+      final params = container.read(generationParamsNotifierProvider);
+      final geometry = FocusedInpaintUtils.resolveGeometryForCrop(
+        sourceWidth: 1216,
+        sourceHeight: 1216,
+        crop: crop,
+      )!;
+      expect((geometry.requestWidth, geometry.requestHeight), (832, 1216));
+      expect(
+        container.read(focusedInpaintMaskRequestSizeProvider),
+        const AsyncData<FocusedInpaintGeometry?>(null),
+      );
+
+      final expected = AnlasCalculator.calculateRequestCost(
+        width: geometry.requestWidth,
+        height: geometry.requestHeight,
+        steps: params.steps,
+        batchCount: params.nSamples,
+        batchSize: 1,
+        model: params.model,
+        subscriptionTier:
+            container.read(subscriptionNotifierProvider).subscription?.tier ??
+            0,
+        smea: params.effectiveSmea,
+        smeaDyn: params.effectiveSmeaDyn,
+        strength: params.inpaintStrength,
+        extraPerSampleCost: 0,
+      );
+      expect(container.read(estimatedCostProvider), equals(expected));
+    });
+
     test(
       'should estimate mask-only focused inpaint from lightweight mask bounds',
-      () {
+      () async {
         final workflow = container.read(
           imageWorkflowControllerProvider.notifier,
         );
@@ -374,7 +436,9 @@ void main() {
         workflow.enterInpaintMode();
         workflow.setFocusedInpaintEnabled(true);
         workflow.setMinimumContextMegaPixels(1.0);
+        container.listen(estimatedCostProvider, (_, __) {});
         workflow.onMaskChanged(mask);
+        final settledCost = await readSettledEstimatedCost(container);
 
         final params = container.read(generationParamsNotifierProvider);
         final focusedRequest = FocusedInpaintUtils.prepareRequest(
@@ -384,9 +448,9 @@ void main() {
         );
 
         expect(focusedRequest, isNotNull);
-        final maskGeometry = container.read(
-          focusedInpaintMaskRequestSizeProvider,
-        );
+        final maskGeometry = container
+            .read(focusedInpaintMaskRequestSizeProvider)
+            .requireValue;
         expect(maskGeometry, isNotNull);
         expect(maskGeometry!.requestWidth, focusedRequest!.targetWidth);
         expect(maskGeometry.requestHeight, focusedRequest.targetHeight);
@@ -407,9 +471,113 @@ void main() {
           extraPerSampleCost: 0,
         );
 
+        expect(settledCost, equals(expected));
         expect(container.read(estimatedCostProvider), equals(expected));
       },
     );
+
+    test('mask bounds wait for the shared compute gate', () async {
+      _enterMaskOnlyFocusedInpaint(container);
+      container.listen(estimatedCostProvider, (_, __) {});
+      final mask = _buildMask(
+        width: 1536,
+        height: 1536,
+        rect: const Rect.fromLTWH(300, 400, 160, 120),
+      );
+
+      final settledCost = await expectQueuedBehindSharedComputeGate(() {
+        container
+            .read(imageWorkflowControllerProvider.notifier)
+            .onMaskChanged(mask);
+        expect(container.read(estimatedCostProvider), isNull);
+        expect(container.read(isBalanceInsufficientProvider), isFalse);
+        return readSettledEstimatedCost(container);
+      });
+
+      expect(settledCost, _maskOnlyCost(container, mask));
+      expect(container.read(estimatedCostProvider), settledCost);
+      expect(container.read(isBalanceInsufficientProvider), isTrue);
+    });
+
+    test('a changed mask keeps the previous cost until decoded', () async {
+      _enterMaskOnlyFocusedInpaint(container);
+      container.listen(estimatedCostProvider, (_, __) {});
+      final workflow = container.read(imageWorkflowControllerProvider.notifier);
+      final first = _buildMask(
+        width: 1536,
+        height: 1536,
+        rect: const Rect.fromLTWH(300, 400, 160, 120),
+      );
+      final second = _buildMask(
+        width: 1536,
+        height: 1536,
+        rect: const Rect.fromLTWH(40, 60, 1400, 1380),
+      );
+      workflow.onMaskChanged(first);
+      final firstCost = await readSettledEstimatedCost(container);
+
+      final secondCost = await expectQueuedBehindSharedComputeGate(() {
+        workflow.onMaskChanged(second);
+        expect(
+          container.read(focusedInpaintMaskRequestSizeProvider).isLoading,
+          isTrue,
+        );
+        expect(container.read(estimatedCostProvider), firstCost);
+        return readSettledEstimatedCost(container);
+      });
+
+      expect(firstCost, _maskOnlyCost(container, first));
+      expect(secondCost, _maskOnlyCost(container, second));
+      expect(secondCost, isNot(firstCost));
+    });
+
+    test('context size changes reuse the decoded mask bounds', () async {
+      _enterMaskOnlyFocusedInpaint(container);
+      container.listen(estimatedCostProvider, (_, __) {});
+      final workflow = container.read(imageWorkflowControllerProvider.notifier);
+      final mask = _buildMask(
+        width: 1536,
+        height: 1536,
+        rect: const Rect.fromLTWH(300, 400, 160, 120),
+      );
+      workflow.onMaskChanged(mask);
+      await readSettledEstimatedCost(container);
+      final smallContext = container
+          .read(focusedInpaintMaskRequestSizeProvider)
+          .requireValue!;
+
+      final release = holdSharedComputeGate();
+      try {
+        workflow.setMinimumContextMegaPixels(192);
+        expect(
+          container.read(focusedInpaintMaskRequestSizeProvider).isLoading,
+          isFalse,
+        );
+        final geometry = container
+            .read(focusedInpaintMaskRequestSizeProvider)
+            .requireValue!;
+        final expected = FocusedInpaintUtils.resolveGeometryForMask(
+          maskImage: mask,
+          minContextMegaPixels: 192,
+        )!;
+        expect(geometry.contextCrop.rect, expected.contextCrop.rect);
+        expect(geometry.contextCrop.rect, isNot(smallContext.contextCrop.rect));
+        expect(
+          container.read(estimatedCostProvider),
+          _maskOnlyCost(container, mask),
+        );
+      } finally {
+        await release();
+      }
+    });
+
+    test('settled cost does not wait when no mask bounds apply', () async {
+      final cost = await expectRunsWithoutSharedComputeGate(
+        () => readSettledEstimatedCost(container),
+      );
+
+      expect(cost, container.read(estimatedCostProvider));
+    });
 
     test('should use regular inpaint strength for the base price', () {
       final subscription = container.read(
@@ -584,6 +752,44 @@ class _TestAuthNotifier extends AuthNotifier {
   AuthState build() {
     return const AuthState(status: AuthStatus.unauthenticated);
   }
+}
+
+void _enterMaskOnlyFocusedInpaint(ProviderContainer container) {
+  container.read(subscriptionNotifierProvider.notifier).state =
+      const SubscriptionState.loaded(UserSubscription(tier: 1));
+  container.read(imageWorkflowControllerProvider.notifier)
+    ..replaceSourceImage(
+      _buildPng(width: 1536, height: 1536),
+      sourceWidth: 1536,
+      sourceHeight: 1536,
+      autoAdapt: false,
+    )
+    ..enterInpaintMode()
+    ..setFocusedInpaintEnabled(true)
+    ..setMinimumContextMegaPixels(16);
+}
+
+int _maskOnlyCost(ProviderContainer container, Uint8List mask) {
+  final workflow = container.read(imageWorkflowControllerProvider);
+  final params = container.read(generationParamsNotifierProvider);
+  final geometry = FocusedInpaintUtils.resolveGeometryForMask(
+    maskImage: mask,
+    minContextMegaPixels: workflow.minimumContextMegaPixels,
+  )!;
+  return AnlasCalculator.calculateRequestCost(
+    width: geometry.requestWidth,
+    height: geometry.requestHeight,
+    steps: params.steps,
+    batchCount: params.nSamples,
+    batchSize: 1,
+    model: params.model,
+    subscriptionTier:
+        container.read(subscriptionNotifierProvider).subscription?.tier ?? 0,
+    smea: params.effectiveSmea,
+    smeaDyn: params.effectiveSmeaDyn,
+    strength: params.inpaintStrength,
+    extraPerSampleCost: 0,
+  );
 }
 
 Uint8List _buildPng({required int width, required int height}) {

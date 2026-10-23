@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 
+import '../../../core/cache/local_gallery_thumbnail_provider.dart';
 import '../../../core/utils/app_logger.dart';
+import '../../../core/utils/encoded_image_dimensions.dart';
 import '../../../core/platform/platform_capabilities.dart';
 import '../../../core/utils/localization_extension.dart';
 import '../../../data/models/gallery/local_image_record.dart';
@@ -158,7 +160,7 @@ class Gallery3DViewConfig<T> {
 class _GenericGalleryContentViewState<T>
     extends ConsumerState<GenericGalleryContentView<T>>
     with TickerProviderStateMixin {
-  final Map<String, double> _aspectRatioCache = {};
+  final Map<LocalGallerySourceIdentity, double> _aspectRatioCache = {};
   bool _showSkeleton = false;
   final Set<int> _visibleIndices = {};
   late final AnimationController _emptyStateController;
@@ -352,13 +354,17 @@ class _GenericGalleryContentViewState<T>
   }
 
   double _getCachedAspectRatio(LocalImageRecord record) {
-    if (_aspectRatioCache.containsKey(record.path)) {
-      return _aspectRatioCache[record.path]!;
-    }
+    final source = LocalGallerySourceIdentity.fromRecord(
+      path: record.path,
+      size: record.size,
+      modifiedAt: record.modifiedAt,
+    );
+    final cached = _aspectRatioCache[source];
+    if (cached != null) return cached;
 
     _calculateAspectRatioForRecord(record).then((value) {
-      if (mounted && value != _aspectRatioCache[record.path]) {
-        setState(() => _aspectRatioCache[record.path] = value);
+      if (mounted && value != _aspectRatioCache[source]) {
+        setState(() => _aspectRatioCache[source] = value);
       }
     });
 
@@ -374,11 +380,10 @@ class _GenericGalleryContentViewState<T>
     }
 
     try {
-      final buffer = await ui.ImmutableBuffer.fromFilePath(record.path);
-      final descriptor = await ui.ImageDescriptor.encoded(buffer);
-      if (descriptor.width > 0 && descriptor.height > 0) {
-        return descriptor.width / descriptor.height;
-      }
+      final (width, height) = await readEncodedImageDimensions(
+        await ui.ImmutableBuffer.fromFilePath(record.path),
+      );
+      if (width > 0 && height > 0) return width / height;
     } catch (e) {
       AppLogger.d(
         'Failed to read gallery image aspect ratio: $e',

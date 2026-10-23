@@ -61,6 +61,33 @@ void main() {
     },
   );
 
+  testWidgets('advanced subsection titles are level-3 headings', (
+    tester,
+  ) async {
+    final controller = _Controller();
+    await tester.pumpWidget(
+      _app(
+        controller,
+        Scaffold(
+          body: SingleChildScrollView(
+            child: DlssOptionsEditor(
+              value: controller.options,
+              onChanged: controller.setOptions,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('高级参数'));
+    await tester.tap(find.text('高级参数'));
+    await tester.pumpAndSettle();
+
+    final subsection = tester.getSemantics(find.text('结果混合'));
+    expect(subsection.flagsCollection.isHeader, isTrue);
+    expect(subsection.headingLevel, 3);
+  });
+
   testWidgets('group reflow and collapse preserve pending edits and help', (
     tester,
   ) async {
@@ -924,7 +951,7 @@ class _Registrar extends ImageGenerationNotifier {
   @override
   Future<void> ensureGenerationHistoryRestored() async {}
   @override
-  Future<String?> registerExternalImage(
+  Future<GeneratedImage?> registerExternalImageEntry(
     Uint8List imageBytes, {
     required ImageParams params,
     int? width,
@@ -939,6 +966,12 @@ class _Registrar extends ImageGenerationNotifier {
   }) async {
     results.add(imageBytes);
     comparisonSources.add(comparisonSourceImage);
-    return savedPath;
+    return GeneratedImage(
+      id: 'adopted-${results.length}',
+      bytes: imageBytes,
+      width: 1,
+      height: 1,
+      filePath: savedPath,
+    );
   }
 }

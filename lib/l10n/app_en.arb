@@ -199,13 +199,23 @@
   "auth_switchAccount": "Switch Account",
   "auth_currentAccount": "Current Account",
   "auth_selectAccount": "Select Account",
-  "auth_deleteAccount": "Delete Account",
-  "auth_deleteAccountConfirm": "Are you sure you want to delete \"{name}\"? This cannot be undone.",
-  "@auth_deleteAccountConfirm": {
+  "auth_manageAccounts": "Manage Accounts",
+  "auth_removeSavedAccount": "Remove Account",
+  "auth_removeSavedAccountAction": "Remove",
+  "auth_removeSavedAccountConfirm": "The saved login credentials and avatar for \"{name}\" will be removed from this device. Your NovelAI account is not affected, and you can log in again later.",
+  "@auth_removeSavedAccountConfirm": {
     "placeholders": {
       "name": {}
     }
   },
+  "auth_removeSessionAccountNotice": "You are currently logged in with this account. You will be logged out first.",
+  "auth_removeSavedAccountSuccess": "Removed \"{name}\"",
+  "@auth_removeSavedAccountSuccess": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "auth_removeSavedAccountFailed": "Couldn't remove the account. Please try again.",
   "auth_removeAvatar": "Remove Avatar",
   "auth_selectFromGallery": "Select from Gallery",
   "auth_quickLogin": "Quick Login",
@@ -324,6 +334,88 @@
   "settings_imageSavePath": "Image Save Location",
   "settings_autoSave": "Auto Save",
   "settings_autoSaveSubtitle": "Automatically save images after generation",
+  "settings_syncToSystemGallery": "Sync to photo gallery",
+  "settings_syncToSystemGallerySubtitle": "When off, images are saved only to the app gallery and won't appear in your photo gallery. Images already synced are not affected.",
+  "settings_saveNaming": "Folders & File Names",
+  "settings_saveNamingSubtitle": "Example: {example}",
+  "@settings_saveNamingSubtitle": {"placeholders":{"example":{}}},
+  "settings_saveNamingFolderSection": "Subfolder",
+  "settings_saveNamingFileNameSection": "File Name",
+  "settings_saveNamingFolderByDate": "By date",
+  "settings_saveNamingFolderByMonth": "By month",
+  "settings_saveNamingFolderByYearMonth": "By year, then month",
+  "settings_saveNamingFolderNone": "No subfolder",
+  "settings_saveNamingFolderNoneExample": "Saved directly in the image save location",
+  "settings_saveNamingFileTimeSeed": "Time + seed",
+  "settings_saveNamingFileDateTimeSeed": "Date and time + seed",
+  "settings_saveNamingFilePromptSeed": "Prompt + seed",
+  "settings_saveNamingCustom": "Custom",
+  "settings_saveNamingFolderTemplate": "Subfolder template",
+  "settings_saveNamingFolderTemplateHelper": "Separate nested folders with /. Leave empty to save without a subfolder.",
+  "settings_saveNamingFileNameTemplate": "File name template",
+  "settings_saveNamingFileNameTemplateHelper": "The .png extension is added automatically.",
+  "settings_saveNamingFileNameEmpty": "File name template can't be empty",
+  "settings_saveNamingInsertField": "Insert field",
+  "settings_saveNamingPreview": "Preview",
+  "settings_saveNamingPreviewLatest": "Based on your latest generated image",
+  "settings_saveNamingPreviewSample": "Based on sample data",
+  "settings_saveNamingOmitsDateHint": "The path has no date, so images from different days end up together. Add a date to the subfolder or file name if you need to tell days apart.",
+  "settings_saveNamingAppliesToNewHint": "Applies to images saved from now on. Existing files are not renamed or moved.",
+  "settings_saveNamingRestoreDefaults": "Restore defaults",
+  "settings_saveNamingSyntaxHelp": "Template syntax",
+  "settings_saveNamingSyntaxIntro": "Insert image details with fields. Filters run from left to right; when a field is empty, its pre and suf are skipped too. Type two opening braces for a literal one.",
+  "settings_saveNamingSyntaxFields": "Fields",
+  "settings_saveNamingSyntaxFilters": "Filters",
+  "settings_saveNamingSyntaxCharacterFilters": "Character filters (characters only, before other filters)",
+  "settings_saveNamingSyntaxExamples": "Examples",
+  "settings_saveNamingFieldPrompt": "Prompt (first 80 characters unless a length filter is used)",
+  "settings_saveNamingFieldSeed": "Seed",
+  "settings_saveNamingFieldDate": "Generation date, e.g. 2026-10-12",
+  "settings_saveNamingFieldTime": "Generation time, e.g. 14-30-05",
+  "settings_saveNamingFieldYear": "Year, e.g. 2026",
+  "settings_saveNamingFieldMonth": "Month, e.g. 10",
+  "settings_saveNamingFieldDay": "Day, e.g. 12",
+  "settings_saveNamingFieldModel": "Model ID",
+  "settings_saveNamingFieldModelName": "Model name",
+  "settings_saveNamingFieldResolution": "Resolution, e.g. 832x1216",
+  "settings_saveNamingFieldWidth": "Width",
+  "settings_saveNamingFieldHeight": "Height",
+  "settings_saveNamingFieldIndex": "Position within one save, starting at 1",
+  "settings_saveNamingFieldId": "Image ID",
+  "settings_saveNamingFieldType": "Generation method: inpaint, image2image or vibe-transfer; empty for text-to-image",
+  "settings_saveNamingFieldCharacters": "Character names, first 3 joined with +",
+  "settings_saveNamingFilterFirst": "Keep the first N characters",
+  "settings_saveNamingFilterLast": "Keep the last N characters",
+  "settings_saveNamingFilterWords": "Keep the first N words; a negative number keeps the last ones",
+  "settings_saveNamingFilterTags": "Keep the first N comma-separated tags; a negative number keeps the last ones",
+  "settings_saveNamingFilterPre": "Add X before a non-empty value",
+  "settings_saveNamingFilterSuf": "Add X after a non-empty value",
+  "settings_saveNamingFilterPad": "Pad numbers with leading zeros to N digits",
+  "settings_saveNamingFilterLower": "Lowercase",
+  "settings_saveNamingFilterUpper": "Uppercase",
+  "settings_saveNamingFilterMax": "Use up to N characters (default 3)",
+  "settings_saveNamingFilterAt": "Use only character N",
+  "settings_saveNamingFilterEach": "Keep the first N characters of each name",
+  "settings_saveNamingFilterJoin": "Join names with X (default +)",
+  "settings_saveNamingFilterFull": "Use full character prompts instead of names",
+  "settings_saveNamingErrorUnclosedBrace": "Unclosed opening brace at character {position}",
+  "@settings_saveNamingErrorUnclosedBrace": {"placeholders":{"position":{"type":"int"}}},
+  "settings_saveNamingErrorUnknownField": "Unknown field \"{name}\"",
+  "@settings_saveNamingErrorUnknownField": {"placeholders":{"name":{}}},
+  "settings_saveNamingErrorUnknownFilter": "Unknown filter \"{name}\"",
+  "@settings_saveNamingErrorUnknownFilter": {"placeholders":{"name":{}}},
+  "settings_saveNamingErrorFilterOnlyForCharacters": "Filter \"{name}\" only works with characters",
+  "@settings_saveNamingErrorFilterOnlyForCharacters": {"placeholders":{"name":{}}},
+  "settings_saveNamingErrorCharacterFilterOrder": "Filter \"{name}\" must come before filters like first or pre",
+  "@settings_saveNamingErrorCharacterFilterOrder": {"placeholders":{"name":{}}},
+  "settings_saveNamingErrorFilterTakesNoValue": "Filter \"{name}\" doesn't take a value",
+  "@settings_saveNamingErrorFilterTakesNoValue": {"placeholders":{"name":{}}},
+  "settings_saveNamingErrorFilterNeedsValue": "Filter \"{name}\" needs a value, e.g. {name}:-",
+  "@settings_saveNamingErrorFilterNeedsValue": {"placeholders":{"name":{}}},
+  "settings_saveNamingErrorFilterNeedsPositiveNumber": "Filter \"{name}\" needs a positive whole number",
+  "@settings_saveNamingErrorFilterNeedsPositiveNumber": {"placeholders":{"name":{}}},
+  "settings_saveNamingErrorFilterNeedsNonZeroNumber": "Filter \"{name}\" needs a non-zero whole number",
+  "@settings_saveNamingErrorFilterNeedsNonZeroNumber": {"placeholders":{"name":{}}},
   "settings_about": "About",
   "settings_version": "Version {version}",
   "@settings_version": {
@@ -412,6 +504,10 @@
   "generation_history": "History",
   "generation_historyRecord": "History Records",
   "agentChat_tab": "Chat",
+  "agentChat_popOutFloating": "Pop out as floating window",
+  "agentChat_dockToSidePanel": "Dock to side panel",
+  "agentChat_hideFloating": "Hide floating window",
+  "agentChat_resizeDockSplit": "Resize chat and history",
   "nav_agent": "Agent",
   "agentChat_inputHint": "Message the AI agent…",
   "agentChat_inputHintWithSlash": "Message the AI agent, / for skills…",
@@ -443,6 +539,7 @@
       "fileName": {}
     }
   },
+  "agentChat_dropHint": "Drop to add to the chat",
   "agentChat_newChat": "New chat",
   "agentChat_searchSessions": "Search chats",
   "agentChat_send": "Send",
@@ -524,6 +621,7 @@
   "agentChat_toolUpdateGeneration": "Update generation draft",
   "agentChat_toolCancelGeneration": "Cancel generation draft",
   "agentChat_toolSubmitGeneration": "Submit generation",
+  "agentChat_toolUpscaleImage": "Upscale image",
   "agentChat_toolCreateInpaint": "Create manual inpaint draft",
   "agentChat_toolListInpaint": "List manual inpaint drafts",
   "agentChat_toolInspectInpaint": "Inspect manual inpaint draft",
@@ -577,7 +675,9 @@
   "agentChat_permissionAsk": "Ask",
   "agentChat_permissionAskDescription": "Ask before sensitive actions",
   "agentChat_permissionFull": "Full access",
-  "agentChat_permissionFullDescription": "Run without prompts and allow files outside the workspace",
+  "agentChat_permissionFullDescription": "Ask only to delete saved data or spend Anlas; allow outside files",
+  "agentChat_permissionAutopilot": "Autopilot",
+  "agentChat_permissionAutopilotDescription": "Spend Anlas without asking; ask only to delete saved data or at the high-cost threshold",
   "agentChat_approvalTitle": "Allow {toolName}?",
   "@agentChat_approvalTitle": {
     "placeholders": {
@@ -605,7 +705,49 @@
   "generation_noHistory": "No history records",
   "generation_clearHistory": "Clear History",
   "generation_clearHistoryConfirm": "Are you sure you want to clear all history records? This action cannot be undone.",
+  "generation_deleteImageConfirm": "Delete this image from history? This action cannot be undone.",
+  "generation_deleteImageWithFileConfirm": "Delete this image from history and permanently delete the file \"{fileName}\" from the local gallery? This action cannot be undone.",
+  "@generation_deleteImageWithFileConfirm": {
+    "placeholders": {
+      "fileName": {}
+    }
+  },
+  "generation_deleteImagesConfirm": "Delete the {count} selected images from history? This action cannot be undone.",
+  "@generation_deleteImagesConfirm": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "generation_deleteImagesWithFilesConfirm": "Delete the {count} selected images from history and permanently delete {fileCount} of their files saved in the local gallery? This action cannot be undone.",
+  "@generation_deleteImagesWithFilesConfirm": {
+    "placeholders": {
+      "count": {},
+      "fileCount": {}
+    }
+  },
+  "generation_deleteConfirmSkipForSession": "Don't ask again until the app restarts",
+  "generation_deleteImageFilesFailed": "Removed from history, but {count} local files could not be deleted: {error}",
+  "@generation_deleteImageFilesFailed": {
+    "placeholders": {
+      "count": {},
+      "error": {}
+    }
+  },
   "generation_model": "Model",
+  "generation_modelMode": "Mode",
+  "generation_modelModeAnime": "Anime",
+  "generation_modelModeFurry": "Furry",
+  "generation_effort": "Effort",
+  "generation_effortMedium": "Medium",
+  "generation_effortHigh": "High",
+  "generation_effortUnavailableHint": "Not used on Medium effort",
+  "generation_effortNegativeLocked": "Not sent on Medium",
+  "generation_effortNegativeLockedHint": "Medium effort does not send Undesired Content and only uses the \"{ucPreset}\" Undesired Content Preset. Your text is kept and applies again on High effort",
+  "@generation_effortNegativeLockedHint": {
+    "placeholders": {
+      "ucPreset": {}
+    }
+  },
   "generation_opusUsageRemaining": "{percent}% of Opus Generations remaining",
   "generation_opusUsageEstimate": "About {count} images left",
   "generation_opusUsageRefill": "The allowance refills automatically over time",
@@ -620,7 +762,9 @@
       "steps": {}
     }
   },
+  "generation_stepsLabel": "Steps",
   "generation_cfgScale": "CFG Scale: {scale}",
+  "generation_cfgScaleLabel": "CFG Scale",
   "@character_limitReached": {
     "placeholders": {
       "limit": {}
@@ -677,6 +821,7 @@
       "value": {}
     }
   },
+  "generation_cfgRescaleLabel": "CFG Rescale",
   "generation_noiseSchedule": "Noise Schedule",
   "prompt_positive": "Prompt",
   "prompt_negative": "Undesired Content",
@@ -755,13 +900,19 @@
   "prompt_smartAutocomplete": "Smart Autocomplete",
   "prompt_smartAutocompleteSubtitle": "Show tag suggestions while typing",
   "prompt_autoFormat": "Auto Format",
-  "prompt_autoFormatSubtitle": "Convert Chinese commas and tag spaces while preserving line breaks",
+  "prompt_autoFormatSubtitle": "Normalize commas and tag spacing by your preference; keeps line breaks and quoted text",
+  "prompt_replaceUnderscores": "Use Spaces Instead of Underscores",
+  "prompt_replaceUnderscoresSubtitle": "Shared by autocomplete and auto format; kaomoji keep their underscores",
   "prompt_highlightEmphasis": "Highlight Emphasis",
   "prompt_highlightEmphasisSubtitle": "Highlight brackets and weight syntax",
   "prompt_sdSyntaxAutoConvert": "SD Syntax Auto Convert",
   "prompt_sdSyntaxAutoConvertSubtitle": "Convert SD weight syntax to NAI format on blur",
+  "prompt_separateNumericWeightClosing": "Space After Numeric Tags",
+  "prompt_separateNumericWeightClosingSubtitle": "Add a space before :: so year_2025:: is not read as a new weight",
   "prompt_resolveAliasOnCopy": "Expand Library On Copy",
   "prompt_resolveAliasOnCopySubtitle": "Replace <library name> with its content when copying or cutting",
+  "prompt_detectMultiCharacterOnPaste": "Detect Characters On Paste",
+  "prompt_detectMultiCharacterOnPasteSubtitle": "Offer to import characters when pasting | or COUPLE multi-character syntax",
   "prompt_cooccurrenceRecommendation": "Co-occurrence Tag Recommendation",
   "prompt_cooccurrenceRecommendationSubtitle": "Suggest after accepting a tag; Ctrl+Shift+Space or Ctrl+click also opens related tags",
   "prompt_regexRulesManage": "Regex Replace Rules...",
@@ -821,6 +972,7 @@
   "regexRules_testNoChange": "No change",
   "regexRules_testNoRules": "No enabled rules",
   "prompt_formatted": "Formatted",
+  "prompt_numericWeightClosingSeparated": "Weight closings spaced",
 
   "image_save": "Save",
   "image_copy": "Copy",
@@ -1025,7 +1177,17 @@
   "editor_done": "Done",
   "editor_tolerance": "Tolerance",
   "editor_intensity": "Intensity",
-  "editor_sourcePoint": "Alt+Click to set source point",
+  "editor_cloneStampSetSource": "Set Source",
+  "editor_cloneStampSetSourceTooltip": "When on, the next point you pick on the canvas becomes the source. Alt+click on the canvas also sets it.",
+  "editor_cloneStampPickingHint": "Pick a point on the canvas to clone from.",
+  "editor_cloneStampNoSourceHint": "No source point yet. Turn on Set Source, then pick a point on the canvas.",
+  "editor_cloneStampSourceReadout": "Source point: X {x}, Y {y}",
+  "@editor_cloneStampSourceReadout": {
+    "placeholders": {
+      "x": {"type": "int"},
+      "y": {"type": "int"}
+    }
+  },
   "editor_brushPresets": "Brush Presets",
   "editor_size": "Size",
   "editor_opacity": "Opacity",
@@ -1041,8 +1203,8 @@
   "editor_toolFill": "Fill",
   "editor_toolMagicWand": "Magic Wand",
   "editor_magicWandMode": "Selection method",
-  "editor_magicWandSmartObject": "Smart object (EfficientViT)",
-  "editor_magicWandColorArea": "Color area (flood fill)",
+  "editor_magicWandSmartObject": "Smart object",
+  "editor_magicWandColorArea": "Color area",
   "editor_magicWandSmartHelp": "Click the object to select. The first use downloads the approximately 133 MiB EfficientViT-SAM L0 model from MIT Han Lab (Apache-2.0), then keeps it locally.",
   "editor_magicWandColorHelp": "Click a contiguous region of similar color. This works best on flat, clean boundaries and requires no model download.",
   "editor_magicWandInvert": "Invert result",
@@ -1064,6 +1226,9 @@
   "editor_zoomIn": "Zoom In",
   "editor_zoomOut": "Zoom Out",
   "editor_fitToWindow": "Fit to Window",
+  "editor_viewOptions": "View Options",
+  "editor_menuGroupView": "View",
+  "editor_menuGroupCanvas": "Canvas",
   "editor_tempColorPickerShortcut": "Alt+Click: temporary color picker",
   "editor_shortcutHelpTitle": "Shortcut Help",
   "editor_shortcutPaintTools": "Paint Tools",
@@ -1075,6 +1240,7 @@
   "editor_shortcutHistoryActions": "History Actions",
   "editor_shortcutSelectionActions": "Selection Actions",
   "editor_shortcutTemporaryColorPicker": "Temporary Color Picker",
+  "editor_shortcutCloneStampSource": "Set Clone Stamp Source",
   "editor_shortcutRectSelection": "Rectangle Selection",
   "editor_shortcutEllipseSelection": "Ellipse Selection",
   "editor_shortcutLassoSelection": "Lasso Selection",
@@ -1130,6 +1296,7 @@
   "editor_effectBlur": "Gaussian Blur",
   "editor_effectSharpen": "Sharpen",
   "editor_effectCropToSelection": "Crop to Selection",
+  "editor_cropNeedsSelection": "Make a selection first; only the pixels inside its bounding box are kept, in place.",
   "editor_effectRotateLeft": "Rotate Left 90°",
   "editor_effectRotateRight": "Rotate Right 90°",
   "editor_effectFlipHorizontal": "Flip Horizontal",
@@ -1338,6 +1505,7 @@
       "value": {}
     }
   },
+  "editor_focusMinimumContextAreaLabel": "Minimum Context Area",
   "editor_canvasSizeTitle": "Canvas Size",
   "editor_presetSize": "Preset Size",
   "editor_customSize": "Custom",
@@ -1656,6 +1824,14 @@
   "onlineGallery_blacklistMenuHint": "Hide gallery images containing this tag",
   "onlineGallery_outputFilteredTagTooltip": "Removed when copying, sending, or adding to queue; right-click to manage",
   "onlineGallery_tagContextMenuTooltip": "Right-click to add to the blacklist or output filter",
+  "onlineGallery_outputFilteredTagTooltipTouch": "Removed when copying, sending, or adding to queue; long-press to manage",
+  "@onlineGallery_outputFilteredTagTooltipTouch": {
+    "description": "Tooltip for an output-filtered tag chip on touch devices; mirrors onlineGallery_outputFilteredTagTooltip."
+  },
+  "onlineGallery_tagContextMenuTooltipTouch": "Long-press to add to the blacklist or output filter",
+  "@onlineGallery_tagContextMenuTooltipTouch": {
+    "description": "Tooltip for a tag chip on touch devices, where there is no right-click; mirrors onlineGallery_tagContextMenuTooltip."
+  },
   "onlineGallery_outputFilterTagAdded": "Added {tag} to the output filter",
   "@onlineGallery_outputFilterTagAdded": {
     "placeholders": {
@@ -1869,11 +2045,7 @@
   "tooltip_fullscreenEdit": "Fullscreen Edit",
   "tooltip_decreaseWeight": "Decrease Weight [-5%]",
   "tooltip_increaseWeight": "Increase Weight [+5%]",
-  "tooltip_edit": "Edit",
   "tooltip_copy": "Copy",
-  "tooltip_delete": "Delete",
-  "tooltip_enable": "Enable",
-  "tooltip_disable": "Disable",
   "tooltip_resetWeight": "Click to reset to 100%",
 
   "upscale_scale": "Scale Factor",
@@ -1908,16 +2080,7 @@
   "gelbooru_unknownError": "Gelbooru verification failed. Try again later.",
 
   "weight_title": "Weight",
-  "weight_reset": "Reset",
-  "weight_done": "Done",
-  "weight_noBrackets": "No brackets",
-  "weight_editTag": "Edit Tag",
-  "weight_tagName": "Tag Name",
-  "weight_tagNameHint": "Enter tag name...",
 
-  "tag_enable": "Enable",
-  "tag_disable": "Disable",
-  "tag_delete": "Delete",
   "tag_addTag": "Add Tag",
 
   "tagCategory_artist": "Artist",
@@ -2066,6 +2229,13 @@
       "height": { "type": "int" },
       "suggestedWidth": { "type": "int" },
       "suggestedHeight": { "type": "int" }
+    }
+  },
+  "generation_emptyInpaintMask": "Inpaint mask is empty after sampling",
+  "generation_emptyInpaintMaskHint": "The mask is too thin or too small: nothing is left to repaint after sampling it on the {gridSize}-pixel grid. Make the mask thicker or larger and try again.",
+  "@generation_emptyInpaintMaskHint": {
+    "placeholders": {
+      "gridSize": { "type": "int" }
     }
   },
 
@@ -2293,6 +2463,26 @@
       "name": {}
     }
   },
+  "randomManager_branchOutputBadge": "Output by a branch of “{name}”",
+  "@randomManager_branchOutputBadge": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "randomManager_branchOutputBadgeMultiple": "Output by {count} branches, including “{name}”",
+  "@randomManager_branchOutputBadgeMultiple": {
+    "placeholders": {
+      "name": {"type": "String"},
+      "count": {"type": "int"}
+    }
+  },
+  "randomManager_branchOutputTooltip": "This group is not drawn on its own; it is output only when a branch that references it is chosen. It returns to normal drawing once those branches are disabled or deleted. Tap to open the branch.",
+  "randomManager_deleteBranchTargetWarning": "Branches of “{names}” reference this group. After deletion, that entry in those branches will show as unavailable.",
+  "@randomManager_deleteBranchTargetWarning": {
+    "placeholders": {
+      "names": {"type": "String"}
+    }
+  },
   "randomManager_tagGroupCount": "{count} tag groups",
   "@randomManager_tagGroupCount": {
     "placeholders": {
@@ -2300,10 +2490,7 @@
     }
   },
   "randomManager_categories": "Categories",
-  "randomManager_tagGroups": "Tag Groups",
-  "randomManager_tags": "Tags",
   "randomManager_addTagGroup": "Add Tag Group",
-  "randomManager_locked": "Locked",
   "randomManager_addCategory": "Add Category",
   "randomManager_noCategories": "No categories",
   "randomManager_noCategoriesHint": "Click \"Add Category\" to start configuring",
@@ -2445,12 +2632,8 @@
   },
   "randomManager_previewHint": "No sample generated yet",
   "randomManager_moreActions": "More Actions",
-  "scope_global": "Main",
-  "scope_globalTooltip": "Prompt will appear in main prompt area\nSuitable for: background, scene, style, etc.",
   "scope_character": "Char",
-  "scope_characterTooltip": "Prompt will only appear in character prompts\nGenerated separately for each character\nSuitable for: hair color, eye color, clothing, expression, etc.",
   "scope_all": "Both",
-  "scope_allTooltip": "Prompt appears in both main and character prompts\nSuitable for: pose, interaction, and other universal tags",
 
   "vibeParseFailed": "Failed to parse Vibe file",
 
@@ -2666,12 +2849,12 @@
 
   "statistics_title": "Statistics",
   "statistics_noData": "No statistics available",
-  "statistics_noTagData": "No tag data",
   "statistics_generateFirst": "Generate some images first",
   "statistics_totalImages": "Total Images",
   "statistics_totalSize": "Total Size",
   "statistics_favorites": "Favorites",
-  "statistics_samplerDistribution": "Sampler Distribution",
+  "statistics_parameterDistribution": "Parameter Distribution",
+  "statistics_parameterOther": "Other",
   "statistics_additionalStats": "Additional Statistics",
   "statistics_averageFileSize": "Average File Size",
   "statistics_withMetadata": "Images with Metadata",
@@ -2943,19 +3126,7 @@
       "error": {"type": "String"}
     }
   },
-  "collectionSelect_dialogTitle": "Select Collection",
   "collectionSelect_filterHint": "Search collections...",
-  "collectionSelect_noCollections": "No collections",
-  "collectionSelect_createCollectionHint": "Create a collection first",
-  "collectionSelect_noFilterResults": "No matching collections found",
-  "collectionSelect_imageCount": "{count} images",
-  "@collectionSelect_imageCount": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
 
   "statistics_chartTopTags": "Top Tags",
   "statistics_chartAspectRatio": "Aspect Ratio Distribution",
@@ -3153,7 +3324,8 @@
   "reversePrompt_localTaggerModelHint": "Configure model folder in Settings",
   "reversePrompt_generalThreshold": "General tag threshold",
   "reversePrompt_characterThreshold": "Character tag threshold",
-  "reversePrompt_taggerFilterHint": "Only General / Character tags are output. Rating, Artist, Copyright, Meta, and other categories are filtered.",
+  "reversePrompt_taggerCategories": "Output categories",
+  "reversePrompt_keepOneTaggerCategory": "Keep at least one output category selected",
   "reversePrompt_replacementEmptyHint": "No replacement target character selected. Choose a character from the tag library here; it will not be injected into the prompt.",
   "reversePrompt_selectReplacementCharacter": "Choose replacement target character from library",
   "reversePrompt_selectReplacementTargetTitle": "Choose Replacement Target Character",
@@ -3264,25 +3436,119 @@
   },
   "promptAssistant_provider": "Provider",
   "promptAssistant_model": "Model",
-  "promptAssistant_noModelsPullFirst": "No models yet. Pull the model list first",
-  "promptAssistant_providerManagement": "Provider Management",
-  "promptAssistant_providerManagementSubtitle": "Supports OpenAI Chat / Responses, Anthropic, Gemini, DeepSeek, LM Studio, Ollama, Pollinations, and custom compatible endpoints",
-  "promptAssistant_apiKeyConfigured": "API Key: configured",
-  "promptAssistant_apiKeyNotConfigured": "API Key: not configured",
-  "promptAssistant_supportsImageInput": "Supports image input",
-  "promptAssistant_textOnly": "Text only",
-  "promptAssistant_connectionConfig": "Connection Config",
-  "promptAssistant_pullModelList": "Pull model list",
-  "promptAssistant_editProvider": "Edit provider",
-  "promptAssistant_deleteProvider": "Delete provider",
-  "promptAssistant_pullingModels": "Pulling model list...",
-  "promptAssistant_emptyModelList": "Provider returned an empty model list",
-  "promptAssistant_modelsSynced": "Synced {count} models",
-  "@promptAssistant_modelsSynced": {
+  "promptAssistant_noModelsPullFirst": "No models yet. Add some in Model services first",
+  "settings_modelServices": "Model services",
+  "modelServices_searchProviders": "Search providers",
+  "modelServices_noProviderMatches": "No matching providers",
+  "modelServices_emptyTitle": "Add your first provider",
+  "modelServices_emptyBody": "Providers supply the models used by the prompt assistant and Agent.",
+  "modelServices_disabled": "Off",
+  "modelServices_enableProvider": "Enable provider",
+  "modelServices_moreActions": "More actions",
+  "modelServices_connection": "Connection",
+  "modelServices_apiKey": "API key",
+  "modelServices_apiKeySavedHint": "Saved. Enter a new key to replace it.",
+  "modelServices_apiKeyOptional": "Optional for this provider",
+  "modelServices_showApiKey": "Show key",
+  "modelServices_hideApiKey": "Hide key",
+  "modelServices_clearApiKey": "Remove saved key",
+  "modelServices_apiKeyCleared": "API key removed",
+  "modelServices_baseUrl": "API address",
+  "modelServices_checkConnection": "Check connection",
+  "modelServices_connectionOk": "Connected. The provider lists {count} models.",
+  "@modelServices_connectionOk": {
     "placeholders": {
       "count": {}
     }
   },
+  "modelServices_connectionFailed": "Couldn't connect: {error}",
+  "@modelServices_connectionFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "modelServices_models": "Models",
+  "modelServices_modelCount": "{count} models",
+  "@modelServices_modelCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "modelServices_noModels": "No models yet. Pick from the provider's list or add a model ID.",
+  "modelServices_manageModels": "Manage models",
+  "modelServices_addModel": "Add model",
+  "modelServices_manageModelsTitle": "{provider} models",
+  "@modelServices_manageModelsTitle": {
+    "placeholders": {
+      "provider": {}
+    }
+  },
+  "modelServices_addGroup": "Add all {group} models",
+  "@modelServices_addGroup": {
+    "placeholders": {
+      "group": {}
+    }
+  },
+  "modelServices_removeGroup": "Remove all {group} models",
+  "@modelServices_removeGroup": {
+    "placeholders": {
+      "group": {}
+    }
+  },
+  "modelServices_notListed": "No longer listed",
+  "modelServices_reasoning": "Reasoning",
+  "modelServices_vision": "Vision",
+  "modelServices_contextWindow": "{size} context",
+  "@modelServices_contextWindow": {
+    "placeholders": {
+      "size": {}
+    }
+  },
+  "modelServices_modelId": "Model ID",
+  "modelServices_modelIdRequired": "Enter a model ID",
+  "modelServices_modelExists": "This provider already has this model",
+  "modelServices_displayName": "Display name",
+  "modelServices_displayNameHint": "Leave empty to use {name}",
+  "@modelServices_displayNameHint": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "modelServices_editModel": "Edit model",
+  "modelServices_removeModel": "Remove model",
+  "modelServices_removeModelConfirm": "Remove {name} from this provider?",
+  "@modelServices_removeModelConfirm": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "modelServices_removeModelInUse": "{name} is used by {usages}. Task routing switches to this provider's next model, and Agent asks you to pick a model again.",
+  "@modelServices_removeModelInUse": {
+    "placeholders": {
+      "name": {},
+      "usages": {}
+    }
+  },
+  "modelServices_usageSeparator": ", ",
+  "modelServices_cleanStaleModels": "Remove delisted models",
+  "modelServices_addAllModels": "Add all models",
+  "modelServices_staleModelCount": "{count} delisted models",
+  "@modelServices_staleModelCount": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "modelServices_addAllConfirm": "Add {count} models to this provider?",
+  "@modelServices_addAllConfirm": {
+    "placeholders": {
+      "count": {}
+    }
+  },
+  "promptAssistant_supportsImageInput": "Supports image input",
+  "promptAssistant_textOnly": "Text only",
+  "promptAssistant_editProvider": "Edit provider",
+  "promptAssistant_deleteProvider": "Delete provider",
+  "promptAssistant_emptyModelList": "Provider returned an empty model list",
   "promptAssistant_pullModelsFailed": "Failed to pull models: {error}",
   "@promptAssistant_pullModelsFailed": {
     "placeholders": {
@@ -3299,16 +3565,7 @@
   "promptAssistant_allowImageInput": "Allow image input",
   "promptAssistant_allowImageInputSubtitle": "Enable only when the model and provider actually support vision input",
   "promptAssistant_apiKeyLeaveEmpty": "API Key (leave empty to keep unchanged)",
-  "promptAssistant_connectionTitle": "{name} Connection Config",
-  "@promptAssistant_connectionTitle": {
-    "placeholders": {
-      "name": {}
-    }
-  },
   "promptAssistant_baseUrlHint": "Example: https://api.openai.com/v1",
-  "promptAssistant_clearCurrentApiKey": "Clear current API Key",
-  "promptAssistant_protocolSupportsImagePayload": "The current protocol supports image payloads; the model itself must still support vision input",
-  "promptAssistant_protocolTextOnlyWarning": "The current protocol is text-only by default; enabling this may still be rejected by the server",
   "promptAssistant_addRuleTitle": "Add Rule",
   "promptAssistant_editRuleTitle": "Edit Rule",
   "promptAssistant_taskType": "Task Type",
@@ -3743,6 +4000,18 @@
       "seconds": {}
     }
   },
+  "settings_decreaseValue": "Decrease {field}",
+  "@settings_decreaseValue": {
+    "placeholders": {
+      "field": {}
+    }
+  },
+  "settings_increaseValue": "Increase {field}",
+  "@settings_increaseValue": {
+    "placeholders": {
+      "field": {}
+    }
+  },
   "unit_times": "times",
   "unit_seconds": "seconds",
 
@@ -3956,6 +4225,8 @@
   "shortcut_action_reuse_params": "Reuse Parameters",
   "shortcut_action_previous_image": "Previous Image",
   "shortcut_action_next_image": "Next Image",
+  "shortcut_action_first_image": "First Image",
+  "shortcut_action_last_image": "Last Image",
   "shortcut_action_zoom_in": "Zoom In",
   "shortcut_action_zoom_out": "Zoom Out",
   "shortcut_action_reset_zoom": "Reset Zoom",
@@ -4315,104 +4586,6 @@
   "categoryError_reorderFailed": "Failed to reorder categories: {error}",
   "@categoryError_reorderFailed": {
     "placeholders": {
-      "error": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorEntryNotFoundOrDeleteFailed": "{item} was not found or could not be deleted",
-  "@vibeBulk_errorEntryNotFoundOrDeleteFailed": {
-    "placeholders": {
-      "item": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorDeleteFailed": "Failed to delete {item}: {error}",
-  "@vibeBulk_errorDeleteFailed": {
-    "placeholders": {
-      "item": {"type": "String"},
-      "error": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorEntryNotFound": "Entry not found: {item}",
-  "@vibeBulk_errorEntryNotFound": {
-    "placeholders": {
-      "item": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorMoveFailed": "Failed to move {item}: {error}",
-  "@vibeBulk_errorMoveFailed": {
-    "placeholders": {
-      "item": {"type": "String"},
-      "error": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorFavoriteFailed": "Failed to update favorite status: {item}",
-  "@vibeBulk_errorFavoriteFailed": {
-    "placeholders": {
-      "item": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorFavoriteFailedWithDetails": "Failed to update favorite status for {item}: {error}",
-  "@vibeBulk_errorFavoriteFailedWithDetails": {
-    "placeholders": {
-      "item": {"type": "String"},
-      "error": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorAddTagsFailed": "Failed to add tags: {item}",
-  "@vibeBulk_errorAddTagsFailed": {
-    "placeholders": {
-      "item": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorAddTagsFailedWithDetails": "Failed to add tags to {item}: {error}",
-  "@vibeBulk_errorAddTagsFailedWithDetails": {
-    "placeholders": {
-      "item": {"type": "String"},
-      "error": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorRemoveTagsFailed": "Failed to remove tags: {item}",
-  "@vibeBulk_errorRemoveTagsFailed": {
-    "placeholders": {
-      "item": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorRemoveTagsFailedWithDetails": "Failed to remove tags from {item}: {error}",
-  "@vibeBulk_errorRemoveTagsFailedWithDetails": {
-    "placeholders": {
-      "item": {"type": "String"},
-      "error": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorExportNoFile": "Export failed because no file was created",
-  "vibeBulk_errorExportFailed": "Export failed: {error}",
-  "@vibeBulk_errorExportFailed": {
-    "placeholders": {
-      "error": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorFileNotFound": "File not found: {item}",
-  "@vibeBulk_errorFileNotFound": {
-    "placeholders": {
-      "item": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorNoVibeData": "No valid Vibe data was found in {item}",
-  "@vibeBulk_errorNoVibeData": {
-    "placeholders": {
-      "item": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorImportFailed": "Failed to import Vibe from {item}: {error}",
-  "@vibeBulk_errorImportFailed": {
-    "placeholders": {
-      "item": {"type": "String"},
-      "error": {"type": "String"}
-    }
-  },
-  "vibeBulk_errorProcessFileFailed": "Failed to process {item}: {error}",
-  "@vibeBulk_errorProcessFileFailed": {
-    "placeholders": {
-      "item": {"type": "String"},
       "error": {"type": "String"}
     }
   },
@@ -4849,7 +5022,7 @@
   "settings_mcpServerRegenerateToken": "Regenerate token",
   "settings_mcpServerRegenerateTokenTitle": "Regenerate access token",
   "settings_mcpServerRegenerateTokenMessage": "The current token stops working immediately and connected clients are disconnected. Update every client configuration with the new token.",
-  "settings_mcpServerAnlasNotice": "Anything that may spend Anlas is confirmed separately inside the launcher, regardless of the permission mode.",
+  "settings_mcpServerAnlasNotice": "Anything that may spend Anlas is confirmed separately inside the launcher. In Autopilot, only a single request reaching the Protection Mode high-cost threshold asks first.",
   "settings_mcpServerPendingApproval": "{client} is requesting {tool}",
   "@settings_mcpServerPendingApproval": {
     "placeholders": {
@@ -5555,65 +5728,6 @@
   "pagination_itemsPerPage": "Per page",
   "pagination_itemUnit": "items",
 
-  "diyGuide_title": "DIY Feature Guide",
-  "diyGuide_subtitle": "Learn advanced features and create your own library",
-  "diyGuide_intro": "This guide explains the core concepts and advanced features of the DIY system, helping you build powerful dynamic prompt libraries.",
-  "diyGuide_exampleLabel": "Example",
-  "diyGuide_hierarchyTitle": "Hierarchy",
-  "diyGuide_hierarchyDescription": "The DIY system uses a three-level category structure to organize prompts for easier management and lookup.",
-  "diyGuide_hierarchyExample": "Category: Character features\n  -> Group: Hairstyle\n      -> Tag: long hair, short hair, twintails",
-  "diyGuide_selectionModeTitle": "Selection Mode",
-  "diyGuide_selectionModeDescription": "Controls how many tags are selected from a group.",
-  "diyGuide_selectionModeExample": "• Random: select one item each time, such as a random hair color\n• All: select every tag in the group, such as a fixed feature set",
-  "diyGuide_weightTitle": "Weight Control",
-  "diyGuide_weightDescription": "Adjusts the influence of specific prompts during generation.",
-  "diyGuide_weightExample": "• Boost: curly brackets around masterpiece = 1.05x weight\n• Strong boost: triple curly brackets around masterpiece = 1.16x weight\n• Weaken: [bad hands] = 0.95x weight",
-  "diyGuide_genderTitle": "Gender Restriction",
-  "diyGuide_genderDescription": "Limits tags to specific character genders to avoid incompatible generated features.",
-  "diyGuide_genderExample": "• Female: only female characters, such as skirt\n• Male: only male characters, such as beard\n• Any: universal, such as T-shirt",
-  "diyGuide_scopeTitle": "Scope",
-  "diyGuide_scopeDescription": "Defines whether a tag applies to the character, background, or the whole image.",
-  "diyGuide_scopeExample": "• Character: character features, such as eyes and hair\n• Background: environment descriptions, such as blue sky and indoors\n• Global: art style and quality tags, such as best quality",
-  "diyGuide_conditionalTitle": "Conditional Branch",
-  "diyGuide_conditionalDescription": "Dynamically chooses later tags based on selected tags or other conditions.",
-  "diyGuide_conditionalExample": "IF selected \"rain\"\n  THEN add \"umbrella\" and \"wet clothes\"\n  ELSE add \"sunny\"",
-  "diyGuide_dependenciesTitle": "Dependencies",
-  "diyGuide_dependenciesDescription": "Creates links between tags so related tags are automatically introduced when one tag is selected.",
-  "diyGuide_dependenciesExample": "Selecting \"JK uniform\" -> automatically adds \"school background\" and \"school bag\"",
-  "diyGuide_visibilityTitle": "Visibility Rules",
-  "diyGuide_visibilityDescription": "Controls when tags are shown in the UI or become active during generation.",
-  "diyGuide_visibilityExample": "Only show the \"magic wand\" option group when the \"magical girl\" category is selected",
-  "diyGuide_timeTitle": "Time Condition",
-  "diyGuide_timeDescription": "Triggers specific tags based on real time or configured simulated time.",
-  "diyGuide_timeExample": "• 06:00-18:00 -> add \"daylight\"\n• 18:00-06:00 -> add \"night\"",
-  "diyGuide_postProcessingTitle": "Post-processing Rules",
-  "diyGuide_postProcessingDescription": "Runs text replacement or cleanup at the final stage of prompt generation.",
-  "diyGuide_postProcessingExample": "Replace every \"blue eyes\" with \"azure eyes\" for a more distinctive description",
-  "diyGuide_emphasisTitle": "Emphasis Probability",
-  "diyGuide_emphasisDescription": "Randomly adds weight syntax to tags to increase output variety.",
-  "diyGuide_emphasisExample": "Set a 30% probability: about 1/3 of outputs use a weighted tag and 2/3 output the plain tag",
-
-  "naiRules_title": "NAI Random Rules",
-  "naiRules_characterCountProbability": "Character Count Probability",
-  "naiRules_solo": "1 person (Solo)",
-  "naiRules_duo": "2 people (Duo)",
-  "naiRules_trio": "3 people (Trio)",
-  "naiRules_group": "4 people (Group)",
-  "naiRules_genderRules": "Gender Rules",
-  "naiRules_female": "Female",
-  "naiRules_male": "Male",
-  "naiRules_mixed": "Mixed / Other",
-  "naiRules_categoryProbability": "Category Probability",
-  "naiRules_dynamicTagWeightTitle": "Dynamic Tag Weight Adjustment",
-  "naiRules_dynamicTagWeightSubtitle": "Randomly combines multiple dimensions such as action, clothing, expression, and background, then adjusts category weights based on the image theme.",
-  "naiRules_specialMechanisms": "Special Mechanisms",
-  "naiRules_tagStrengthening": "Tag Strengthening",
-  "naiRules_seasonalLibraryTitle": "Seasonal Library",
-  "naiRules_seasonalLibrarySubtitle": "Automatically matches seasonal features, including seasonal clothing, weather, lighting, and atmosphere.",
-  "naiRules_v4CharacterPositioning": "V4 Multi-character Positioning",
-  "naiRules_smartPositionTitle": "Smart Position Assignment",
-  "naiRules_smartPositionSubtitle": "With V4 models, character positioning syntax is used to precisely control multi-character placement.",
-
   "comfyImport_detectedTitle": "Detected ComfyUI multi-character prompt",
   "comfyImport_characterList": "Character List ({count})",
   "@comfyImport_characterList": {
@@ -5667,6 +5781,29 @@
   "updateErrorServiceUnavailable": "The update server is temporarily unavailable. Please try again later.",
   "updateErrorInvalidMetadata": "Update information could not be verified. Try again later or download from the Release page.",
   "updateErrorUnknown": "Unable to check for updates right now. Please try again later.",
+  "updateInstallErrorPackageNotFound": "No update package that can be installed automatically was found. Please download it manually from the Release page.",
+  "updateInstallErrorIncompleteMetadata": "The update package is missing verification information and cannot be installed safely. Please download it manually from the Release page.",
+  "updateInstallErrorDiskFull": "Not enough disk space to save the update package. Free up some space and try again.",
+  "updateInstallErrorFileSystem": "Failed to write the update package. Check your disk and try again.",
+  "updateInstallErrorVerificationFailed": "The update package failed verification. Please download it again.",
+  "updateInstallErrorResumeRejected": "The server rejected the request to resume the download. Please try again later.",
+  "updateInstallErrorEmptyResponse": "The update server returned an empty response. Please try again later.",
+  "updateInstallErrorDownloadFailed": "Failed to download the update package. Please try again later.",
+  "updateInstallErrorPackageMissing": "The update package has been cleaned up. Please download it again.",
+  "updateInstallErrorPackageCorrupted": "The update package is damaged. Please download it again.",
+  "updateInstallErrorInvalidAndroidPackage": "The Android update package has an invalid format. Please download it manually from the Release page.",
+  "updateInstallErrorAndroidInstaller": "Could not open Android's system installer. Please try again.",
+  "updateInstallErrorUpdaterLaunchFailed": "Could not launch the updater. The current version is unchanged; try again or download the new version manually.",
+  "updateInstallErrorUpdaterNotStarted": "The updater did not start. The current version is unchanged; please download the new version manually to update.",
+  "updateInstallErrorInstallFailed": "The previous update was not installed. You can try again or download and install the new version manually.",
+  "updateInstallErrorInterrupted": "The previous update did not finish installing. You can try again or download and install the new version manually.",
+  "updateInstallErrorUnknown": "The update could not be completed. Please try again later.",
+  "updateInstallLogPath": "Log: {path}",
+  "@updateInstallLogPath": {
+    "placeholders": {
+      "path": {}
+    }
+  },
   "currentVersion": "Current Version",
   "latestVersion": "Latest Version",
   "releaseNotes": "Release Notes",
@@ -5949,14 +6086,17 @@
     }
   },
 
-  "diy_editDependencyTitle": "Edit Dependency",
-  "diy_dependencyTitle": "Dependency Settings",
   "diy_dependencySubtitle": "Configure dependencies between tag selections",
   "diy_dependencyType": "Dependency Type",
   "diy_sourceCategory": "Source Category",
   "diy_selectSourceCategory": "Select a source category",
-  "diy_sourceCategoryId": "Source Category ID",
-  "diy_enterCategoryId": "Enter a category ID",
+  "diy_sourceCharacterCount": "Character count",
+  "diy_categoryUnavailable": "Unavailable: {reference}",
+  "@diy_categoryUnavailable": {
+    "placeholders": {
+      "reference": {"type": "String"}
+    }
+  },
   "diy_mappingRules": "Mapping Rules",
   "diy_noMappingRules": "No mapping rules",
   "diy_deleteRule": "Delete rule",
@@ -5977,8 +6117,13 @@
   "diy_dependencyExistsDescription": "Apply only when the source category has at least one selected tag",
   "diy_dependencyValueDescription": "Depend on a specific selected tag value in the source category",
   "diy_dependencyExcludesDescription": "Do not apply when the source category has a selected tag",
+  "diy_dependencyCountCharacterCountDescription": "Use the number of characters in this generation to determine the result count",
+  "diy_dependencyExistsCharacterCountDescription": "Apply only when the image has characters (character count above 0)",
+  "diy_dependencyValueCharacterCountDescription": "Depend on the character count in this generation, such as 1, 2, or 3",
+  "diy_dependencyExcludesCharacterCountDescription": "Apply only when the image has no characters (character count is 0)",
+  "diy_dependencyOverridesSelectionCount": "This group does not use Multiple Count mode. The count from this dependency overrides the selection mode: that many items are drawn by weight without repeats, or all of them if there are fewer. Nothing is drawn when no mapping matches and no default is set.",
+  "diy_dependencyOverridesSequentialCount": "This group uses Sequential mode. The count from this dependency overrides the selection mode: that many items are taken in rotation order, or all of them if there are fewer. Nothing is drawn when no mapping matches and no default is set.",
 
-  "diy_editConditionalTitle": "Edit Conditional Branches",
   "diy_conditionalDefaultName": "Conditional Branches",
   "diy_branchDefaultName": "Branch {index}",
   "@diy_branchDefaultName": {
@@ -5986,7 +6131,6 @@
       "index": {"type": "int"}
     }
   },
-  "diy_conditionalTitle": "Conditional Branches",
   "diy_conditionalSubtitle": "Choose a branch by probability",
   "diy_branchCount": "{count} branches",
   "@diy_branchCount": {
@@ -6013,6 +6157,42 @@
   "diy_branchName": "Branch Name",
   "diy_probability": "Probability",
   "diy_enableBranch": "Enable This Branch",
+  "diy_branchTargets": "Output tag groups",
+  "diy_branchTargetsHint": "Selected groups are output only when this branch is chosen, drawn with this group's selection mode. With none selected, this group's own tags are output.",
+  "diy_branchTargetsEmpty": "No other tag groups in this category",
+  "diy_branchTargetChild": "Child: {name}",
+  "@diy_branchTargetChild": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "diy_branchTargetCycle": "Would create a loop",
+  "diy_branchTargetCycleHint": "Greyed-out groups already output this group directly or indirectly; selecting them would create a loop",
+  "diy_branchTargetCount": "Outputs {count} groups",
+  "@diy_branchTargetCount": {
+    "placeholders": {
+      "count": {"type": "int"}
+    }
+  },
+  "diy_branchConditions": "Conditions",
+  "diy_branchConditionsHint": "Only categories and branches generated before this group can be referenced. Values are compared as tags, ignoring case, underscores, and weight syntax. A branch without conditions is always eligible.",
+  "diy_addCondition": "Add condition",
+  "diy_deleteCondition": "Delete condition",
+  "diy_conditionSource": "Variable",
+  "diy_conditionValueRequired": "Enter a value",
+  "diy_conditionLogicAll": "Match all",
+  "diy_conditionLogicAny": "Match any",
+  "diy_conditionSourceGender": "Character gender",
+  "diy_conditionSourceBranch": "Branch of {name}",
+  "@diy_conditionSourceBranch": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
+  "diy_conditionValueHintCategory": "e.g. blue eyes",
+  "diy_conditionValueHintGender": "e.g. girl, boy",
+  "diy_conditionValueHintCount": "e.g. 1, 2, 3",
+  "diy_conditionValueHintBranch": "Enter a branch name",
 
   "diy_ruleDefaultName": "Rule {index}",
   "@diy_ruleDefaultName": {
@@ -6030,7 +6210,6 @@
   "diy_editRule": "Edit Rule",
   "diy_ruleName": "Rule Name",
   "diy_enableRule": "Enable This Rule",
-  "diy_postProcessTitle": "Post-processing Rules",
   "diy_postProcessSubtitle": "Automatically resolve tag conflicts",
   "diy_sleepingRule": "Sleeping Rule",
   "diy_sleepingRuleDescription": "Remove eye-color descriptions when the character is sleeping",
@@ -6043,7 +6222,6 @@
   "diy_triggerTags": "Trigger Tags",
   "diy_commaSeparatedTagsHint": "Comma-separated tag list",
   "diy_targetCategories": "Target Categories",
-  "diy_commaSeparatedCategoryIdsHint": "Comma-separated category ID list",
   "diy_targetTags": "Target Tags",
   "diy_actionRemoveTags": "Remove Tags",
   "diy_actionReplaceTags": "Replace Tags",
@@ -6058,26 +6236,6 @@
     }
   },
 
-  "diy_emphasisTitle": "Global Emphasis",
-  "diy_emphasisSubtitle": "Adjust tag emphasis effects",
-  "diy_emphasisProbability": "Emphasis Probability",
-  "diy_emphasisProbabilityHint": "Each selected tag has a {percent}% chance of receiving emphasis brackets",
-  "@diy_emphasisProbabilityHint": {
-    "placeholders": {
-      "percent": {"type": "String"}
-    }
-  },
-  "diy_bracketCount": "Bracket Layers",
-  "diy_bracketLayers": "{count} layers",
-  "@diy_bracketLayers": {
-    "placeholders": {
-      "count": {"type": "int"}
-    }
-  },
-  "diy_effectPreview": "Effect Preview",
-  "diy_exampleTag": "example tag",
-  "diy_emphasisExplanation": "Emphasis brackets increase tag weight; more layers apply a higher weight",
-
   "diy_presetExportFailed": "Failed to export preset: {error}",
   "@diy_presetExportFailed": {
     "placeholders": {
@@ -6091,6 +6249,12 @@
       "error": {"type": "String"}
     }
   },
+  "diy_presetVersionTooNew": "This preset was exported by a newer app version (data version {version}). Update the app, then import it again",
+  "@diy_presetVersionTooNew": {
+    "placeholders": {
+      "version": {"type": "int"}
+    }
+  },
   "diy_presetExportTitle": "Export Preset",
   "diy_presetImportTitle": "Import Preset",
   "diy_unknown": "Unknown",
@@ -6102,12 +6266,12 @@
   "diy_categoryCount": "Categories",
   "diy_totalTagCount": "Total Tags",
 
-  "diy_visibilityTitle": "Visibility Rules",
   "diy_visibilitySubtitle": "Control category visibility with conditions",
   "diy_noVisibilityRules": "No visibility rules",
   "diy_noVisibilityRulesHint": "Add rules to control category visibility from the current composition",
   "diy_notSet": "Not set",
   "diy_targetCategory": "Target Category",
+  "diy_targetCurrentGroup": "This tag group",
   "diy_conditionType": "Condition Type",
   "diy_conditionValue": "Condition Value",
   "diy_conditionValueHint": "Tag name or value",
@@ -6119,9 +6283,7 @@
   "diy_conditionValueInList": "Value Is in List",
   "diy_conditionValueNotInList": "Value Is Not in List",
 
-  "diy_editTimeConditionTitle": "Edit Time Condition",
   "diy_timeDefaultName": "Time Condition",
-  "diy_timeTitle": "Time Condition",
   "diy_timeSubtitle": "Activate within a specific date range",
   "diy_enableTimeCondition": "Enable Time Condition",
   "diy_enableTimeConditionHint": "Apply only within the configured date range",
@@ -6142,6 +6304,9 @@
   "diy_conditionNameHint": "Enter a condition name",
   "diy_repeatYearly": "Repeat Yearly",
   "diy_repeatYearlyHint": "Activate automatically during the same date range every year",
+  "diy_repeatOnceHint": "Activate only during the date range of the selected year",
+  "diy_year": "Year",
+  "diy_yearUnsetHint": "No year selected yet, so it currently activates every year",
   "diy_currentlyActive": "Currently Active",
   "diy_inactive": "Inactive",
   "diy_daysRemaining": "{count} days remaining",
@@ -6302,6 +6467,122 @@
       "max": {"type": "int"}
     }
   },
+  "editor_toolFrame": "Frame",
+  "editor_toolMove": "Move",
+  "editor_toolGroupInpaint": "Inpaint",
+  "editor_toolGroupEdit": "Edit",
+  "editor_toolGroupCommon": "General",
+  "editor_toolbarFlyoutExpand": "Show related tools",
+  "editor_toolbarFlyoutHint": "Hover, right-click or long-press for related tools",
+  "editor_toolMaskBrush": "Mask Brush",
+  "editor_toolMaskEraser": "Mask Eraser",
+  "editor_toolMaskColorFill": "Fill Mask by Color",
+  "editor_toolMaskMagicWand": "Mask Magic Wand",
+  "editor_moveLayerHint": "Drag to move the whole current layer.",
+  "editor_moveSelectionHint": "Drag to move the pixels of the current layer inside the selection.",
+  "editor_moveBaseLayerHint": "The base image cannot be moved as a whole. Make a selection first, then move the pixels inside it.",
+  "editor_moveNoLayer": "There is no layer to move.",
+  "editor_moveNudgeHint": "Arrow keys move 1 pixel; hold Shift to move 10 pixels.",
+  "editor_shortcutNudge": "Move 1 pixel",
+  "editor_shortcutNudgeFar": "Move 10 pixels",
+  "editor_transformSection": "Transform",
+  "editor_transformWidth": "Width",
+  "editor_transformHeight": "Height",
+  "editor_transformAngle": "Angle",
+  "editor_transformCenterX": "Center X",
+  "editor_transformCenterY": "Center Y",
+  "editor_transformKeepAspect": "Lock Aspect Ratio",
+  "editor_transformFlipHorizontal": "Flip Horizontal",
+  "editor_transformFlipVertical": "Flip Vertical",
+  "editor_transformApply": "Apply Transform",
+  "editor_transformCancel": "Cancel Transform",
+  "editor_transformSizeReadout": "{width} × {height} px",
+  "@editor_transformSizeReadout": {
+    "placeholders": {
+      "width": {"type": "int"},
+      "height": {"type": "int"}
+    }
+  },
+  "editor_transformHandlesHint": "Drag a corner or edge to scale; drag the dot above the box to rotate.",
+  "editor_transformKeysHint": "Shift snaps to 15° or toggles the aspect lock; Alt scales from the center. Ctrl+T starts a transform, Enter applies it and Esc cancels it.",
+  "editor_transformTouchHint": "While transforming, use two fingers to scale, rotate and move; tap Apply Transform when done.",
+  "editor_shortcutFreeTransform": "Free transform",
+  "editor_shortcutApplyTransform": "Apply transform",
+  "layer_importImage": "Import Image",
+  "selection_clearPixels": "Delete Selected Pixels",
+  "selection_cutLayerName": "{name} Cut",
+  "@selection_cutLayerName": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "layer_duplicateName": "{name} Copy",
+  "@layer_duplicateName": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "layer_roleMask": "Mask",
+  "layer_addImage": "Add Image Layer",
+  "layer_addMask": "Add Mask Layer",
+  "img2img_inpaintSourceUpdated": "Base image edits saved. Paint a mask to start inpainting.",
+  "editor_frameToolHint": "Drag inside the frame to move it, or drag its edges to resize. Content outside the frame is kept and dimmed; only the area inside is sent for generation. A moved frame keeps at least 64 px of overlap with the image.",
+  "editor_frameSizeReadout": "Size: {width} x {height}",
+  "@editor_frameSizeReadout": {
+    "placeholders": {
+      "width": {"type": "int"},
+      "height": {"type": "int"}
+    }
+  },
+  "editor_frameOffsetReadout": "Offset from image: X {x}, Y {y}",
+  "@editor_frameOffsetReadout": {
+    "placeholders": {
+      "x": {"type": "int"},
+      "y": {"type": "int"}
+    }
+  },
+  "editor_frameMoveLockedByView": "The frame can't be moved while the view is rotated or mirrored. Press R to reset the view, then try again.",
+  "editor_resetFrame": "Reset Frame",
+  "editor_cropToFrame": "Crop to Frame",
+  "editor_cropToFrameHint": "Discard the image and mask outside the frame. This can be undone.",
+  "editor_cropToFrameFailed": "Crop to frame failed: {error}",
+  "@editor_cropToFrameFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "editor_changeFrameSize": "Change Frame Size",
+  "editor_frameResized": "Frame resized to {width} x {height}",
+  "@editor_frameResized": {
+    "placeholders": {
+      "width": {"type": "int"},
+      "height": {"type": "int"}
+    }
+  },
+  "editor_frameToolHintPasteBack": "Drag inside the frame to move it in 64 px steps, or drag its edges to resize. Only the area inside is sent for generation; when part of the image lies outside the frame, the result is pasted back into the full image through the mask and the outside stays unchanged. The frame keeps at least 64 px of overlap with the image.",
+  "editor_frameRequestReadout": "Request: {width} x {height}",
+  "@editor_frameRequestReadout": {
+    "placeholders": {
+      "width": {"type": "int"},
+      "height": {"type": "int"}
+    }
+  },
+  "editor_frameRequestFree": "Free",
+  "editor_frameRequestCost": "~{cost} Anlas",
+  "@editor_frameRequestCost": {
+    "placeholders": {
+      "cost": {"type": "int"}
+    }
+  },
+  "editor_frameResizeRejected": "Can't resize the frame: it must overlap the image by at least {overlap} px, and the frame and image together can't exceed {max} px per side.",
+  "@editor_frameResizeRejected": {
+    "placeholders": {
+      "overlap": {"type": "int"},
+      "max": {"type": "int"}
+    }
+  },
+  "editor_compressionFrameLimited": "Higher resolutions are unavailable because the frame would exceed the request area limit.",
+  "img2img_focusOutpaintHint": "Focus outpaint: only the frame is sent, and the result is pasted back into the full image through the mask. Adjust the frame with the Frame tool in the inpaint editor.",
 
   "savePreset_title": "Save as Preset",
   "savePreset_nameHint": "Enter preset name",
@@ -6314,6 +6595,9 @@
   },
 
   "onlineGallery_videoLoadFailed": "Failed to load video",
+  "onlineGallery_videoPositionLabel": "Playback position",
+  "onlineGallery_videoPlay": "Play",
+  "onlineGallery_videoPause": "Pause",
   "vibe_releaseToAddStyleReference": "Release to add style reference",
   "router_backAgainToExit": "Swipe or press back again to exit",
   "router_pageNotFound": "Page not found: {error}",
@@ -6338,7 +6622,7 @@
   "autocomplete_autoComma": "Add a comma after insertion",
   "autocomplete_openOnTagClick": "Open autocomplete when clicking tags",
   "autocomplete_openOnTagClickSubtitle": "When enabled, clicking an existing tag opens normal autocomplete; Ctrl/Command-click still shows related tags",
-  "autocomplete_replaceUnderscores": "Replace underscores with spaces on insertion",
+  "autocomplete_replaceUnderscores": "Replace underscores with spaces on insertion and auto format",
   "autocomplete_dataSourcesTitle": "Data Sources & Cache",
   "autocomplete_relatedTagsTitle": "Co-occurrence and related tags",
   "autocomplete_relatedTagsSubtitle": "Suggest after accepting a tag; also use Ctrl+Shift+Space or Ctrl+click on a tag",
@@ -6466,6 +6750,20 @@
   "@localGallery_saveToSystemGalleryFailed": {"placeholders":{"error":{}}},
   "image_savedAppOnly": "Saved to the app gallery, but could not export to your photo gallery: {error}",
   "@image_savedAppOnly": {"placeholders":{"error":{}}},
+  "image_savedToAppGallery": "Saved to the app gallery",
+  "image_saveAs": "Save as…",
+  "image_saveAsDialogTitle": "Save image as",
+  "image_saveAsToFolder": "Save to folder…",
+  "image_saveAsFolderDialogTitle": "Choose a folder to save to",
+  "image_savedAs": "Saved as {path}",
+  "@image_savedAs": {"placeholders":{"path":{}}},
+  "image_savedAsToChosenLocation": "Saved to the chosen location",
+  "image_savedAsToFolder": "Saved {count} images to {path}",
+  "@image_savedAsToFolder": {"placeholders":{"count":{"type":"int"},"path":{}}},
+  "image_savedAsToChosenFolder": "Saved {count} images to the chosen folder",
+  "@image_savedAsToChosenFolder": {"placeholders":{"count":{"type":"int"}}},
+  "image_savedAsPartial": "Saved {saved}, {failed} failed: {error}",
+  "@image_savedAsPartial": {"placeholders":{"saved":{"type":"int"},"failed":{"type":"int"},"error":{}}},
   "image_shareFailed": "Share failed: {error}",
   "@image_shareFailed": {"placeholders":{"error":{}}},
   "onlineGallery_savedFiles": "Saved {count} files",
@@ -6484,6 +6782,8 @@
   "@settings_localOnnxManagedFiles": {"placeholders":{"count":{"type":"int"}}},
   "settings_clearLocalOnnxModelsTitle": "Clear local ONNX models?",
   "settings_clearLocalOnnxModelsContent": "This removes the ONNX models and label files imported on this device.",
+  "settings_clearLocalOnnxModelsFailed": "Failed to clear local ONNX models: {error}",
+  "@settings_clearLocalOnnxModelsFailed": {"placeholders":{"error":{}}},
   "updateAndroidDownloadedHint": "v{version} has been downloaded and verified. Open Android's system installer to continue the update.",
   "@updateAndroidDownloadedHint": {"placeholders":{"version":{}}},
   "updateAndroidInstallingHint": "Opening Android's system installer. Follow the system prompt to confirm the update.",
@@ -6698,11 +6998,20 @@
   "agentSettings_densityDescription": "Comfortable preserves touch targets and spacing; compact fits more on desktop.",
   "agentSettings_densityComfortable": "Comfortable",
   "agentSettings_densityCompact": "Compact",
+  "agentSettings_chatPlacement": "Chat placement",
+  "agentSettings_chatPlacementDescription": "Applies to wide windows only; narrow screens keep the full-screen chat.",
+  "agentSettings_dockLayout": "Right panel layout",
+  "agentSettings_dockLayoutDescription": "Switch shows either chat or history in the right panel; split layouts show both at once.",
+  "agentSettings_dockExclusive": "Switch",
+  "agentSettings_dockStacked": "Stacked",
+  "agentSettings_dockSideBySide": "Side by side",
+  "agentSettings_floatingWindow": "Show chat in a floating window",
+  "agentSettings_floatingWindowDescription": "The floating window stays on every page and can be moved and resized; the right panel then shows only history.",
   "agentSettings_chatModel": "Chat model",
   "agentSettings_providerModel": "Provider / model",
-  "agentSettings_modelManagedInIntegrations": "Providers, API keys, and model discovery remain centrally managed in Integrations.",
+  "agentSettings_modelManagedInIntegrations": "Providers, API keys, and models are managed in Integrations > Model services.",
   "agentSettings_manageProviders": "Manage providers",
-  "agentSettings_noModel": "No chat model is available. Add a provider and discover models in Integrations first.",
+  "agentSettings_noModel": "No chat model is available. Add a provider and its models in Integrations > Model services first.",
   "agentSettings_pendingMatch": "pending match",
   "agentSettings_contextWindow": "Context window (tokens)",
   "agentSettings_contextWindowKnown": "Leave empty to use the built-in value {value}. Override it when a relay or custom deployment exposes a different window.",
@@ -6717,7 +7026,18 @@
   "agentSettings_permissionAsk": "Ask before sensitive actions",
   "agentSettings_permissionAskDescription": "Default. Ask before writing files, generating images, or other sensitive actions.",
   "agentSettings_permissionFull": "Full access",
-  "agentSettings_permissionFullDescription": "Allow direct tool use and files outside the workspace. Use only for trusted tasks.",
+  "agentSettings_permissionFullDescription": "Allow direct tool use and files outside the workspace; deleting saved data or spending Anlas still asks first. Use only for trusted tasks.",
+  "agentSettings_permissionAutopilot": "Autopilot",
+  "agentSettings_permissionAutopilotDescription": "Everything in Full access, plus generations and other Anlas spending run directly. Only a single request reaching the Protection Mode high-cost threshold, or deleting saved data, still asks first. For unattended batch work.",
+  "agentSettings_autopilotConfirmTitle": "Turn on Autopilot?",
+  "agentSettings_autopilotConfirmThreshold": "Generations, inpainting, queue runs and other Anlas spending will run without asking each time. A single request estimated at {threshold} Anlas or more (the Protection Mode high-cost threshold) still asks first, and so does deleting saved data.",
+  "@agentSettings_autopilotConfirmThreshold": {
+    "placeholders": {
+      "threshold": {}
+    }
+  },
+  "agentSettings_autopilotConfirmUnlimited": "Generations, inpainting, queue runs and other Anlas spending will run without asking each time. The Protection Mode high-cost warning is off, so any amount is spent directly; deleting saved data still asks first.",
+  "agentSettings_autopilotConfirmAction": "Turn on",
   "agentSettings_webPreference": "Web preference",
   "agentSettings_webEnabled": "Allow the Agent to use Web tools",
   "agentSettings_webDescription": "When enabled, the model can search and read public pages. Turning it off removes Web tools at runtime.",
@@ -6867,7 +7187,6 @@
   "watermark_undo": "Undo",
   "watermark_reset": "Reset",
   "watermark_noLayer": "Enable text or logo before saving.",
-  "watermark_cancelled": "Watermark rendering cancelled",
   "watermark_failed": "Could not create watermark copy: {error}",
   "@watermark_failed": {"placeholders":{"error":{}}},
   "watermark_failedGeneric": "Could not create the watermarked copy. Check the image and try again.",
@@ -6881,6 +7200,19 @@
   "watermark_moveUp": "Move layer up",
   "watermark_moveDown": "Move layer down",
   "watermark_sourceLoadFailed": "This image could not be opened. Check that it is a valid, static PNG, JPEG, WebP, or BMP image, then try again.",
+  "watermark_autoPlacement": "Auto placement",
+  "watermark_autoPlacementHint": "The anchor you set is preferred; when another corner is clearly cleaner, the whole watermark is mirrored there.",
+  "watermark_autoPlacementKept": "Auto placement: kept at the preferred position",
+  "watermark_autoPlacementMirroredHorizontal": "Auto placement: mirrored left to right",
+  "watermark_autoPlacementMirroredVertical": "Auto placement: mirrored top to bottom",
+  "watermark_autoPlacementMirroredBoth": "Auto placement: moved to the opposite corner",
+  "watermark_autoAnalyzing": "Analyzing image…",
+  "watermark_autoAnalysisFailed": "The image could not be analyzed, so the preview shows no automatic adjustments. Saving analyzes it again.",
+  "watermark_autoTone": "Auto grayscale",
+  "watermark_autoToneTextHint": "Picks a gray from the background under the text; the outline and shadow take the opposite side.",
+  "watermark_autoToneLogoHint": "Converts the logo to a gray matched to the background beneath it, keeping the logo’s own shading.",
+  "watermark_toneContrast": "Tone difference",
+  "watermark_colorFromAutoTone": "Color is set by auto grayscale",
   "promptAssistant_responseTimeoutTitle": "Response wait timeout",
   "promptAssistant_responseTimeoutDescription": "Shared by reverse prompting, optimization, translation, character replacement, and custom rewriting. Defaults to 5 minutes; increase it for slower models. You can still cancel at any time. Connection timeouts and agent chat are unchanged.",
   "tagMode_label": "Tag mode",
@@ -6966,7 +7298,6 @@
   "mosaic_saved": "Redacted copy saved",
   "mosaic_open": "Open",
   "mosaic_share": "Share",
-  "mosaic_cancelled": "Redaction rendering was cancelled.",
   "mosaic_failedGeneric": "The redacted copy could not be created.",
   "mosaic_galleryRefreshFailed": "The file was saved, but the local gallery could not be refreshed.",
   "mosaic_systemGalleryExportFailed": "The app copy was saved, but system gallery export failed.",

@@ -5,6 +5,7 @@ import '../../../../core/utils/localization_extension.dart';
 import '../../../../data/models/gallery/nai_image_metadata.dart';
 import '../../../../data/models/metadata/metadata_import_options.dart';
 import '../../utils/fixed_tag_import_resolution.dart';
+import '../../utils/metadata_import_applier.dart';
 import '../../adaptive/adaptive_presenter.dart';
 import '../common/adaptive_dialog_frame.dart';
 import '../common/translated_tag_text.dart';
@@ -18,11 +19,15 @@ class MetadataImportDialog extends StatefulWidget {
   final ScrollController? scrollController;
   final FixedTagImportResolution? fixedTagResolution;
 
+  /// 初始类别开关；逐图条目总是按 [metadata] 全选。
+  final MetadataImportOptions? initialOptions;
+
   const MetadataImportDialog({
     super.key,
     required this.metadata,
     this.scrollController,
     this.fixedTagResolution,
+    this.initialOptions,
   });
 
   /// 显示对话框并返回用户选择的导入选项
@@ -30,6 +35,7 @@ class MetadataImportDialog extends StatefulWidget {
     BuildContext context, {
     required NaiImageMetadata metadata,
     FixedTagImportResolution? fixedTagResolution,
+    MetadataImportOptions? initialOptions,
   }) {
     return AdaptivePresenter.showForm<MetadataImportOptions>(
       context: context,
@@ -57,6 +63,7 @@ class MetadataImportDialog extends StatefulWidget {
       builder: (context, scrollController) => MetadataImportDialog(
         metadata: metadata,
         fixedTagResolution: fixedTagResolution,
+        initialOptions: initialOptions,
         scrollController: scrollController,
       ),
     );
@@ -72,7 +79,7 @@ class _MetadataImportDialogState extends State<MetadataImportDialog> {
   @override
   void initState() {
     super.initState();
-    _options = MetadataImportOptions.all();
+    _options = widget.initialOptions ?? MetadataImportOptions.all();
     // 初始化选择列表
     _initializeSelections();
   }
@@ -501,11 +508,14 @@ class _MetadataImportDialogState extends State<MetadataImportDialog> {
               ),
             ),
         ],
-        // 负向提示词
+        // 预览与实际写入负面框的内容一致，随 UC 预设勾选变化
         _buildCheckboxTile(
           title: l10n.metadataImport_negativePrompt,
           subtitleWidget: TranslatedPromptText(
-            metadata.displayNegativePrompt,
+            MetadataImportApplier.resolveImportedNegativePrompt(
+              metadata,
+              importUcPreset: _options.importUcPreset,
+            ),
             selectable: false,
             maxLines: 1,
           ),

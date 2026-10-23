@@ -12,6 +12,7 @@ import '../../providers/generation/image_generation_selectors.dart';
 import '../../providers/image_generation_provider.dart';
 import '../../providers/queue_execution_provider.dart';
 import '../../providers/replication_queue_provider.dart';
+import '../../utils/generation_error_l10n.dart';
 import '../common/translated_tag_text.dart';
 import 'queue_task_thumbnail.dart';
 
@@ -425,7 +426,7 @@ class _TaskListItemState extends ConsumerState<TaskListItem>
           const SizedBox(width: 4),
           Flexible(
             child: Text(
-              widget.task.errorMessage!,
+              summarizeGenerationError(context, widget.task.errorMessage!),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 10, color: Colors.red),
@@ -913,7 +914,7 @@ class QueueTaskDetailView extends StatelessWidget {
               const SizedBox(height: 18),
               _QueuePromptSection(
                 title: l10n.common_error,
-                text: task.errorMessage!.trim(),
+                text: detailGenerationError(context, task.errorMessage!.trim()),
                 color: theme.colorScheme.error,
               ),
             ],
@@ -1113,7 +1114,7 @@ class FailedTaskListItem extends ConsumerWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          task.errorMessage!,
+                          summarizeGenerationError(context, task.errorMessage!),
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: Colors.red,
                             fontSize: 11,

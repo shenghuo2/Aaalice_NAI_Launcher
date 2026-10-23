@@ -25,6 +25,7 @@ import 'package:nai_launcher/data/models/queue/replication_task.dart';
 import 'package:nai_launcher/data/models/queue/replication_task_generation_snapshot.dart';
 import 'package:nai_launcher/data/models/user/user_subscription.dart';
 import 'package:nai_launcher/presentation/agent_chat/services/execution_toolbox.dart';
+import 'package:nai_launcher/presentation/agent_chat/services/generation_queue_task_service.dart';
 import 'package:nai_launcher/presentation/agent_chat/services/generation_toolbox.dart';
 import 'package:nai_launcher/presentation/agent_chat/services/generation_preparation_runtime.dart';
 import 'package:nai_launcher/presentation/agent_chat/services/agent_resource_resolver.dart';
@@ -33,6 +34,7 @@ import 'package:nai_launcher/data/models/prompt_assistant/prompt_assistant_model
 import 'package:nai_launcher/presentation/providers/character_prompt_provider.dart';
 import 'package:nai_launcher/presentation/providers/fixed_tags_provider.dart';
 import 'package:nai_launcher/presentation/providers/image_generation_provider.dart';
+import 'package:nai_launcher/presentation/providers/queue_execution_provider.dart';
 import 'package:nai_launcher/presentation/providers/replication_queue_provider.dart';
 import 'package:nai_launcher/presentation/providers/subscription_provider.dart';
 
@@ -383,6 +385,56 @@ void main() {
   });
 
   test(
+    'queue_image_task rejects the whole batch when the queue fills during encoding',
+    () async {
+      final execution = _CountingQueueExecutionNotifier();
+      final container = ProviderContainer(
+        overrides: [
+          replicationQueueNotifierProvider.overrideWith(
+            _TestReplicationQueueNotifier.new,
+          ),
+          queueExecutionNotifierProvider.overrideWith(() => execution),
+        ],
+      );
+      addTearDown(container.dispose);
+      final queue = container.read(replicationQueueNotifierProvider.notifier);
+      final service = GenerationQueueTaskService(
+        _makeRef(container),
+        maxQueueSnapshotBytes: GenerationToolbox.maxQueueSnapshotBytes,
+        maxPersistedQueueSnapshotBytes:
+            GenerationToolbox.maxPersistedQueueSnapshotBytes,
+      );
+
+      final pending = service.queueTask(
+        const {},
+        prepared: GenerationPreparation(
+          kind: GenerationPreparationKind.queue,
+          baseParams: const ImageParams(prompt: '1girl'),
+          params: const ImageParams(prompt: '1girl'),
+          batchSize: 1,
+          count: 2,
+          autoStart: true,
+          estimatedAnlas: 0,
+          arguments: const {'prompt': '1girl'},
+        ),
+      );
+      await queue.addAll([
+        for (var i = 0; i < kMaxQueueCapacity - 1; i++)
+          ReplicationTask.create(prompt: 'filler $i'),
+      ]);
+      final result = await pending;
+
+      expect(result.isError, isTrue);
+      expect(_json(result)['code'], 'queue_capacity_insufficient');
+      expect(
+        container.read(replicationQueueNotifierProvider).tasks,
+        hasLength(kMaxQueueCapacity - 1),
+      );
+      expect(execution.startCalls, 0);
+    },
+  );
+
+  test(
     'queue_image_task persists a structured source reference snapshot',
     () async {
       final container = ProviderContainer(
@@ -432,13 +484,90 @@ void main() {
           .read(replicationQueueNotifierProvider)
           .tasks
           .single;
-      final restored = ReplicationTaskGenerationSnapshot.decode(
+      final restored = await ReplicationTaskGenerationSnapshot.decode(
         task.generationSnapshot!,
       );
       expect(restored.action, ImageGenerationAction.img2img);
       expect(restored.sourceImage, [1, 2, 3, 4]);
     },
   );
+
+  test('queue_image_task stores a low-gray mask_ref as a 0/255 mask', () async {
+    final container = ProviderContainer(
+      overrides: [
+        replicationQueueNotifierProvider.overrideWith(
+          _TestReplicationQueueNotifier.new,
+        ),
+        generationParamsNotifierProvider.overrideWith(
+          _TestGenerationParamsNotifier.new,
+        ),
+        characterPromptNotifierProvider.overrideWith(
+          _TestCharacterPromptNotifier.new,
+        ),
+        subscriptionNotifierProvider.overrideWith(
+          _TestSubscriptionNotifier.new,
+        ),
+        imagesPerRequestProvider.overrideWith(_TestImagesPerRequest.new),
+      ],
+    );
+    addTearDown(container.dispose);
+    AgentChatResourceReference galleryImage(String id) =>
+        AgentChatResourceReference(
+          kind: AgentChatResourceKind.localGalleryImage,
+          source: 'local_gallery',
+          resourceId: id,
+          display: {'title': id},
+        );
+    final lowGrayMask = image_lib.Image(width: 64, height: 64, numChannels: 1);
+    for (var y = 16; y < 48; y++) {
+      for (var x = 16; x < 48; x++) {
+        lowGrayMask.setPixelR(x, y, 39);
+      }
+    }
+    final toolbox = GenerationToolbox(
+      _makeRef(container),
+      resourceResolver: _TestResourceResolver(
+        _makeRef(container),
+        bytesByResourceId: {
+          'source-1': Uint8List.fromList(
+            image_lib.encodePng(image_lib.Image(width: 64, height: 64)),
+          ),
+          'mask-1': Uint8List.fromList(image_lib.encodePng(lowGrayMask)),
+        },
+      ),
+    );
+    final tool = toolbox.tools().firstWhere(
+      (candidate) => candidate.name == 'queue_image_task',
+    );
+
+    final prepared = await tool.execute('prepare-mask', {
+      'prompt': '1girl',
+      'source_ref': AgentChatResourceReferenceCodec.encodeJsonMap(
+        galleryImage('source-1'),
+      ),
+      'mask_ref': AgentChatResourceReferenceCodec.encodeJsonMap(
+        galleryImage('mask-1'),
+      ),
+      'auto_start': false,
+    });
+    final submitted = await tool.execute('submit-mask', {
+      'preparation_id': _json(prepared)['preparation_id'],
+      'confirmed': true,
+    });
+
+    expect(submitted.isError, isFalse);
+    final restored = await ReplicationTaskGenerationSnapshot.decode(
+      container
+          .read(replicationQueueNotifierProvider)
+          .tasks
+          .single
+          .generationSnapshot!,
+    );
+    expect(restored.action, ImageGenerationAction.infill);
+    final mask = image_lib.decodeImage(restored.maskImage!)!;
+    expect(mask.getPixel(32, 32).r.toInt(), 255);
+    expect(mask.getPixel(0, 0).r.toInt(), 0);
+  });
 
   test(
     'queue_image_task persists prompt text resolved during preparation',
@@ -524,13 +653,90 @@ void main() {
         '{{{masterpiece, best_quality, year_2024}}}',
       );
       expect(task.negativePrompt, 'lowres, bad anatomy');
-      final restored = ReplicationTaskGenerationSnapshot.decode(
+      final restored = await ReplicationTaskGenerationSnapshot.decode(
         task.generationSnapshot!,
       );
       expect(restored.prompt, task.prompt);
       expect(restored.negativePrompt, task.negativePrompt);
     },
   );
+
+  for (final route in ['submit_generation', 'generate_image']) {
+    test(
+      '$route sends the prompt text resolved during preparation',
+      () async {
+        final fake = _FakeImageGenerationNotifier();
+        final container = ProviderContainer(
+          overrides: [
+            imageGenerationNotifierProvider.overrideWith(() => fake),
+            generationParamsNotifierProvider.overrideWith(
+              _TestGenerationParamsNotifier.new,
+            ),
+            characterPromptNotifierProvider.overrideWith(
+              _TestCharacterPromptNotifier.new,
+            ),
+            subscriptionNotifierProvider.overrideWith(
+              _TestSubscriptionNotifier.new,
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+        final positive = AgentChatResourceReference(
+          kind: AgentChatResourceKind.tagLibraryEntry,
+          source: 'tag_library',
+          resourceId: 'blue-hair',
+        );
+        final negative = AgentChatResourceReference(
+          kind: AgentChatResourceKind.tagLibraryEntry,
+          source: 'tag_library',
+          resourceId: 'bad-anatomy',
+        );
+        final tools = GenerationToolbox(
+          _makeRef(container),
+          resourceResolver: _TestResourceResolver(
+            _makeRef(container),
+            textByResourceId: const {
+              'blue-hair': 'blue hair',
+              'bad-anatomy': 'bad anatomy',
+            },
+          ),
+        ).tools();
+        final prepareTool = route == 'generate_image'
+            ? 'generate_image'
+            : 'prepare_generation';
+        final prepared = _json(
+          await tools.firstWhere((tool) => tool.name == prepareTool).execute(
+            'prepare-$route-refs',
+            {
+              if (route == 'submit_generation') 'operation': 'generate',
+              'prompt': '1girl',
+              'negative_prompt': 'lowres',
+              'prompt_refs': [
+                AgentChatResourceReferenceCodec.encodeJsonMap(positive),
+              ],
+              'negative_prompt_refs': [
+                AgentChatResourceReferenceCodec.encodeJsonMap(negative),
+              ],
+            },
+          ),
+        );
+        expect(prepared['parameters']['prompt'], '1girl, blue hair');
+
+        final submitted = await tools
+            .firstWhere((tool) => tool.name == route)
+            .execute('submit-$route-refs', {
+              'preparation_id': prepared['preparation_id'],
+              'confirmed': true,
+            });
+
+        expect(submitted.isError, isFalse);
+        expect(fake.generateCalls, 1);
+        expect(fake.params?.prompt, '1girl, blue hair');
+        expect(fake.params?.negativePrompt, 'lowres, bad anatomy');
+        expect(fake.bypassRandomPrompt, isTrue);
+      },
+    );
+  }
 
   test(
     'enabled fixed-tag references are left to fixed-tag application',
@@ -939,6 +1145,83 @@ void main() {
     },
   );
 
+  test('submission inpaints with the prepared source and 0/255 mask', () async {
+    final workspace = await Directory.systemTemp.createTemp(
+      'generation-mask-file-',
+    );
+    addTearDown(() => workspace.delete(recursive: true));
+    String workspaceFile(String name) =>
+        '${workspace.path}${Platform.pathSeparator}$name';
+    final sourceBytes = Uint8List.fromList(
+      image_lib.encodePng(image_lib.Image(width: 64, height: 64)),
+    );
+    await File(workspaceFile('source.png')).writeAsBytes(sourceBytes);
+    final lowGrayMask = image_lib.Image(width: 64, height: 64, numChannels: 1);
+    for (var y = 16; y < 48; y++) {
+      for (var x = 16; x < 48; x++) {
+        lowGrayMask.setPixelR(x, y, 39);
+      }
+    }
+    await File(
+      workspaceFile('mask.png'),
+    ).writeAsBytes(image_lib.encodePng(lowGrayMask));
+    final savedFile = File(workspaceFile('saved.png'));
+    await savedFile.writeAsBytes(
+      image_lib.encodePng(image_lib.Image(width: 1, height: 1)),
+    );
+    final fake = _FakeImageGenerationNotifier(savedFile.path);
+    final container = ProviderContainer(
+      overrides: [
+        imageGenerationNotifierProvider.overrideWith(() => fake),
+        imagesPerRequestProvider.overrideWith(_TestImagesPerRequest.new),
+        generationParamsNotifierProvider.overrideWith(
+          _TestGenerationParamsNotifier.new,
+        ),
+        characterPromptNotifierProvider.overrideWith(
+          _TestCharacterPromptNotifier.new,
+        ),
+        subscriptionNotifierProvider.overrideWith(
+          _TestSubscriptionNotifier.new,
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final tools = GenerationToolbox(
+      _makeRef(container),
+      workspaceDir: workspace.path,
+    ).tools();
+    final prepare = tools.firstWhere(
+      (tool) => tool.name == 'prepare_generation',
+    );
+    final submit = tools.firstWhere((tool) => tool.name == 'submit_generation');
+
+    final prepared = await prepare.execute('prepare-mask-file', const {
+      'operation': 'generate',
+      'prompt': '1girl',
+      'width': 64,
+      'height': 64,
+      'count': 1,
+      'source_image': 'source.png',
+      'mask_image': 'mask.png',
+    });
+    final submitted = await submit.execute('submit-mask-file', {
+      'preparation_id': _json(prepared)['preparation_id'],
+      'confirmed': true,
+    });
+
+    expect(submitted.isError, isFalse);
+    expect(fake.generateCalls, 1);
+    final params = fake.params!;
+    expect(params.action, ImageGenerationAction.infill);
+    expect(params.sourceImage, orderedEquals(sourceBytes));
+    final mask = image_lib.decodeImage(params.maskImage!)!;
+    expect(mask.getPixel(32, 32).r.toInt(), 255);
+    expect(mask.getPixel(0, 0).r.toInt(), 0);
+    expect(fake.focusedOverride?.enabled, isFalse);
+    expect(fake.focusedOverride?.selectionRect, isNull);
+    expect(fake.focusedOverride?.contextCrop, isNull);
+  });
+
   test('update and cancel keep preparation lifecycle structured', () async {
     final container = ProviderContainer(
       overrides: [
@@ -1185,7 +1468,9 @@ void main() {
       );
       final task = ReplicationTask.create(
         prompt: 'snapshot prompt',
-        generationSnapshot: ReplicationTaskGenerationSnapshot.encode(params),
+        generationSnapshot: await ReplicationTaskGenerationSnapshot.encode(
+          params,
+        ),
       );
       final container = ProviderContainer(
         overrides: [
@@ -1608,8 +1893,22 @@ class _TestReplicationQueueNotifier extends ReplicationQueueNotifier {
 
   @override
   Future<int> addAll(List<ReplicationTask> tasks) async {
-    state = state.copyWith(tasks: [...state.tasks, ...tasks]);
-    return tasks.length;
+    final toAdd = tasks.take(state.remainingCapacity).toList();
+    state = state.copyWith(tasks: [...state.tasks, ...toAdd]);
+    return toAdd.length;
+  }
+}
+
+class _CountingQueueExecutionNotifier extends QueueExecutionNotifier {
+  int startCalls = 0;
+
+  @override
+  QueueExecutionState build() => const QueueExecutionState();
+
+  @override
+  Future<QueueStartResult> startQueue() async {
+    startCalls++;
+    return QueueStartResult.started;
   }
 }
 
@@ -1681,6 +1980,8 @@ class _FakeImageGenerationNotifier extends ImageGenerationNotifier {
   int? batchSize;
   ImageParams? params;
   bool? preserveCharacterSnapshot;
+  GenerationFocusedSnapshot? focusedOverride;
+  bool? bypassRandomPrompt;
 
   @override
   ImageGenerationState build() => const ImageGenerationState();
@@ -1691,11 +1992,14 @@ class _FakeImageGenerationNotifier extends ImageGenerationNotifier {
     int? batchSizeOverride,
     bool preserveCharacterSnapshot = false,
     GenerationFocusedSnapshot? focusedOverride,
+    bool bypassRandomPrompt = false,
   }) async {
     generateCalls++;
     batchSize = batchSizeOverride;
     this.params = params;
     this.preserveCharacterSnapshot = preserveCharacterSnapshot;
+    this.focusedOverride = focusedOverride;
+    this.bypassRandomPrompt = bypassRandomPrompt;
     state = ImageGenerationState(
       status: GenerationStatus.completed,
       currentImages: [
@@ -1733,10 +2037,12 @@ class _TestResourceResolver extends AgentResourceResolver {
     super.ref, {
     this.textByResourceId = const {},
     this.canonicalByResourceId = const {},
+    this.bytesByResourceId = const {},
   });
 
   final Map<String, String> textByResourceId;
   final Map<String, AgentChatResourceReference> canonicalByResourceId;
+  final Map<String, Uint8List> bytesByResourceId;
 
   @override
   Future<ResolvedAgentResource?> resolve(
@@ -1744,7 +2050,9 @@ class _TestResourceResolver extends AgentResourceResolver {
   ) async => ResolvedAgentResource(
     reference: canonicalByResourceId[requested.resourceId] ?? requested,
     label: 'source',
-    bytes: Uint8List.fromList([1, 2, 3, 4]),
+    bytes:
+        bytesByResourceId[requested.resourceId] ??
+        Uint8List.fromList([1, 2, 3, 4]),
     text: textByResourceId[requested.resourceId],
   );
 }

@@ -34,6 +34,7 @@ import '../../prompt_assistant/providers/web_access_provider.dart';
 import '../../prompt_assistant/services/prompt_assistant_service.dart';
 import '../../providers/fixed_tags_provider.dart';
 import '../../providers/precise_ref_library_provider.dart';
+import '../../providers/share_image_settings_provider.dart';
 import '../../providers/tag_library_page_provider.dart';
 import '../../providers/vibe_library_provider.dart';
 import '../../router/app_router_config.dart';
@@ -50,6 +51,7 @@ import '../services/agent_prepared_file_targets.dart';
 import '../services/agent_resource_resolver.dart';
 import '../services/agent_workspace_directory.dart';
 import '../services/generation_preparation_runtime.dart';
+import '../services/image_upscale_toolbox.dart';
 import '../services/manual_inpaint_toolbox.dart';
 import '../services/queue_toolbox.dart';
 import '../services/agent_tool_permission_controller.dart';
@@ -137,6 +139,9 @@ class AgentChatNotifier extends StateNotifier<AgentChatState> {
   AgentUserQuestionController? _questionController;
   late AgentToolRegistryBuilder _toolRegistryBuilder;
   late ManualInpaintToolbox _manualInpaintToolbox;
+  late final ImageUpscaleToolbox _imageUpscaleToolbox = ImageUpscaleToolbox(
+    _ref,
+  );
   late AgentApiClient _client;
   final Map<String, HarnessSkill> _skills = {};
   final List<SkillDiagnostic> _skillDiagnostics = [];
@@ -219,6 +224,8 @@ class AgentChatNotifier extends StateNotifier<AgentChatState> {
       auditSink: auditSink,
       estimateAnlas: _estimatePreparedAnlas,
       describeFileTargets: _describePreparedFileTargets,
+      chargeConfirmThreshold: () =>
+          _ref.read(shareImageSettingsProvider).effectiveHighAnlasCostThreshold,
       onApprovalChanged: (request) {
         final boundRequest = request?.bind(
           turnId: _sessionControllerValue?.activeTurnId,
@@ -255,6 +262,7 @@ class AgentChatNotifier extends StateNotifier<AgentChatState> {
       generationRuntime: _generationPreparationRuntime,
       queueRuntime: _queueControlRuntime,
       manualInpaintToolbox: _manualInpaintToolbox,
+      imageUpscaleToolbox: _imageUpscaleToolbox,
       messages: () =>
           _sessionControllerValue?.agent?.state.messages ?? const [],
       activeSessionId: () => state.activeSessionId,
@@ -305,7 +313,7 @@ class AgentChatNotifier extends StateNotifier<AgentChatState> {
         .settings
         .chat
         .permissionMode;
-    final fullAccess = permissionMode == AgentPermissionMode.fullAccess;
+    final fullAccess = permissionMode.grantsFullAccess;
     final capability = _modelCapability(_routeCache);
     final agent = Agent(
       AgentOptions(
@@ -362,9 +370,7 @@ class AgentChatNotifier extends StateNotifier<AgentChatState> {
     final agent = _sessionControllerValue?.agent;
     if (agent == null) return;
     final mode = _ref.read(agentSettingsProvider).settings.chat.permissionMode;
-    agent.state.tools = _buildTools(
-      fullAccess: mode == AgentPermissionMode.fullAccess,
-    );
+    agent.state.tools = _buildTools(fullAccess: mode.grantsFullAccess);
     agent.setSystemPrompt(await _buildSystemPrompt());
   }
 
@@ -434,9 +440,7 @@ class AgentChatNotifier extends StateNotifier<AgentChatState> {
           .settings
           .chat
           .permissionMode;
-      agent.state.tools = _buildTools(
-        fullAccess: mode == AgentPermissionMode.fullAccess,
-      );
+      agent.state.tools = _buildTools(fullAccess: mode.grantsFullAccess);
       agent.setSystemPrompt(
         await _buildSystemPrompt(settingsOverride: _activeAgentSettings),
       );
@@ -458,9 +462,7 @@ class AgentChatNotifier extends StateNotifier<AgentChatState> {
           .settings
           .chat
           .permissionMode;
-      agent.state.tools = _buildTools(
-        fullAccess: mode == AgentPermissionMode.fullAccess,
-      );
+      agent.state.tools = _buildTools(fullAccess: mode.grantsFullAccess);
       agent.setSystemPrompt(await _buildSystemPrompt());
     }
     if (mounted) {
@@ -754,6 +756,17 @@ class AgentChatNotifier extends StateNotifier<AgentChatState> {
     return (provider, model, null);
   }
 
+  String _routeLabel((ProviderConfig, String, String?) route) {
+    final (provider, model, _) = route;
+    final name =
+        AssistantModelCatalog.catalogDisplayName(
+          provider: provider,
+          model: model,
+        ) ??
+        model;
+    return '${provider.name} / $name';
+  }
+
   AgentChatModelCapability _modelCapability(
     (ProviderConfig, String, String?)? route,
   ) {
@@ -858,7 +871,7 @@ class AgentChatNotifier extends StateNotifier<AgentChatState> {
     }
     state = state.copyWith(
       routeReady: true,
-      routeLabel: '${_routeCache!.$1.name} / ${_routeCache!.$2}',
+      routeLabel: _routeLabel(_routeCache!),
       routeError: '',
       contextUsage: resolveAgentContextUsage(
         _sessionControllerValue?.agent?.state.messages ?? state.messages,
@@ -905,6 +918,7 @@ class AgentChatNotifier extends StateNotifier<AgentChatState> {
     generationRuntime: _generationPreparationRuntime,
     queueRuntime: _queueControlRuntime,
     manualInpaintToolbox: _manualInpaintToolbox,
+    imageUpscaleToolbox: _imageUpscaleToolbox,
   );
 
   List<String> _describePreparedFileTargets(
@@ -1215,7 +1229,7 @@ class AgentChatNotifier extends StateNotifier<AgentChatState> {
             capability.levels.firstOrNull ?? ThinkingLevel.off;
       }
       agent.state.tools = _buildTools(
-        fullAccess: permissionMode == AgentPermissionMode.fullAccess,
+        fullAccess: permissionMode.grantsFullAccess,
       );
       agent.setSystemPrompt(
         await _buildSystemPrompt(settingsOverride: agentSettings),

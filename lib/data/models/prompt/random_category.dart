@@ -108,14 +108,6 @@ class RandomCategory with _$RandomCategory {
           .fold(0, (sum, group) => sum + group.tagCount)
       : 0;
 
-  /// 深拷贝类别（生成新的ID）
-  RandomCategory deepCopy() {
-    return copyWith(
-      id: const Uuid().v4(),
-      groups: groups.map((g) => g.deepCopy()).toList(),
-    );
-  }
-
   /// 添加分组
   RandomCategory addGroup(RandomTagGroup group) {
     return copyWith(groups: [...groups, group]);

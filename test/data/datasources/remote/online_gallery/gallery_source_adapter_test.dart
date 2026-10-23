@@ -483,7 +483,7 @@ void main() {
         final http = _RecordingHttpAdapter((request) {
           if (request.uri.path == '/api/config') return _configJson;
           expect(request.uri.path, '/api/ai_works_search');
-          expect(request.queryParameters['q'], 'artist::1 name::1');
+          expect(request.queryParameters['q'], 'artist name');
           expect(request.queryParameters['prompt'], '::artist:');
           expect(request.queryParameters['time_range'], 'q2026Q2');
           expect(request.queryParameters['page'], 2);
@@ -541,6 +541,8 @@ void main() {
         );
         expect(page.items.single.tags, isNot(containsAll(['Hello', 'World'])));
         expect(page.items.single.tagsComplete, isFalse);
+        expect(page.items.single.hasPendingCover, isTrue);
+        expect(page.items.single.coverMediaId, isNull);
         expect(page.hasMore, isTrue);
         expect(page.nextCursor, '3');
       },
@@ -585,6 +587,8 @@ void main() {
       expect(detail.media.single.downloadUrl, detail.media.single.previewUrl);
       expect(detail.media.single.previewUrl, isNot(contains('pximg.net')));
       expect(detail.media.single.id, '503 p0?#');
+      expect(detail.item.hasPendingCover, isFalse);
+      expect(detail.item.coverMediaId, '503 p0?#');
     });
 
     test('rejects non-HTTPS AI TAG asset bases', () async {
@@ -674,7 +678,7 @@ void main() {
         expect(rankRequests[1].queryParameters['month'], '2026-07');
         expect(rankRequests[2].queryParameters['month'], 'older');
         expect(
-          rankRequests.every((r) => r.queryParameters['q'] == 'NAI::1'),
+          rankRequests.every((r) => r.queryParameters['q'] == 'NAI'),
           isTrue,
         );
         expect(

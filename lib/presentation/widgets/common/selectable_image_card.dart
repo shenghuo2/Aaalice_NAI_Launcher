@@ -32,6 +32,8 @@ class SelectableImageCard extends ConsumerStatefulWidget {
     this.onDoubleTap,
     this.onLongPress,
     this.onSelectionChanged,
+    this.onSave,
+    this.onSaveAs,
     this.onFullscreen,
     this.isPreviewActive = false,
     this.imageIdentity,
@@ -41,7 +43,6 @@ class SelectableImageCard extends ConsumerStatefulWidget {
     this.enableGlossEffect = false,
     this.hoverEffectsEnabled = true,
     this.shareWarmupEnabled = true,
-    this.enableSaveAction = true,
     this.enableCopyAction = true,
     this.statusBadgeLabel,
     this.statusBadgeTooltip,
@@ -50,6 +51,8 @@ class SelectableImageCard extends ConsumerStatefulWidget {
     this.enableSelection = true,
     this.selectionMode = false,
     this.showSelectionOnHover = true,
+    this.showHoverActionBar = true,
+    this.pinnedHoverActions = const [],
     this.onUpscale,
     this.onReversePrompt,
     this.onImageToImage,
@@ -70,8 +73,10 @@ class SelectableImageCard extends ConsumerStatefulWidget {
     this.onFavoriteToggle,
     this.onPushToPicManager,
     this.isPushingToPicManager = false,
+    this.onDelete,
     this.underlay,
     this.imageContent,
+    this.imageContentFooterHeight = 0,
     this.isGenerating = false,
     this.progress,
     this.postprocessPhase,
@@ -94,6 +99,8 @@ class SelectableImageCard extends ConsumerStatefulWidget {
   final VoidCallback? onDoubleTap;
   final VoidCallback? onLongPress;
   final ValueChanged<bool>? onSelectionChanged;
+  final ImageCardCallback? onSave;
+  final ImageCardCallback? onSaveAs;
   final ImageCardCallback? onFullscreen;
   final bool isPreviewActive;
   final Object? imageIdentity;
@@ -103,7 +110,6 @@ class SelectableImageCard extends ConsumerStatefulWidget {
   final bool enableGlossEffect;
   final bool hoverEffectsEnabled;
   final bool shareWarmupEnabled;
-  final bool enableSaveAction;
   final bool enableCopyAction;
   final String? statusBadgeLabel;
   final String? statusBadgeTooltip;
@@ -112,6 +118,8 @@ class SelectableImageCard extends ConsumerStatefulWidget {
   final bool enableSelection;
   final bool selectionMode;
   final bool showSelectionOnHover;
+  final bool showHoverActionBar;
+  final List<ImageCardActionId> pinnedHoverActions;
   final ImageCardCallback? onUpscale;
   final ImageCardCallback? onReversePrompt;
   final ImageCardCallback? onImageToImage;
@@ -132,8 +140,12 @@ class SelectableImageCard extends ConsumerStatefulWidget {
   final ImageCardCallback? onFavoriteToggle;
   final ImageCardCallback? onPushToPicManager;
   final bool isPushingToPicManager;
+  final ImageCardCallback? onDelete;
   final Widget? underlay;
+
+  /// 替代解码图并自带透明底色；[underlay] 只垫在解码图下方。
   final Widget? imageContent;
+  final double imageContentFooterHeight;
   final bool isGenerating;
   final double? progress;
   final ImagePostprocessPhase? postprocessPhase;
@@ -168,6 +180,7 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
     isPushingToPicManager: widget.isPushingToPicManager,
     underlay: widget.underlay,
     imageContent: widget.imageContent,
+    imageContentFooterHeight: widget.imageContentFooterHeight,
     isGenerating: widget.isGenerating,
     progress: widget.progress,
     postprocessPhase: widget.postprocessPhase,
@@ -187,15 +200,18 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
     enableGlossEffect: widget.enableGlossEffect,
     hoverEffectsEnabled: widget.hoverEffectsEnabled,
     shareWarmupEnabled: widget.shareWarmupEnabled,
-    enableSaveAction: widget.enableSaveAction,
     enableCopyAction: widget.enableCopyAction,
     enableSelection: widget.enableSelection,
     selectionMode: widget.selectionMode,
     showSelectionOnHover: widget.showSelectionOnHover,
+    showHoverActionBar: widget.showHoverActionBar,
+    pinnedHoverActions: widget.pinnedHoverActions,
     onTap: _handleTap,
     onDoubleTap: widget.onDoubleTap,
     onLongPress: widget.onLongPress,
     onSelectionChanged: widget.onSelectionChanged,
+    onSave: widget.onSave,
+    onSaveAs: widget.onSaveAs,
     onFullscreen: widget.onFullscreen,
     onUpscale: widget.onUpscale,
     onReversePrompt: widget.onReversePrompt,
@@ -214,6 +230,7 @@ class _SelectableImageCardState extends ConsumerState<SelectableImageCard>
     onSaveToLibrary: widget.onSaveToLibrary,
     onFavoriteToggle: widget.onFavoriteToggle,
     onPushToPicManager: widget.onPushToPicManager,
+    onDelete: widget.onDelete,
   );
 
   @override

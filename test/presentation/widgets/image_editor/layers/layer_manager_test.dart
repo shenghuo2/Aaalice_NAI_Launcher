@@ -8,6 +8,7 @@ import 'package:nai_launcher/core/utils/inpaint_mask_utils.dart';
 import 'package:nai_launcher/presentation/widgets/image_editor/core/history_manager.dart';
 import 'package:nai_launcher/presentation/widgets/image_editor/layers/layer.dart';
 import 'package:nai_launcher/presentation/widgets/image_editor/layers/layer_manager.dart';
+import 'package:nai_launcher/presentation/widgets/image_editor/layers/layer_role.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -101,7 +102,9 @@ void main() {
         ),
       );
 
-      final merged = await layerManager.exportMergedImage(const Size(64, 64));
+      final merged = await layerManager.exportMergedImage(
+        const Rect.fromLTWH(0, 0, 64, 64),
+      );
       final bytes = await merged.toByteData(format: ui.ImageByteFormat.png);
       final decoded = img.decodePng(
         Uint8List.fromList(bytes!.buffer.asUint8List()),
@@ -310,6 +313,52 @@ void main() {
 
       layerManager.dispose();
     });
+  });
+
+  testWidgets(
+    'initial layers start on the mask and send image tools to the drawing layer',
+    (tester) async {
+      final layerManager = LayerManager();
+      addTearDown(layerManager.dispose);
+      final drawing = layerManager.addLayer(name: 'drawing');
+      // 载入原图会把它设为活动图层
+      final source = (await tester.runAsync(
+        () => layerManager.addLayerFromImage(
+          _buildSolidPng(8, 8, const Color(0xFFAA3322)),
+          name: 'source',
+        ),
+      ))!;
+      final mask = layerManager.addLayer(
+        name: 'mask',
+        index: 0,
+        role: LayerRole.mask,
+      );
+      expect(layerManager.preferredLayerFor(LayerRole.image), same(source));
+
+      layerManager.selectInitialLayers(drawing);
+
+      expect(layerManager.activeLayer, same(mask));
+      expect(layerManager.preferredLayerFor(LayerRole.image), same(drawing));
+    },
+  );
+
+  testWidgets('initial layers stay on the drawing layer without masks', (
+    tester,
+  ) async {
+    final layerManager = LayerManager();
+    addTearDown(layerManager.dispose);
+    final drawing = layerManager.addLayer(name: 'drawing');
+    final source = (await tester.runAsync(
+      () => layerManager.addLayerFromImage(
+        _buildSolidPng(8, 8, const Color(0xFFAA3322)),
+        name: 'source',
+      ),
+    ))!;
+    expect(layerManager.activeLayer, same(source));
+
+    layerManager.selectInitialLayers(drawing);
+
+    expect(layerManager.activeLayer, same(drawing));
   });
 }
 

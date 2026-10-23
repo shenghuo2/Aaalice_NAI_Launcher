@@ -16,6 +16,7 @@ import '../../providers/queue_execution_provider.dart';
 import '../../providers/update_provider.dart';
 import 'adaptive_dialog_frame.dart';
 import 'app_toast.dart';
+import 'update_error_text.dart';
 
 /// 更新检查弹窗组件
 ///
@@ -566,6 +567,10 @@ class UpdateCheckDialog extends ConsumerWidget {
           horizontal: 10,
           vertical: 7,
         ),
+        // flutter_markdown_plus 只在列宽为 Fixed/Intrinsic 时才给表格套横向
+        // 滚动容器；默认的 FlexColumnWidth 会让窄屏表格逐字换行，下面的
+        // tableScrollbarThumbVisibility 也就不起作用。
+        tableColumnWidth: const IntrinsicColumnWidth(),
         tableScrollbarThumbVisibility: true,
         horizontalRuleDecoration: BoxDecoration(
           border: Border(top: BorderSide(color: colorScheme.outlineVariant)),
@@ -645,18 +650,7 @@ class UpdateCheckDialog extends ConsumerWidget {
   /// 构建错误内容。内部异常只写日志，弹窗始终显示简短、可执行的文案。
   Widget _buildErrorContent(BuildContext context, UpdateState state) {
     final theme = Theme.of(context);
-    final message = switch (state.checkFailureType) {
-      UpdateCheckFailureType.releaseNotFound =>
-        context.l10n.updateErrorReleaseNotReady,
-      UpdateCheckFailureType.rateLimited => context.l10n.updateErrorServerBusy,
-      UpdateCheckFailureType.network => context.l10n.updateErrorNetwork,
-      UpdateCheckFailureType.unavailable =>
-        context.l10n.updateErrorServiceUnavailable,
-      UpdateCheckFailureType.invalidResponse =>
-        context.l10n.updateErrorInvalidMetadata,
-      UpdateCheckFailureType.unknown ||
-      null => state.errorMessage ?? context.l10n.updateErrorUnknown,
-    };
+    final message = describeUpdateError(context, state);
 
     return ConstrainedBox(
       constraints: const BoxConstraints(minHeight: 120, maxHeight: 220),

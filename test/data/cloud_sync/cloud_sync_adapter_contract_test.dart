@@ -206,8 +206,16 @@ void main() {
 
   test('portable preferences and explicit exclusions stay classified', () {
     expect(portableSettingKeys, contains(StorageKeys.defaultModel));
+    expect(portableSettingKeys, contains(StorageKeys.imageModelMode));
     expect(portableSettingKeys, contains(StorageKeys.shareWatermark));
     expect(portableSettingKeys, contains(StorageKeys.watermarkConfigV1));
+    expect(portableSettingKeys, contains(StorageKeys.imageSaveFolderTemplate));
+    expect(
+      portableSettingKeys,
+      contains(StorageKeys.imageSaveFileNameTemplate),
+    );
+    // The gallery root is a device path and never leaves this machine.
+    expect(portableSettingKeys, isNot(contains(StorageKeys.imageSavePath)));
     // Redaction remains local-only, including its original-file associations.
     expect(portableSettingKeys, isNot(contains(StorageKeys.mosaicConfigV1)));
     expect(
@@ -245,11 +253,22 @@ void main() {
       isNot(contains(StorageKeys.onnxTaggerModelDirectory)),
     );
     // MCP 服务器端口、令牌与权限模式绑定本机，跨设备同步会互相踢掉端口。
+    // 聊天停靠方式、分栏尺寸与浮窗几何取决于本机窗口，同步到别的设备会错位。
+    // 元数据导入对话框记住的勾选只留在本机。
     for (final key in const [
+      StorageKeys.metadataImportLastSelection,
       StorageKeys.mcpServerEnabled,
       StorageKeys.mcpServerPort,
       StorageKeys.mcpServerPermissionMode,
       StorageKeys.mcpServerToken,
+      StorageKeys.rightPanelTab,
+      StorageKeys.agentChatDockMode,
+      StorageKeys.agentChatDockFoldedPane,
+      StorageKeys.agentChatDockStackedChatFraction,
+      StorageKeys.agentChatDockSideBySideChatWidth,
+      StorageKeys.agentChatFloatingEnabled,
+      StorageKeys.agentChatFloatingVisible,
+      StorageKeys.agentChatFloatingRect,
     ]) {
       expect(portableSettingKeys, isNot(contains(key)), reason: key);
       expect(portablePromptSettingKeys, isNot(contains(key)), reason: key);

@@ -348,12 +348,16 @@ class McpServerNotifier extends StateNotifier<McpServerState> {
           generationRuntime: factory.generationRuntime,
           queueRuntime: factory.queueRuntime,
           manualInpaintToolbox: factory.manualInpaintToolbox,
+          imageUpscaleToolbox: factory.imageUpscaleToolbox,
         ),
         describeFileTargets: (toolName, args) => preparedFileTargets(
           toolName,
           args,
           generationRuntime: factory.generationRuntime,
         ),
+        chargeConfirmThreshold: () => _ref
+            .read(shareImageSettingsProvider)
+            .effectiveHighAnlasCostThreshold,
         isMounted: () => mounted,
         notifyRequested: _notifyApprovalRequested ?? _playApprovalSound,
       );

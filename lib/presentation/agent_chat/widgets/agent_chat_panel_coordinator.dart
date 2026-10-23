@@ -11,10 +11,13 @@ import '../../../core/agent/resources/agent_chat_resource_reference_codec.dart';
 import '../../../core/agent/resources/agent_chat_resource_reference.dart';
 import '../../../core/utils/localization_extension.dart';
 import '../../../core/utils/token_count_format.dart';
+import '../../../data/models/prompt_assistant/prompt_assistant_models.dart';
 import 'package:nai_launcher/presentation/providers/layout_state_provider.dart';
 
 import '../../agent_settings/providers/agent_settings_provider.dart';
-import '../../prompt_assistant/services/provider_adapters/prompt_assistant_adapter.dart';
+import '../../agent_settings/widgets/agent_permission_mode_confirmation.dart';
+import '../../utils/clipboard_image.dart';
+import '../../utils/dropped_file_reader.dart';
 import '../../widgets/common/app_toast.dart';
 import '../../widgets/common/themed_confirm_dialog.dart';
 import '../../widgets/common/themed_input_dialog.dart';
@@ -22,6 +25,7 @@ import '../models/agent_chat_compaction_outcome.dart';
 import '../models/agent_chat_prompt_envelope.dart';
 import '../models/agent_chat_slash_command.dart';
 import '../providers/agent_chat_notifier.dart';
+import '../services/agent_chat_inline_image_policy.dart';
 import '../services/agent_chat_session_controller.dart';
 import 'agent_chat_panel_controller.dart';
 import 'agent_chat_panel_view_data.dart';
@@ -43,6 +47,7 @@ class AgentChatPanelCoordinator {
   final bool Function() _isMounted;
 
   AgentChatResourceReference? _currentCanvasReference;
+  bool _clipboardPasteInFlight = false;
 
   set currentCanvasReference(AgentChatResourceReference? reference) =>
       _currentCanvasReference = reference;
@@ -67,11 +72,13 @@ class AgentChatPanelCoordinator {
       selectModel: (providerId, model) =>
           _notifier.selectChatModel(providerId, model),
       selectThinkingLevel: _notifier.setThinkingLevel,
-      selectPermissionMode: _notifier.setPermissionMode,
+      selectPermissionMode: (mode) => _selectPermissionMode(context, mode),
       setWebAccessEnabled: (enabled) => _ref
           .read(agentSettingsProvider.notifier)
           .setWebAccessEnabled(enabled),
       pickImages: () => _pickImages(context),
+      pasteClipboardImage: () => _pasteClipboardImage(context),
+      attachImageFiles: (files) => _attachImageFiles(context, files),
       attachCurrentCanvas: () =>
           _attachCurrentCanvas(context, _currentCanvasReference),
       openReferenceGallery: () => AgentChatResourcePicker.showReferenceGallery(
@@ -138,7 +145,12 @@ class AgentChatPanelCoordinator {
     final text = _controller.inputController.text.trim();
     final images = _controller.pendingImages;
     final content = _controller.buildInlineUserContent(text, images);
-    if (content.isEmpty) return;
+    if (content.isEmpty) {
+      if (context.mounted) {
+        AppToast.info(context, context.l10n.agentChat_sendEmptyHint);
+      }
+      return;
+    }
     final editingMessageIndex = _controller.editingUserMessageIndex;
     AgentChatRewindCheckpoint? checkpoint;
     if (editingMessageIndex != null) {
@@ -176,47 +188,85 @@ class AgentChatPanelCoordinator {
       withData: true,
     );
     if (result == null || !_isMounted()) return;
+    final files = <DroppedFileData>[];
     for (final file in result.files) {
-      if (file.size > _maxInlineImageBytes) {
+      // 读字节之前先按文件大小挡掉，避免把超限文件整个读进内存。
+      if (file.size > AgentChatInlineImagePolicy.maxBytes) {
         if (!_isMounted() || !context.mounted) return;
-        _showPickError(
+        _showImageRejection(
           context,
-          context.l10n.agentChat_imageTooLarge(file.name, 20),
+          file.name,
+          AgentChatInlineImageRejection.tooLarge,
         );
         continue;
       }
       final bytes = await _readImageBytes(file);
       if (!_isMounted()) return;
       if (bytes == null) continue;
-      if (bytes.length > _maxInlineImageBytes) {
-        if (!_isMounted() || !context.mounted) return;
-        _showPickError(
-          context,
-          context.l10n.agentChat_imageTooLarge(file.name, 20),
-        );
-        continue;
-      }
-      final mimeType = detectImageMime(bytes);
-      if (mimeType == null) {
-        if (!_isMounted() || !context.mounted) return;
-        _showPickError(
-          context,
-          context.l10n.agentChat_unsupportedImageFormat(file.name),
-        );
-        continue;
-      }
-      _controller.addPendingImage(
-        PendingAgentChatImage(
-          name: file.name,
-          bytes: bytes,
-          mimeType: mimeType,
-        ),
-      );
+      files.add(DroppedFileData(fileName: file.name, bytes: bytes));
     }
-    if (_isMounted()) _controller.inputFocus.requestFocus();
+    if (!context.mounted) return;
+    _admitImages(context, files);
   }
 
-  static const int _maxInlineImageBytes = 20 * 1024 * 1024;
+  /// 剪贴板没有可附加的图片时返回 false，由输入框继续执行文本粘贴。
+  Future<bool> _pasteClipboardImage(BuildContext context) async {
+    if (_clipboardPasteInFlight) return false;
+    _clipboardPasteInFlight = true;
+    try {
+      final file = await _ref.read(clipboardFileReaderProvider)(
+        logTag: 'AgentChatPaste',
+        priority: ClipboardContentPriority.text,
+      );
+      if (file == null) return false;
+      if (_isMounted() && context.mounted) _admitImages(context, [file]);
+      return true;
+    } finally {
+      _clipboardPasteInFlight = false;
+    }
+  }
+
+  Future<void> _attachImageFiles(
+    BuildContext context,
+    List<DroppedFileData> files,
+  ) async {
+    if (!_isMounted() || !context.mounted) return;
+    _admitImages(context, files);
+  }
+
+  void _admitImages(BuildContext context, Iterable<DroppedFileData> files) {
+    for (final file in files) {
+      switch (AgentChatInlineImagePolicy.check(file.bytes)) {
+        case AgentChatInlineImageAccepted(:final mimeType):
+          _controller.addPendingImage(
+            PendingAgentChatImage(
+              name: file.fileName,
+              bytes: file.bytes,
+              mimeType: mimeType,
+            ),
+          );
+        case AgentChatInlineImageRejected(:final reason):
+          _showImageRejection(context, file.fileName, reason);
+      }
+    }
+    _controller.inputFocus.requestFocus();
+  }
+
+  void _showImageRejection(
+    BuildContext context,
+    String fileName,
+    AgentChatInlineImageRejection reason,
+  ) {
+    final l10n = context.l10n;
+    AppToast.error(context, switch (reason) {
+      AgentChatInlineImageRejection.tooLarge => l10n.agentChat_imageTooLarge(
+        fileName,
+        AgentChatInlineImagePolicy.maxMegabytes,
+      ),
+      AgentChatInlineImageRejection.unsupportedFormat =>
+        l10n.agentChat_unsupportedImageFormat(fileName),
+    });
+  }
 
   Future<void> _attachCurrentCanvas(
     BuildContext context,
@@ -411,8 +461,18 @@ class AgentChatPanelCoordinator {
     return File(path).readAsBytes();
   }
 
-  void _showPickError(BuildContext context, String message) {
-    AppToast.error(context, message);
+  Future<void> _selectPermissionMode(
+    BuildContext context,
+    AgentPermissionMode mode,
+  ) async {
+    final confirmed = await confirmAgentPermissionModeChange(
+      context: context,
+      ref: _ref,
+      from: _ref.read(agentSettingsProvider).settings.chat.permissionMode,
+      to: mode,
+    );
+    if (!confirmed || !_isMounted()) return;
+    await _notifier.setPermissionMode(mode);
   }
 
   Future<void> _renameSession(BuildContext context, String sessionId) async {
