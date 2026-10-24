@@ -1,18 +1,9 @@
 name: macOS Build
 run-name: macOS split release build
 
+# Keep fork builds opt-in; application tags are handled by release.yml.
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/macos-build.yml"
-      - ".github/workflows/release.yml"
-      - "scripts/build_macos_arch.sh"
-      - "scripts/test_macos_upgrade_compatibility.sh"
-      - "scripts/generate_release_metadata.ps1"
-      - "lib/core/services/app_installation_service.dart"
-      - "lib/data/datasources/remote/github_api_service.dart"
-      - "lib/data/models/version/release_asset_info.dart"
 
 permissions:
   contents: read
